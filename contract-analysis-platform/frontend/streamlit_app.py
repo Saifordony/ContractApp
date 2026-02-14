@@ -148,14 +148,18 @@ def apply_modern_theme():
             color: #6a768f;
             margin: 0.1rem 0 0.6rem 0.2rem;
         }
-        div[data-testid="stChatInput"] {
-            border: 1px solid #ccd8e6;
-            border-radius: 12px;
-            background: #ffffff;
-            box-shadow: 0 3px 12px rgba(21, 31, 51, 0.08);
+        .chat-composer {
+            background: #f8fafc;
+            border: 1px solid #d8e1e8;
+            border-radius: 14px;
+            padding: 0.7rem 0.8rem;
+            margin-top: 0.6rem;
         }
-        div[data-testid="stChatInput"] textarea {
-            font-size: 0.98rem;
+        .chat-send-note {
+            font-size: 0.78rem;
+            color: #73819b;
+            margin-top: 0.35rem;
+            margin-left: 0.2rem;
         }
         </style>
         """,
@@ -715,32 +719,53 @@ def contract_analysis_page():
 
         render_chat_history(st.session_state[chat_key])
 
-        user_question = st.chat_input("Ask a question about this contract...")
-        if user_question:
-            st.session_state[chat_key].append({"role": "user", "content": user_question})
-
-            with st.spinner("Thinking..."):
-                chat_response = make_api_request(
-                    f"/contracts/{contract_id}/chat",
-                    "POST",
-                    {"question": user_question, "response_language": response_language},
+        st.markdown("<div class='chat-composer'>", unsafe_allow_html=True)
+        with st.form(f"contract_chat_form_{contract_id}", clear_on_submit=True):
+            q_col, send_col = st.columns([8, 1])
+            with q_col:
+                user_question = st.text_input(
+                    "Ask a question about this contract...",
+                    placeholder="Ask a question about this contract...",
+                    label_visibility="collapsed",
+                    key=f"chat_input_{contract_id}",
                 )
+            with send_col:
+                send_clicked = st.form_submit_button("Send")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='chat-send-note'>Press <b>Send</b> to ask about this selected contract.</div>",
+            unsafe_allow_html=True,
+        )
 
-                if chat_response and chat_response.status_code == 200:
-                    answer = chat_response.json().get("answer", "No answer returned")
-                    st.session_state[chat_key].append(
-                        {"role": "assistant", "content": answer}
+        if send_clicked:
+            if not user_question or not user_question.strip():
+                st.warning("Please enter a question first.")
+            else:
+                question = user_question.strip()
+                st.session_state[chat_key].append({"role": "user", "content": question})
+
+                with st.spinner("Thinking..."):
+                    chat_response = make_api_request(
+                        f"/contracts/{contract_id}/chat",
+                        "POST",
+                        {"question": question, "response_language": response_language},
                     )
-                else:
-                    error_msg = "Failed to get AI answer"
-                    if chat_response:
-                        try:
-                            error_data = chat_response.json()
-                            error_msg = error_data.get("detail", error_msg)
-                        except Exception:
-                            pass
-                    st.error(error_msg)
-            st.rerun()
+
+                    if chat_response and chat_response.status_code == 200:
+                        answer = chat_response.json().get("answer", "No answer returned")
+                        st.session_state[chat_key].append(
+                            {"role": "assistant", "content": answer}
+                        )
+                    else:
+                        error_msg = "Failed to get AI answer"
+                        if chat_response:
+                            try:
+                                error_data = chat_response.json()
+                                error_msg = error_data.get("detail", error_msg)
+                            except Exception:
+                                pass
+                        st.error(error_msg)
+                st.rerun()
         
         # Add option to clear current contract and start over
         st.markdown("---")
