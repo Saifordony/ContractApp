@@ -18,30 +18,117 @@ def apply_modern_theme():
     st.markdown(
         """
         <style>
-        .stApp {background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);}
-        .block-container {padding-top: 1.2rem;}
-        h1, h2, h3 {color: #0f172a; letter-spacing: -0.02em;}
+        .stApp {
+            background: linear-gradient(120deg, #eef3f6 0%, #e7eef2 100%);
+        }
+        .block-container {
+            padding-top: 1rem;
+            padding-bottom: 2rem;
+        }
+        h1, h2, h3 {
+            color: #20263a;
+            letter-spacing: -0.02em;
+            font-weight: 700;
+        }
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #1f2338 0%, #232845 100%);
+            border-right: 1px solid #2f365c;
+        }
+        section[data-testid="stSidebar"] * {
+            color: #eef1ff !important;
+        }
+        div[data-testid="stTabs"] button {
+            border-radius: 10px 10px 0 0;
+            background: transparent;
+            color: #2b3248;
+            font-weight: 700;
+            border: none;
+        }
+        div[data-testid="stTabs"] button[aria-selected="true"] {
+            background: #21263b !important;
+            color: #ffffff !important;
+        }
+        div[data-testid="stForm"], div[data-testid="stExpander"] {
+            background: #f8fbfc;
+            border: 1px solid #d6dfe5;
+            border-radius: 14px;
+            padding: 0.5rem;
+        }
         .stButton > button {
-            border-radius: 12px;
-            border: 1px solid #c7d2fe;
-            background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%);
+            border-radius: 10px;
+            border: 1px solid #2e344f;
+            background: linear-gradient(90deg, #21263b 0%, #343b5a 100%);
             color: white;
-            font-weight: 600;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(24, 28, 43, 0.25);
         }
         .stButton > button:hover {
-            opacity: 0.92;
-            transform: translateY(-1px);
+            opacity: 0.95;
+            transform: translateY(-2px);
         }
         div[data-testid="stMetric"] {
             background: #ffffff;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #d9e2e8;
             border-radius: 12px;
-            padding: 8px;
+            padding: 10px;
+            box-shadow: 0 2px 8px rgba(18, 24, 38, 0.08);
+        }
+        .dashboard-chip {
+            background: #20263a;
+            color: #ffffff;
+            border-radius: 12px;
+            padding: 0.65rem 0.9rem;
+            border: 1px solid #313954;
+            margin-bottom: 0.45rem;
+        }
+        .topbar {
+            background: #f4f7f8;
+            border: 1px solid #d9e2e8;
+            border-radius: 14px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .topbar-title {
+            font-weight: 800;
+            color: #1f2438;
+            letter-spacing: 0.02em;
+        }
+        .topbar-sub {
+            color: #5c647c;
+            font-size: 0.9rem;
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_chrome_header(username: str):
+    st.markdown(
+        f"""
+        <div class='topbar'>
+            <div>
+                <div class='topbar-title'>📊 CONTRACT INTELLIGENCE DASHBOARD</div>
+                <div class='topbar-sub'>Welcome, {username} — bilingual OCR + AI analysis workspace</div>
+            </div>
+            <div class='topbar-sub'>EN | AR • Secure Session</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown("<div class='dashboard-chip'><b>Total Traffic</b><br>325,456</div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown("<div class='dashboard-chip'><b>New Users</b><br>3,006</div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown("<div class='dashboard-chip'><b>Performance</b><br>60%</div>", unsafe_allow_html=True)
+    with c4:
+        st.markdown("<div class='dashboard-chip'><b>Sales</b><br>852</div>", unsafe_allow_html=True)
 
 
 def make_api_request(
@@ -851,12 +938,20 @@ def main():
     # Top navigation
     st.sidebar.title(f"Welcome, {st.session_state.username}")
     st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("🏠 Home")
+    st.sidebar.markdown("📄 Contracts")
+    st.sidebar.markdown("👥 Clients")
+    st.sidebar.markdown("📈 Analytics")
+    st.sidebar.markdown("⚙️ Settings")
 
     if st.sidebar.button("Logout"):
         # Clear all session state
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
+
+    render_chrome_header(st.session_state.username)
 
     # Main content with tabs
     tab1, tab2, tab3 = st.tabs(["Contract Analysis", "Data Management", "Admin Dashboard"])
