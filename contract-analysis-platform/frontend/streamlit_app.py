@@ -148,19 +148,6 @@ def apply_modern_theme():
             color: #6a768f;
             margin: 0.1rem 0 0.6rem 0.2rem;
         }
-        .chat-composer {
-            background: #f8fafc;
-            border: 1px solid #d8e1e8;
-            border-radius: 14px;
-            padding: 0.7rem 0.8rem;
-            margin-top: 0.6rem;
-        }
-        .chat-send-note {
-            font-size: 0.78rem;
-            color: #73819b;
-            margin-top: 0.35rem;
-            margin-left: 0.2rem;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -331,12 +318,10 @@ def render_contract_evaluation(evaluation: Dict):
 
 
 def render_chat_history(chat_messages):
-    st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
     if not chat_messages:
-        st.markdown(
-            "<div class='chat-caption'>Ask about obligations, payment terms, risks, termination rights, or any clause in this contract.</div>",
-            unsafe_allow_html=True,
-        )
+        return
+
+    st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
     for msg in chat_messages:
         role = msg.get("role", "assistant")
         role_class = "user" if role == "user" else "assistant"
@@ -712,14 +697,12 @@ def contract_analysis_page():
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
-        st.caption("Contract-grounded assistant — answers are based on this selected contract only.")
         chat_key = f"contract_chat_history_{contract_id}"
         if chat_key not in st.session_state:
             st.session_state[chat_key] = []
 
         render_chat_history(st.session_state[chat_key])
 
-        st.markdown("<div class='chat-composer'>", unsafe_allow_html=True)
         with st.form(f"contract_chat_form_{contract_id}", clear_on_submit=True):
             q_col, send_col = st.columns([8, 1])
             with q_col:
@@ -731,11 +714,6 @@ def contract_analysis_page():
                 )
             with send_col:
                 send_clicked = st.form_submit_button("Send")
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown(
-            "<div class='chat-send-note'>Press <b>Send</b> to ask about this selected contract.</div>",
-            unsafe_allow_html=True,
-        )
 
         if send_clicked:
             if not user_question or not user_question.strip():
