@@ -14,6 +14,36 @@ if "username" not in st.session_state:
     st.session_state.username = None
 
 
+def apply_modern_theme():
+    st.markdown(
+        """
+        <style>
+        .stApp {background: linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);}
+        .block-container {padding-top: 1.2rem;}
+        h1, h2, h3 {color: #0f172a; letter-spacing: -0.02em;}
+        .stButton > button {
+            border-radius: 12px;
+            border: 1px solid #c7d2fe;
+            background: linear-gradient(90deg, #4f46e5 0%, #7c3aed 100%);
+            color: white;
+            font-weight: 600;
+        }
+        .stButton > button:hover {
+            opacity: 0.92;
+            transform: translateY(-1px);
+        }
+        div[data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 8px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def make_api_request(
     endpoint: str,
     method: str = "GET",
@@ -325,6 +355,14 @@ def contract_analysis_page():
         # Show contract being analyzed
         st.info(f"Analyzing contract: **{contract_title}** (ID: {contract_id})")
 
+        response_language = st.selectbox(
+            "Response Language / لغة الاستجابة",
+            options=["english", "arabic"],
+            format_func=lambda x: "English" if x == "english" else "العربية",
+            key="response_language_selector",
+        )
+        use_ocr = st.toggle("Enable OCR for scanned PDFs (English + Arabic)", value=True)
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -333,7 +371,10 @@ def contract_analysis_page():
                     # Create a temporary file-like object for the API
                     files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
                     response = make_api_request(
-                        "/genai/analyze-contract", "POST", files=files
+                        "/genai/analyze-contract",
+                        "POST",
+                        data={"response_language": response_language, "use_ocr": use_ocr},
+                        files=files,
                     )
 
                     if response and response.status_code == 200:
@@ -364,7 +405,9 @@ def contract_analysis_page():
                     with st.spinner("Evaluating contract health..."):
                         clauses = st.session_state.current_clauses
                         eval_response = make_api_request(
-                            "/genai/evaluate-contract", "POST", clauses
+                            "/genai/evaluate-contract",
+                            "POST",
+                            {"clauses": clauses, "response_language": response_language},
                         )
 
                         if eval_response and eval_response.status_code == 200:
@@ -387,7 +430,8 @@ def contract_analysis_page():
             with st.spinner("Running complete analysis pipeline..."):
                 # Trigger the backend analysis pipeline
                 pipeline_response = make_api_request(
-                    f"/contracts/{contract_id}/init-genai", "POST"
+                    f"/contracts/{contract_id}/init-genai?response_language={response_language}",
+                    "POST",
                 )
 
                 if pipeline_response and pipeline_response.status_code == 200:
@@ -607,7 +651,10 @@ def clients_contracts_page():
                         if contract.get('status') != 'analyzed':
                             if st.button("Analyze", key=f"analyze_contract_{contract_id}"):
                                 with st.spinner("Running AI analysis..."):
-                                    response = make_api_request(f"/contracts/{contract_id}/init-genai", "POST")
+                                    response = make_api_request(
+                                        f"/contracts/{contract_id}/init-genai?response_language={st.session_state.get('response_language_selector', 'english')}",
+                                        "POST",
+                                    )
                                     if response and response.status_code == 200:
                                         st.success("Analysis completed!")
                                         
@@ -793,6 +840,7 @@ def main():
     st.set_page_config(
         page_title="Contract Analysis Platform", page_icon="📄", layout="wide"
     )
+    apply_modern_theme()
 
     # Check if user is logged in
     if not st.session_state.token:
@@ -802,6 +850,7 @@ def main():
 
     # Top navigation
     st.sidebar.title(f"Welcome, {st.session_state.username}")
+    st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
 
     if st.sidebar.button("Logout"):
         # Clear all session state

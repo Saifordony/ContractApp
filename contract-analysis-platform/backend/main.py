@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, status, Query
+from fastapi import FastAPI, HTTPException, Depends, File, UploadFile, status, Query, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,6 +8,8 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorClient
 from concurrent.futures import ThreadPoolExecutor
+from bson import ObjectId
+from bson.errors import InvalidId
 import os
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
@@ -32,6 +34,10 @@ if not OPENAI_API_KEY:
         "WARNING: OPENAI_API_KEY environment variable is not set. GenAI features will be disabled."
     )
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable must be set")
 
 # Global variables
 db_client = None
@@ -106,11 +112,18 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def parse_object_id(value: str, field_name: str) -> ObjectId:
+    try:
+        return ObjectId(value)
+    except InvalidId as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}") from exc
 
 
 # Authentication utilities
@@ -206,9 +219,12 @@ async def login(user: UserLogin):
 # GenAI Contract Analysis endpoints
 @app.post("/genai/analyze-contract")
 async def analyze_contract_endpoint(
-    file: UploadFile = File(...), current_user: dict = Depends(get_current_user)
+    file: UploadFile = File(...),
+    response_language: str = Form("english"),
+    use_ocr: bool = Form(True),
+    current_user: dict = Depends(get_current_user),
 ):
-    if not file.filename.endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     if not OPENAI_API_KEY:
@@ -219,8 +235,15 @@ async def analyze_contract_endpoint(
 
     try:
         pdf_bytes = await file.read()
-        contract_text = extract_text_from_pdf_bytes(pdf_bytes)
-        clauses = await analyze_contract(contract_text)
+        contract_text = extract_text_from_pdf_bytes(
+            pdf_bytes,
+            use_ocr=use_ocr,
+            response_language=response_language,
+        )
+        clauses = await analyze_contract(
+            contract_text,
+            response_language=response_language,
+        )
         
         # Log the action
         await db.logs.insert_one(
@@ -234,6 +257,8 @@ async def analyze_contract_endpoint(
         )
 
         return {"clauses": clauses}
+    except HTTPException:
+        raise
     except Exception as e:
         await db.logs.insert_one(
             {
@@ -250,7 +275,7 @@ async def analyze_contract_endpoint(
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
-    clauses: Dict[str, str], current_user: dict = Depends(get_current_user)
+    payload: Dict[str, Any], current_user: dict = Depends(get_current_user)
 ):
     if not OPENAI_API_KEY:
         raise HTTPException(
@@ -259,7 +284,12 @@ async def evaluate_contract_endpoint(
         )
 
     try:
-        evaluation = await evaluate_contract(clauses)
+        clauses = payload.get("clauses", payload)
+        response_language = payload.get("response_language", "english")
+        evaluation = await evaluate_contract(
+            clauses,
+            response_language=response_language,
+        )
 
         # Log the action
         await db.logs.insert_one(
@@ -273,6 +303,8 @@ async def evaluate_contract_endpoint(
         )
 
         return evaluation
+    except HTTPException:
+        raise
     except Exception as e:
         await db.logs.insert_one(
             {
@@ -387,22 +419,18 @@ async def get_clients(current_user: dict = Depends(get_current_user)):
 @app.get("/clients/{client_id}")
 async def get_client(client_id: str, current_user: dict = Depends(get_current_user)):
     """Get a specific client by ID"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(client_id, "client ID")
+    client = await db.clients.find_one({"_id": object_id})
 
-        client = await db.clients.find_one({"_id": ObjectId(client_id)})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Check if user has access to this client
+    if client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        # Check if user has access to this client
-        if client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-        client["_id"] = str(client["_id"])
-        return client
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid client ID: {str(e)}")
+    client["_id"] = str(client["_id"])
+    return client
 
 
 @app.put("/clients/{client_id}")
@@ -410,62 +438,56 @@ async def update_client(
     client_id: str, client: Client, current_user: dict = Depends(get_current_user)
 ):
     """Update a client"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(client_id, "client ID")
 
-        # Check if client exists and user has access
-        existing_client = await db.clients.find_one({"_id": ObjectId(client_id)})
-        if not existing_client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Check if client exists and user has access
+    existing_client = await db.clients.find_one({"_id": object_id})
+    if not existing_client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if existing_client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if existing_client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        client_dict = client.dict()
-        client_dict["updated_at"] = datetime.utcnow()
-        client_dict["updated_by"] = current_user["username"]
+    client_dict = client.dict()
+    client_dict["updated_at"] = datetime.utcnow()
+    client_dict["updated_by"] = current_user["username"]
 
-        result = await db.clients.update_one(
-            {"_id": ObjectId(client_id)}, {"$set": client_dict}
-        )
+    result = await db.clients.update_one(
+        {"_id": object_id}, {"$set": client_dict}
+    )
 
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Client not found")
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        return {"message": "Client updated successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid client ID: {str(e)}")
+    return {"message": "Client updated successfully"}
 
 
 @app.delete("/clients/{client_id}")
 async def delete_client(client_id: str, current_user: dict = Depends(get_current_user)):
     """Delete a client"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(client_id, "client ID")
 
-        # Check if client exists and user has access
-        existing_client = await db.clients.find_one({"_id": ObjectId(client_id)})
-        if not existing_client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Check if client exists and user has access
+    existing_client = await db.clients.find_one({"_id": object_id})
+    if not existing_client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if existing_client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if existing_client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        # Check if client has contracts
-        contracts = await db.contracts.find({"client_id": client_id}).to_list(1)
-        if contracts:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot delete client with existing contracts. Delete contracts first.",
-            )
+    # Check if client has contracts
+    contracts = await db.contracts.find({"client_id": client_id}).to_list(1)
+    if contracts:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete client with existing contracts. Delete contracts first.",
+        )
 
-        result = await db.clients.delete_one({"_id": ObjectId(client_id)})
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Client not found")
+    result = await db.clients.delete_one({"_id": object_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        return {"message": "Client deleted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid client ID: {str(e)}")
+    return {"message": "Client deleted successfully"}
 
 
 @app.get("/clients/{client_id}/contracts")
@@ -473,26 +495,23 @@ async def get_client_contracts(
     client_id: str, current_user: dict = Depends(get_current_user)
 ):
     """Get all contracts for a specific client"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(client_id, "client ID")
 
-        # Check if client exists and user has access
-        client = await db.clients.find_one({"_id": ObjectId(client_id)})
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Check if client exists and user has access
+    client = await db.clients.find_one({"_id": object_id})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        contracts = await db.contracts.find({"client_id": client_id}).to_list(100)
+    contracts = await db.contracts.find({"client_id": client_id}).to_list(100)
 
-        # Convert ObjectId to string for JSON serialization
-        for contract in contracts:
-            contract["_id"] = str(contract["_id"])
+    # Convert ObjectId to string for JSON serialization
+    for contract in contracts:
+        contract["_id"] = str(contract["_id"])
 
-        return {"contracts": contracts}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid client ID: {str(e)}")
+    return {"contracts": contracts}
 
 
 # CONTRACT CRUD OPERATIONS
@@ -501,28 +520,25 @@ async def create_contract(
     contract: Contract, current_user: dict = Depends(get_current_user)
 ):
     """Create a new contract"""
-    try:
-        from bson import ObjectId
+    client_object_id = parse_object_id(contract.client_id, "client ID")
 
-        # Verify that client exists and user has access
-        client = await db.clients.find_one({"_id": ObjectId(contract.client_id)})
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Verify that client exists and user has access
+    client = await db.clients.find_one({"_id": client_object_id})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied to client")
+    if client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied to client")
 
-        contract_dict = contract.dict()
-        contract_dict["created_at"] = datetime.utcnow()
-        contract_dict["created_by"] = current_user["username"]
+    contract_dict = contract.dict()
+    contract_dict["created_at"] = datetime.utcnow()
+    contract_dict["created_by"] = current_user["username"]
 
-        result = await db.contracts.insert_one(contract_dict)
-        return {
-            "message": "Contract created successfully",
-            "contract_id": str(result.inserted_id),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
+    result = await db.contracts.insert_one(contract_dict)
+    return {
+        "message": "Contract created successfully",
+        "contract_id": str(result.inserted_id),
+    }
 
 
 @app.get("/contracts")
@@ -544,21 +560,18 @@ async def get_contract(
     contract_id: str, current_user: dict = Depends(get_current_user)
 ):
     """Get a specific contract by ID"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(contract_id, "contract ID")
 
-        contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
-        if not contract:
-            raise HTTPException(status_code=404, detail="Contract not found")
+    contract = await db.contracts.find_one({"_id": object_id})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
-        # Check if user has access to this contract
-        if contract.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    # Check if user has access to this contract
+    if contract.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        contract["_id"] = str(contract["_id"])
-        return contract
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid contract ID: {str(e)}")
+    contract["_id"] = str(contract["_id"])
+    return contract
 
 
 @app.put("/contracts/{contract_id}")
@@ -566,39 +579,37 @@ async def update_contract(
     contract_id: str, contract: Contract, current_user: dict = Depends(get_current_user)
 ):
     """Update a contract"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(contract_id, "contract ID")
+    client_object_id = parse_object_id(contract.client_id, "client ID")
 
-        # Check if contract exists and user has access
-        existing_contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
-        if not existing_contract:
-            raise HTTPException(status_code=404, detail="Contract not found")
+    # Check if contract exists and user has access
+    existing_contract = await db.contracts.find_one({"_id": object_id})
+    if not existing_contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
-        if existing_contract.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if existing_contract.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        # Verify that client exists and user has access
-        client = await db.clients.find_one({"_id": ObjectId(contract.client_id)})
-        if not client:
-            raise HTTPException(status_code=404, detail="Client not found")
+    # Verify that client exists and user has access
+    client = await db.clients.find_one({"_id": client_object_id})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
 
-        if client.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied to client")
+    if client.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied to client")
 
-        contract_dict = contract.dict()
-        contract_dict["updated_at"] = datetime.utcnow()
-        contract_dict["updated_by"] = current_user["username"]
+    contract_dict = contract.dict()
+    contract_dict["updated_at"] = datetime.utcnow()
+    contract_dict["updated_by"] = current_user["username"]
 
-        result = await db.contracts.update_one(
-            {"_id": ObjectId(contract_id)}, {"$set": contract_dict}
-        )
+    result = await db.contracts.update_one(
+        {"_id": object_id}, {"$set": contract_dict}
+    )
 
-        if result.matched_count == 0:
-            raise HTTPException(status_code=404, detail="Contract not found")
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
-        return {"message": "Contract updated successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
+    return {"message": "Contract updated successfully"}
 
 
 @app.delete("/contracts/{contract_id}")
@@ -606,38 +617,40 @@ async def delete_contract(
     contract_id: str, current_user: dict = Depends(get_current_user)
 ):
     """Delete a contract"""
-    try:
-        from bson import ObjectId
+    object_id = parse_object_id(contract_id, "contract ID")
 
-        # Check if contract exists and user has access
-        existing_contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
-        if not existing_contract:
-            raise HTTPException(status_code=404, detail="Contract not found")
+    # Check if contract exists and user has access
+    existing_contract = await db.contracts.find_one({"_id": object_id})
+    if not existing_contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
-        if existing_contract.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
+    if existing_contract.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
-        # Delete related contract analyses
-        await db.contract_analyses.delete_many({"contract_id": contract_id})
+    # Delete related contract analyses
+    await db.contract_analyses.delete_many({"contract_id": contract_id})
 
-        result = await db.contracts.delete_one({"_id": ObjectId(contract_id)})
-        if result.deleted_count == 0:
-            raise HTTPException(status_code=404, detail="Contract not found")
+    result = await db.contracts.delete_one({"_id": object_id})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Contract not found")
 
-        return {"message": "Contract deleted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid contract ID: {str(e)}")
+    return {"message": "Contract deleted successfully"}
 
 
 @app.post("/contracts/{contract_id}/init-genai")
 async def init_genai_analysis(
-    contract_id: str, current_user: dict = Depends(get_current_user)
+    contract_id: str,
+    response_language: str = Query("english"),
+    current_user: dict = Depends(get_current_user),
 ):
-    from bson import ObjectId
+    object_id = parse_object_id(contract_id, "contract ID")
 
-    contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
+    contract = await db.contracts.find_one({"_id": object_id})
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
+
+    if contract.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
         raise HTTPException(
@@ -651,7 +664,11 @@ async def init_genai_analysis(
         )
 
     try:
-        results = await analyze_and_evaluate_contract(contract["content"], full_pipeline_chain)
+        results = await analyze_and_evaluate_contract(
+            contract["content"],
+            full_pipeline_chain,
+            response_language=response_language,
+        )
 
         analysis_dict = {
             "contract_id": contract_id,
@@ -664,7 +681,7 @@ async def init_genai_analysis(
 
         # Update contract status
         await db.contracts.update_one(
-            {"_id": ObjectId(contract_id)},
+            {"_id": object_id},
             {"$set": {"status": "analyzed", "analysis_id": str(result.inserted_id)}},
         )
 

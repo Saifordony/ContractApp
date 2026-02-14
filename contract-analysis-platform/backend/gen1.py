@@ -3,19 +3,22 @@ import openai
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from typing import Dict, Any
+from io import BytesIO
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from langchain.chains import SimpleSequentialChain
 import os
 import fitz  # PyMuPDF
+from PIL import Image
+import pytesseract
 
 executor = ThreadPoolExecutor()
 
 
 OPENAI_API_KEY = os.getenv(
     "OPENAI_API_KEY",
-    "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",
+    "",
 )
 if not OPENAI_API_KEY:
     print(
@@ -43,6 +46,8 @@ You are given this contract text:
 {contract_text}
 
 ---
+
+Response language requirement: {response_language}.
 
 Your task is to read the contract text carefully, analyze it, and extract the key legal clauses to return a structured JSON object containing the clause types and their contents.
 
@@ -265,6 +270,8 @@ You are given the following key legal contract clauses (in JSON format):
 
 ---
 
+Response language requirement: {response_language}.
+
 Your task is to read the clauses carefully, analyze them and assess the overall health of the contract along with a precise and professional reasoning behind your assessment to return a structured JSON object containing the approval state and the reasoning behind it.
 
 Let's break your task into steps.
@@ -419,8 +426,23 @@ full_pipeline_chain = SimpleSequentialChain(
 )
 
 
+def normalize_response_language(response_language: str) -> str:
+    lang = (response_language or "english").strip().lower()
+    if lang in {"ar", "ara", "arabic", "العربية"}:
+        return "Arabic"
+    return "English"
+
+
+def get_ocr_languages(response_language: str) -> str:
+    if normalize_response_language(response_language) == "Arabic":
+        return "ara+eng"
+    return "eng+ara"
+
+
 def analyze_contract_sync(
-    contract_text: str, chain: LLMChain = analyzing_chain
+    contract_text: str,
+    chain: LLMChain = analyzing_chain,
+    response_language: str = "english",
 ) -> Dict[str, str]:
     """
     Uses a GenAI model to extract and classify legal clauses from contract text.
@@ -442,7 +464,10 @@ def analyze_contract_sync(
     if not contract_text.strip():
         raise ValueError("contract_text cannot be empty or whitespace")
     try:
-        result = chain.run(contract_text=contract_text)
+        result = chain.run(
+            contract_text=contract_text,
+            response_language=normalize_response_language(response_language),
+        )
         clauses = json.loads(result)
 
         if not clauses:
@@ -457,7 +482,9 @@ def analyze_contract_sync(
 
 
 def evaluate_contract_sync(
-    contract_clauses: Dict[str, str], chain: LLMChain = evaluation_chain
+    contract_clauses: Dict[str, str],
+    chain: LLMChain = evaluation_chain,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     """
     Uses a GenAI model to assess the health of a contract based on its key legal clauses.
@@ -484,7 +511,10 @@ def evaluate_contract_sync(
 
     try:
         contract_json_str = json.dumps(contract_clauses)
-        result = chain.run(contract_json=contract_json_str)
+        result = chain.run(
+            contract_json=contract_json_str,
+            response_language=normalize_response_language(response_language),
+        )
         assessment = json.loads(result)
 
         if "approved" not in assessment or "reasoning" not in assessment:
@@ -501,7 +531,9 @@ def evaluate_contract_sync(
 
 
 def analyze_and_evaluate_contract_sync(
-    contract_text: str, pipeline_chain: SimpleSequentialChain = full_pipeline_chain
+    contract_text: str,
+    pipeline_chain: SimpleSequentialChain = full_pipeline_chain,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     """
     Runs the full contract analysis + evaluation pipeline in one step.
@@ -524,19 +556,16 @@ def analyze_and_evaluate_contract_sync(
         raise ValueError("contract_text cannot be empty or whitespace")
 
     try:
-        result = pipeline_chain.run(contract_text)
-
-        final_output = json.loads(result)
-
-        if not isinstance(final_output, dict):
-            raise ValueError("Pipeline output is not a valid JSON object.")
-
-        if "approved" not in final_output or "reasoning" not in final_output:
-            raise ValueError(
-                "Pipeline output missing 'approved' or 'reasoning' fields."
-            )
-
-        return final_output
+        clauses = analyze_contract_sync(
+            contract_text,
+            analyzing_chain,
+            response_language=response_language,
+        )
+        return evaluate_contract_sync(
+            clauses,
+            evaluation_chain,
+            response_language=response_language,
+        )
 
     except json.JSONDecodeError as e:
         raise ValueError(f"Pipeline output is not valid JSON: {str(e)}")
@@ -545,27 +574,39 @@ def analyze_and_evaluate_contract_sync(
 
 
 async def evaluate_contract(
-    contract_clauses: Dict[str, str], chain: LLMChain = evaluation_chain
+    contract_clauses: Dict[str, str],
+    chain: LLMChain = evaluation_chain,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, evaluate_contract_sync, contract_clauses, chain
+        executor, evaluate_contract_sync, contract_clauses, chain, response_language
     )
 
 
-async def analyze_contract(contract_text: str, chain: LLMChain = analyzing_chain) -> Dict[str, str]:
+async def analyze_contract(
+    contract_text: str,
+    chain: LLMChain = analyzing_chain,
+    response_language: str = "english",
+) -> Dict[str, str]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, analyze_contract_sync, contract_text, chain
+        executor, analyze_contract_sync, contract_text, chain, response_language
     )
 
 
 async def analyze_and_evaluate_contract(
-    contract_text: str, pipeline_chain: Any
+    contract_text: str,
+    pipeline_chain: Any,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, analyze_and_evaluate_contract_sync, contract_text, pipeline_chain
+        executor,
+        analyze_and_evaluate_contract_sync,
+        contract_text,
+        pipeline_chain,
+        response_language,
     )
 
 
@@ -619,7 +660,21 @@ def extract_text_from_pdf(file_path: str) -> str:
         raise RuntimeError(f"Unexpected error during PDF extraction: {str(e)}")
 
 
-def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> str:
+    text = ""
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+        for page in pdf_doc:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            image = Image.open(BytesIO(pix.tobytes("png")))
+            text += pytesseract.image_to_string(image, lang=ocr_languages) + "\n"
+    return text
+
+
+def extract_text_from_pdf_bytes(
+    pdf_bytes: bytes,
+    use_ocr: bool = True,
+    response_language: str = "english",
+) -> str:
     """
     Extracts text from PDF bytes.
 
@@ -636,18 +691,24 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     """
     try:
         text = ""
-        pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        for page in pdf_doc:
-            text += page.get_text()
-        pdf_doc.close()
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+            for page in pdf_doc:
+                text += page.get_text()
 
-        if not text.strip():
-            raise ValueError("No text could be extracted from the PDF.")
+        if text.strip():
+            return text
 
-        return text
+        if use_ocr:
+            ocr_text = _ocr_text_from_pdf_bytes(
+                pdf_bytes, ocr_languages=get_ocr_languages(response_language)
+            )
+            if ocr_text.strip():
+                return ocr_text
 
-    except fitz.FileDataError:
-        raise CorruptPDFError("The provided bytes are not a valid PDF or are corrupted")
+        raise ValueError("No text could be extracted from the PDF.")
+
+    except fitz.FileDataError as exc:
+        raise CorruptPDFError("The provided bytes are not a valid PDF or are corrupted") from exc
     except RuntimeError as e:
         raise RuntimeError(f"PyMuPDF processing failed: {str(e)}")
     except Exception as e:

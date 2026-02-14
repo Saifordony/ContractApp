@@ -11,6 +11,8 @@ pymongo==4.6.0
 
 # PDF Processing
 PyMuPDF==1.23.8
+Pillow==10.4.0
+pytesseract==0.3.10
 
 # Streamlit Frontend Dependencies
 streamlit==1.28.2
