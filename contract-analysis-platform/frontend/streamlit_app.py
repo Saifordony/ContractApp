@@ -237,6 +237,39 @@ def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
     return text
 
 
+def render_contract_evaluation(evaluation: Dict):
+    approved = evaluation.get("approved", False)
+    if approved:
+        st.success("Contract Approved")
+    else:
+        st.error("Contract Not Approved")
+
+    risk_level = str(evaluation.get("risk_level", "medium")).lower()
+    st.write(f"**Risk Level:** {risk_level.title()}")
+
+    st.write("**Reasoning:**")
+    st.write(evaluation.get("reasoning", "No reasoning provided"))
+
+    missing = evaluation.get("missing_critical_clauses", [])
+    issues = evaluation.get("issues", [])
+    changes = evaluation.get("required_changes", [])
+
+    if missing:
+        st.markdown("#### Missing Critical Clauses")
+        for item in missing:
+            st.write(f"- {item}")
+
+    if issues:
+        st.markdown("#### Specific Issues Found")
+        for item in issues:
+            st.write(f"- {item}")
+
+    if changes:
+        st.markdown("#### What This Contract Needs")
+        for item in changes:
+            st.write(f"- {item}")
+
+
 def login_page():
     """Login and Registration page"""
     st.title("Contract Analysis Platform")
@@ -559,14 +592,7 @@ def contract_analysis_page():
 
                         if eval_response and eval_response.status_code == 200:
                             evaluation = eval_response.json()
-
-                            if evaluation["approved"]:
-                                st.success("Contract Approved")
-                            else:
-                                st.error("Contract Not Approved")
-
-                            st.write("**Reasoning:**")
-                            st.write(evaluation["reasoning"])
+                            render_contract_evaluation(evaluation)
                         else:
                             st.error("Failed to evaluate contract")
             else:
@@ -588,18 +614,7 @@ def contract_analysis_page():
                     results = pipeline_response.json().get("results", {})
                     if results:
                         st.markdown("### Analysis Results")
-                        
-                        # Display approval status
-                        approved = results.get("approved", False)
-                        if approved:
-                            st.success("Contract Approved")
-                        else:
-                            st.error("Contract Not Approved")
-                        
-                        # Display reasoning
-                        reasoning = results.get("reasoning", "No reasoning provided")
-                        st.markdown("#### Reasoning")
-                        st.write(reasoning)
+                        render_contract_evaluation(results)
                         
                         # Store results in session state for later reference
                         st.session_state[f"analysis_results_{contract_id}"] = results
@@ -855,18 +870,7 @@ def clients_contracts_page():
                                         results = response.json().get("results", {})
                                         if results:
                                             st.markdown("#### Analysis Results")
-                                            
-                                            # Display approval status
-                                            approved = results.get("approved", False)
-                                            if approved:
-                                                st.success("Contract Approved")
-                                            else:
-                                                st.error("Contract Not Approved")
-                                            
-                                            # Display reasoning
-                                            reasoning = results.get("reasoning", "No reasoning provided")
-                                            st.markdown("**Reasoning:**")
-                                            st.write(reasoning)
+                                            render_contract_evaluation(results)
                                         
                                         st.rerun()
                                     else:

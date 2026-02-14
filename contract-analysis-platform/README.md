@@ -7,6 +7,7 @@ This project is a GenAI-powered platform that analyzes legal contracts, extracts
 - **User Authentication**: JWT-based authentication system
 - **Contract Analysis**: GenAI-powered PDF contract analysis with clause extraction
 - **Contract Evaluation**: GenAI-powered contract health assessment
+- **Detailed Approval Diagnostics**: Risk level, missing critical clauses, specific issues, and required changes
 - **Bilingual AI Responses**: English and Arabic output support
 - **OCR for Scanned Contracts**: English/Arabic OCR fallback for image-based PDFs
 - **Client Management**: CRUD operations for clients and contracts
@@ -143,6 +144,7 @@ All endpoints except `/auth/*`, `/healthz`, and `/readyz` require JWT authentica
 - Select response language (English/Arabic) and OCR preference
 - Click "Analyze Contract Clauses" to extract clauses using AI
 - Click "Evaluate Contract Health" to get AI assessment
+- Review structured diagnostics (risk level, missing clauses, specific issues, required changes)
 - Use "Run Complete Analysis Pipeline" for full automated analysis
 - Use "Ask AI About This Contract" to ask natural-language questions about the currently selected contract
 

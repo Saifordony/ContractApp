@@ -256,7 +256,11 @@ Your responsibilities include:
 4. Providing clear, professional, and precise reasoning behind your assessment.
 5. Returning a structured JSON object with:
 - `approved`: A boolean indicating whether the contract overall should be approved (true if healthy, false if there are critical issues).
-- `reasoning`: A concise, professional explanation of why the contract is approved or not, mentioning key strengths and weaknesses (e.g., missing critical clauses, vague language, unfair terms).
+- `reasoning`: A concise, professional explanation of why the contract is approved or not, mentioning key strengths and weaknesses.
+- `missing_critical_clauses`: Array of missing critical clause names.
+- `issues`: Array of precise contract-specific problems.
+- `required_changes`: Array of actionable, contract-specific changes needed for approval.
+- `risk_level`: One of `low`, `medium`, `high`.
 
 ---
 
@@ -355,9 +359,13 @@ Avoid assumptions about content not explicitly present in the provided JSON.
 
 
 ##Step 5: Output
-Output the result as valid JSON with two fields:
+Output the result as valid JSON with these fields:
 - `approved`: true if the contract is healthy, false if it is not.
 - `reasoning`: a clear and professional string summarizing your evaluation.
+- `missing_critical_clauses`: list of exactly which critical clauses are missing.
+- `issues`: list of exact issues in present clauses (ambiguity, imbalance, missing safeguards).
+- `required_changes`: list of specific edits/additions required before approval.
+- `risk_level`: `low`, `medium`, or `high`.
 
 ###Return only a valid JSON object. Do not include intermediate steps, headings, or explanations. Output must contain only valid JSON, no markdown or text around it.
 ###Do not infer or assume clauses that are not explicitly present in the input JSON. Only reference clauses that exist in the input.
@@ -365,7 +373,11 @@ Output the result as valid JSON with two fields:
 ###The JSON should look like this:
 {{
   "approved": true or false,
-  "reasoning": "Your professional explanation here."
+  "reasoning": "Your professional explanation here.",
+  "missing_critical_clauses": ["Clause A", "Clause B"],
+  "issues": ["Specific issue 1", "Specific issue 2"],
+  "required_changes": ["Specific fix 1", "Specific fix 2"],
+  "risk_level": "low|medium|high"
 }}
 
 ---
@@ -407,7 +419,11 @@ contract JSON:
 Output:
 {{
   "approved": true,
-  "reasoning": "The contract is approved because it contains all critical clauses necessary to protect both parties, including Definitions, Scope of Work, Payment Terms, Confidentiality, Termination, Force Majeure, Dispute Resolution, Governing Law, Limitation of Liability, Entire Agreement, Indemnification, Notices, Amendment, Assignment, Severability, and Non-Waiver. All clauses are written clearly, with complete, fair, and balanced terms that effectively mitigate legal, financial, and operational risks. Additional helpful clauses, such as Transition Assistance, Data Security, Subcontracting, and Publicity restrictions, further strengthen risk management and operational clarity. No critical clauses are missing, and the contract presents no unreasonable risk to either party."
+  "reasoning": "The contract is approved because it includes the critical protections and has no major gaps.",
+  "missing_critical_clauses": [],
+  "issues": [],
+  "required_changes": ["No mandatory changes required. Optional: tighten SLA remedies and notice windows."],
+  "risk_level": "low"
 }}
 
 
@@ -531,6 +547,20 @@ def evaluate_contract_sync(
             raise ValueError(
                 "The model response does not contain required fields 'approved' and 'reasoning'."
             )
+
+        # Normalize optional structured diagnostics to improve frontend rendering.
+        assessment.setdefault("missing_critical_clauses", [])
+        assessment.setdefault("issues", [])
+        assessment.setdefault("required_changes", [])
+        assessment.setdefault("risk_level", "medium")
+
+        for key in ["missing_critical_clauses", "issues", "required_changes"]:
+            if not isinstance(assessment.get(key), list):
+                assessment[key] = [str(assessment[key])]
+            assessment[key] = [str(item) for item in assessment[key]]
+
+        if assessment.get("risk_level") not in {"low", "medium", "high"}:
+            assessment["risk_level"] = "medium"
 
         return assessment
 
