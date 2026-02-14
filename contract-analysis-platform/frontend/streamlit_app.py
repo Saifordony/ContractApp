@@ -3,6 +3,7 @@ import requests
 import os
 from typing import Dict
 import pandas as pd
+import fitz  # PyMuPDF
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -174,6 +175,24 @@ def make_api_request(
     except requests.exceptions.RequestException as e:
         st.error(f"API request failed: {str(e)}")
         return None
+
+
+def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from uploaded PDF bytes for contract persistence."""
+    text = ""
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+            for page in pdf_doc:
+                text += page.get_text()
+    except Exception as e:
+        raise ValueError(f"Failed to read PDF: {str(e)}") from e
+
+    if not text.strip():
+        raise ValueError(
+            "Could not extract text from this PDF. If it is scanned/image-only, please use OCR-enabled analysis first."
+        )
+
+    return text
 
 
 def login_page():
@@ -375,8 +394,7 @@ def contract_analysis_page():
                 # First, extract text from PDF
                 try:
                     pdf_bytes = uploaded_file.read()
-                    # We'll store the file content as text for now
-                    contract_content = f"PDF file uploaded: {uploaded_file.name}"
+                    contract_content = extract_text_from_uploaded_pdf(pdf_bytes)
 
                     # Create contract
                     response = make_api_request(
@@ -545,6 +563,12 @@ def contract_analysis_page():
                         st.session_state[f"analysis_results_{contract_id}"] = results
                 else:
                     st.error("Failed to run analysis pipeline")
+                    if pipeline_response:
+                        try:
+                            error_data = pipeline_response.json()
+                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                        except Exception:
+                            pass
         
         # Add option to clear current contract and start over
         st.markdown("---")
@@ -765,6 +789,12 @@ def clients_contracts_page():
                                         st.rerun()
                                     else:
                                         st.error("Analysis failed")
+                                        if response:
+                                            try:
+                                                error_data = response.json()
+                                                st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                                            except Exception:
+                                                pass
                     
                     # Edit form (shown when edit button is clicked)
                     if st.session_state.get(f"editing_contract_{contract_id}"):
