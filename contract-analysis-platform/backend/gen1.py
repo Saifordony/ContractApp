@@ -465,7 +465,6 @@ def analyze_contract_sync(
 
         if not clauses:
             raise ValueError("The model returned an empty clause dictionary.")
-        print(clauses)
         return clauses
 
     except json.JSONDecodeError as e:
@@ -586,7 +585,7 @@ async def analyze_contract(
 
 async def analyze_and_evaluate_contract(
     contract_text: str,
-    pipeline_chain: Any,
+    pipeline_chain: Any = None,
     response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
