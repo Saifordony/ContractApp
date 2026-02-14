@@ -115,6 +115,7 @@ streamlit run frontend/streamlit_app.py --server.port 8501
 - `PUT /contracts/{id}` - Update contract
 - `DELETE /contracts/{id}` - Delete contract
 - `POST /contracts/{id}/init-genai` - Trigger AI analysis
+- `POST /contracts/{id}/chat` - Ask AI questions about a specific contract
 
 ### System Monitoring
 - `GET /logs` - Get system logs (with filters)
@@ -143,6 +144,7 @@ All endpoints except `/auth/*`, `/healthz`, and `/readyz` require JWT authentica
 - Click "Analyze Contract Clauses" to extract clauses using AI
 - Click "Evaluate Contract Health" to get AI assessment
 - Use "Run Complete Analysis Pipeline" for full automated analysis
+- Use "Ask AI About This Contract" to ask natural-language questions about the currently selected contract
 
 ### 3. Manage Data
 - Use "Data Management" tab to view existing clients and contracts

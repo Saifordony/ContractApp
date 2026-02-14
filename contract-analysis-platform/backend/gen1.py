@@ -415,6 +415,24 @@ Output:
 
 prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
+contract_chat_prompt = PromptTemplate.from_template(
+    """
+You are a contract assistant that helps users understand a specific contract.
+
+Rules:
+- Answer using ONLY the provided contract text.
+- If the answer is not in the contract, say you cannot find it in the provided contract.
+- Be concise, clear, and practical.
+- Response language requirement: {response_language}.
+
+Contract text:
+{contract_text}
+
+User question:
+{question}
+"""
+)
+
 # Backward-compatible sentinel; pipeline is handled manually in sync helper.
 full_pipeline_chain = None
 
@@ -594,6 +612,45 @@ async def analyze_and_evaluate_contract(
         analyze_and_evaluate_contract_sync,
         contract_text,
         pipeline_chain,
+        response_language,
+    )
+
+
+def contract_chat_sync(
+    contract_text: str,
+    question: str,
+    response_language: str = "english",
+) -> str:
+    if not isinstance(contract_text, str) or not contract_text.strip():
+        raise ValueError("contract_text must be a non-empty string")
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("question must be a non-empty string")
+
+    try:
+        prompt_text = contract_chat_prompt.format(
+            contract_text=contract_text,
+            question=question,
+            response_language=normalize_response_language(response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        if not isinstance(result, str) or not result.strip():
+            raise ValueError("Model returned an empty answer")
+        return result.strip()
+    except Exception as e:
+        raise RuntimeError(f"Failed to answer contract question: {str(e)}")
+
+
+async def contract_chat(
+    contract_text: str,
+    question: str,
+    response_language: str = "english",
+) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor,
+        contract_chat_sync,
+        contract_text,
+        question,
         response_language,
     )
 

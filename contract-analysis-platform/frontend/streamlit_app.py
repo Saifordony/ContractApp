@@ -611,6 +611,46 @@ def contract_analysis_page():
                             st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
                         except Exception:
                             pass
+
+        st.markdown("---")
+        st.subheader("Ask AI About This Contract")
+        chat_key = f"contract_chat_history_{contract_id}"
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+
+        for msg in st.session_state[chat_key]:
+            with st.chat_message(msg["role"]):
+                st.write(msg["content"])
+
+        user_question = st.chat_input("Ask a question about this contract...")
+        if user_question:
+            st.session_state[chat_key].append({"role": "user", "content": user_question})
+            with st.chat_message("user"):
+                st.write(user_question)
+
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    chat_response = make_api_request(
+                        f"/contracts/{contract_id}/chat",
+                        "POST",
+                        {"question": user_question, "response_language": response_language},
+                    )
+
+                    if chat_response and chat_response.status_code == 200:
+                        answer = chat_response.json().get("answer", "No answer returned")
+                        st.write(answer)
+                        st.session_state[chat_key].append(
+                            {"role": "assistant", "content": answer}
+                        )
+                    else:
+                        error_msg = "Failed to get AI answer"
+                        if chat_response:
+                            try:
+                                error_data = chat_response.json()
+                                error_msg = error_data.get("detail", error_msg)
+                            except Exception:
+                                pass
+                        st.error(error_msg)
         
         # Add option to clear current contract and start over
         st.markdown("---")

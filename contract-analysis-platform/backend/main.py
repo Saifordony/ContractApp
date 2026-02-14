@@ -18,6 +18,7 @@ from backend.gen1 import (
     evaluate_contract,
     extract_text_from_pdf_bytes,
     analyze_and_evaluate_contract,
+    contract_chat,
 )
 
 # Load environment variables
@@ -78,6 +79,11 @@ class ContractAnalysis(BaseModel):
     clauses: Dict[str, str]
     evaluation: Dict[str, Any]
     created_at: datetime
+
+
+class ContractChatRequest(BaseModel):
+    question: str
+    response_language: str = "english"
 
 
 # Database setup
@@ -689,6 +695,62 @@ async def init_genai_analysis(
             "results": results
         }
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/contracts/{contract_id}/chat")
+async def chat_with_contract(
+    contract_id: str,
+    request: ContractChatRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    object_id = parse_object_id(contract_id, "contract ID")
+
+    contract = await db.contracts.find_one({"_id": object_id})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    if contract.get("created_by") != current_user["username"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    if not contract.get("content"):
+        raise HTTPException(status_code=400, detail="Contract has no content to chat about")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="GenAI service unavailable: OpenAI API key not configured",
+        )
+
+    try:
+        answer = await contract_chat(
+            contract_text=contract["content"],
+            question=request.question,
+            response_language=request.response_language,
+        )
+
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": f"/contracts/{contract_id}/chat",
+                "action": "contract_chat",
+                "timestamp": datetime.utcnow(),
+                "status": "success",
+            }
+        )
+
+        return {"answer": answer}
+    except Exception as e:
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": f"/contracts/{contract_id}/chat",
+                "action": "contract_chat",
+                "timestamp": datetime.utcnow(),
+                "status": "error",
+                "error": str(e),
+            }
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
