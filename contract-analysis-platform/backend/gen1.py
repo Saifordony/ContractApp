@@ -1,13 +1,11 @@
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 import openai
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from typing import Dict, Any
 from io import BytesIO
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from langchain.chains import SimpleSequentialChain
 import os
 import fitz  # PyMuPDF
 from PIL import Image
@@ -247,8 +245,6 @@ Output:
 
 prompt1 = PromptTemplate.from_template(analysis_system_prompt)
 
-analyzing_chain = LLMChain(llm=llm_model, prompt=prompt1)
-
 
 evaluation_system_prompt = """ 
 You are a professional and intelligent contract health assessor, well known for your ability to assess the health of contracts precisely and efficiently, and for providing the correct reasoning behind the assessment.
@@ -419,11 +415,8 @@ Output:
 
 prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
-evaluation_chain = LLMChain(llm=llm_model, prompt=prompt2)
-
-full_pipeline_chain = SimpleSequentialChain(
-    chains=[analyzing_chain, evaluation_chain], verbose=True
-)
+# Backward-compatible sentinel; pipeline is handled manually in sync helper.
+full_pipeline_chain = None
 
 
 def normalize_response_language(response_language: str) -> str:
@@ -441,7 +434,6 @@ def get_ocr_languages(response_language: str) -> str:
 
 def analyze_contract_sync(
     contract_text: str,
-    chain: LLMChain = analyzing_chain,
     response_language: str = "english",
 ) -> Dict[str, str]:
     """
@@ -464,10 +456,11 @@ def analyze_contract_sync(
     if not contract_text.strip():
         raise ValueError("contract_text cannot be empty or whitespace")
     try:
-        result = chain.run(
+        prompt_text = prompt1.format(
             contract_text=contract_text,
             response_language=normalize_response_language(response_language),
         )
+        result = llm_model.invoke(prompt_text).content
         clauses = json.loads(result)
 
         if not clauses:
@@ -483,7 +476,6 @@ def analyze_contract_sync(
 
 def evaluate_contract_sync(
     contract_clauses: Dict[str, str],
-    chain: LLMChain = evaluation_chain,
     response_language: str = "english",
 ) -> Dict[str, Any]:
     """
@@ -511,10 +503,11 @@ def evaluate_contract_sync(
 
     try:
         contract_json_str = json.dumps(contract_clauses)
-        result = chain.run(
+        prompt_text = prompt2.format(
             contract_json=contract_json_str,
             response_language=normalize_response_language(response_language),
         )
+        result = llm_model.invoke(prompt_text).content
         assessment = json.loads(result)
 
         if "approved" not in assessment or "reasoning" not in assessment:
@@ -532,7 +525,7 @@ def evaluate_contract_sync(
 
 def analyze_and_evaluate_contract_sync(
     contract_text: str,
-    pipeline_chain: SimpleSequentialChain = full_pipeline_chain,
+    pipeline_chain: Any = full_pipeline_chain,
     response_language: str = "english",
 ) -> Dict[str, Any]:
     """
@@ -540,7 +533,7 @@ def analyze_and_evaluate_contract_sync(
 
     Args:
         contract_text (str): The full text of the contract.
-        pipeline_chain (SimpleSequentialChain): The pre-built sequential chain to run.
+        pipeline_chain (Any): Backward-compatible placeholder; pipeline is run manually.
 
     Returns:
         Dict[str, Any]: The final evaluation result from the pipeline.
@@ -558,12 +551,10 @@ def analyze_and_evaluate_contract_sync(
     try:
         clauses = analyze_contract_sync(
             contract_text,
-            analyzing_chain,
             response_language=response_language,
         )
         return evaluate_contract_sync(
             clauses,
-            evaluation_chain,
             response_language=response_language,
         )
 
@@ -575,23 +566,21 @@ def analyze_and_evaluate_contract_sync(
 
 async def evaluate_contract(
     contract_clauses: Dict[str, str],
-    chain: LLMChain = evaluation_chain,
     response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, evaluate_contract_sync, contract_clauses, chain, response_language
+        executor, evaluate_contract_sync, contract_clauses, response_language
     )
 
 
 async def analyze_contract(
     contract_text: str,
-    chain: LLMChain = analyzing_chain,
     response_language: str = "english",
 ) -> Dict[str, str]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, analyze_contract_sync, contract_text, chain, response_language
+        executor, analyze_contract_sync, contract_text, response_language
     )
 
 

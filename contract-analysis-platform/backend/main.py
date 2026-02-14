@@ -18,7 +18,6 @@ from backend.gen1 import (
     evaluate_contract,
     extract_text_from_pdf_bytes,
     analyze_and_evaluate_contract,
-    full_pipeline_chain
 )
 
 # Load environment variables
@@ -666,7 +665,6 @@ async def init_genai_analysis(
     try:
         results = await analyze_and_evaluate_contract(
             contract["content"],
-            full_pipeline_chain,
             response_language=response_language,
         )
 
