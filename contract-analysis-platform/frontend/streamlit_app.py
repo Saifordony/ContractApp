@@ -107,7 +107,37 @@ def apply_modern_theme():
     )
 
 
+def get_dashboard_stats() -> Dict:
+    """Fetch real dashboard stats from backend APIs."""
+    stats = {
+        "total_requests": "—",
+        "success_rate": "—",
+        "clients": "—",
+        "contracts": "—",
+    }
+
+    metrics_response = make_api_request("/metrics")
+    if metrics_response and metrics_response.status_code == 200:
+        metrics = metrics_response.json()
+        stats["total_requests"] = metrics.get("total_requests", "—")
+        success_rate = metrics.get("success_rate")
+        stats["success_rate"] = (
+            f"{success_rate:.1f}%" if isinstance(success_rate, (int, float)) else "—"
+        )
+
+    clients_response = make_api_request("/clients")
+    if clients_response and clients_response.status_code == 200:
+        stats["clients"] = len(clients_response.json().get("clients", []))
+
+    contracts_response = make_api_request("/contracts")
+    if contracts_response and contracts_response.status_code == 200:
+        stats["contracts"] = len(contracts_response.json().get("contracts", []))
+
+    return stats
+
+
 def render_chrome_header(username: str):
+    stats = get_dashboard_stats()
     st.markdown(
         f"""
         <div class='topbar'>
@@ -123,13 +153,25 @@ def render_chrome_header(username: str):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown("<div class='dashboard-chip'><b>Total Traffic</b><br>325,456</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='dashboard-chip'><b>Total Requests</b><br>{stats['total_requests']}</div>",
+            unsafe_allow_html=True,
+        )
     with c2:
-        st.markdown("<div class='dashboard-chip'><b>New Users</b><br>3,006</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='dashboard-chip'><b>Success Rate</b><br>{stats['success_rate']}</div>",
+            unsafe_allow_html=True,
+        )
     with c3:
-        st.markdown("<div class='dashboard-chip'><b>Performance</b><br>60%</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='dashboard-chip'><b>Clients</b><br>{stats['clients']}</div>",
+            unsafe_allow_html=True,
+        )
     with c4:
-        st.markdown("<div class='dashboard-chip'><b>Sales</b><br>852</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='dashboard-chip'><b>Contracts</b><br>{stats['contracts']}</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def make_api_request(
@@ -965,15 +1007,15 @@ def main():
         return
     
 
-    # Top navigation
+    # Sidebar navigation (functional)
     st.sidebar.title(f"Welcome, {st.session_state.username}")
     st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
     st.sidebar.markdown("---")
-    st.sidebar.markdown("🏠 Home")
-    st.sidebar.markdown("📄 Contracts")
-    st.sidebar.markdown("👥 Clients")
-    st.sidebar.markdown("📈 Analytics")
-    st.sidebar.markdown("⚙️ Settings")
+    navigation = st.sidebar.radio(
+        "Navigate",
+        ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"],
+        label_visibility="collapsed",
+    )
 
     if st.sidebar.button("Logout"):
         # Clear all session state
@@ -983,16 +1025,14 @@ def main():
 
     render_chrome_header(st.session_state.username)
 
-    # Main content with tabs
-    tab1, tab2, tab3 = st.tabs(["Contract Analysis", "Data Management", "Admin Dashboard"])
-
-    with tab1:
+    # Main content
+    if navigation == "🏠 Contract Analysis":
         contract_analysis_page()
-    
-    with tab2:
+
+    elif navigation == "🗂️ Data Management":
         clients_contracts_page()
-    
-    with tab3:
+
+    elif navigation == "📊 Admin Dashboard":
         admin_dashboard()
 
 
