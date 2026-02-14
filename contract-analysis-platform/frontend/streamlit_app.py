@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import html
 from typing import Dict
 import pandas as pd
 import fitz  # PyMuPDF
@@ -100,6 +101,61 @@ def apply_modern_theme():
         .topbar-sub {
             color: #5c647c;
             font-size: 0.9rem;
+        }
+        .chat-shell {
+            background: #f8fafc;
+            border: 1px solid #d8e1e8;
+            border-radius: 16px;
+            padding: 1rem;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+        }
+        .chat-scroll {
+            max-height: 360px;
+            overflow-y: auto;
+            padding-right: 0.25rem;
+            margin-bottom: 0.5rem;
+        }
+        .chat-row {
+            display: flex;
+            margin: 0.5rem 0;
+        }
+        .chat-row.user {
+            justify-content: flex-end;
+        }
+        .chat-bubble {
+            max-width: 86%;
+            padding: 0.7rem 0.9rem;
+            border-radius: 14px;
+            border: 1px solid #dce4ec;
+            line-height: 1.45;
+            font-size: 0.98rem;
+        }
+        .chat-bubble.assistant {
+            background: #ffffff;
+            color: #222b3c;
+            border-top-left-radius: 6px;
+            box-shadow: 0 2px 10px rgba(30, 44, 75, 0.08);
+        }
+        .chat-bubble.user {
+            background: linear-gradient(140deg, #25304f 0%, #37476f 100%);
+            color: #ffffff;
+            border-color: #293558;
+            border-top-right-radius: 6px;
+            box-shadow: 0 4px 14px rgba(31, 41, 68, 0.24);
+        }
+        .chat-caption {
+            font-size: 0.8rem;
+            color: #6a768f;
+            margin: 0.1rem 0 0.6rem 0.2rem;
+        }
+        div[data-testid="stChatInput"] {
+            border: 1px solid #ccd8e6;
+            border-radius: 12px;
+            background: #ffffff;
+            box-shadow: 0 3px 12px rgba(21, 31, 51, 0.08);
+        }
+        div[data-testid="stChatInput"] textarea {
+            font-size: 0.98rem;
         }
         </style>
         """,
@@ -268,6 +324,29 @@ def render_contract_evaluation(evaluation: Dict):
         st.markdown("#### What This Contract Needs")
         for item in changes:
             st.write(f"- {item}")
+
+
+def render_chat_history(chat_messages):
+    st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
+    if not chat_messages:
+        st.markdown(
+            "<div class='chat-caption'>Ask about obligations, payment terms, risks, termination rights, or any clause in this contract.</div>",
+            unsafe_allow_html=True,
+        )
+    for msg in chat_messages:
+        role = msg.get("role", "assistant")
+        role_class = "user" if role == "user" else "assistant"
+        escaped_text = html.escape(msg.get("content", ""))
+        escaped_text = escaped_text.replace("\n", "<br>")
+        st.markdown(
+            f"""
+            <div class='chat-row {role_class}'>
+                <div class='chat-bubble {role_class}'>{escaped_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def login_page():
@@ -629,43 +708,39 @@ def contract_analysis_page():
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
+        st.caption("Contract-grounded assistant — answers are based on this selected contract only.")
         chat_key = f"contract_chat_history_{contract_id}"
         if chat_key not in st.session_state:
             st.session_state[chat_key] = []
 
-        for msg in st.session_state[chat_key]:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
+        render_chat_history(st.session_state[chat_key])
 
         user_question = st.chat_input("Ask a question about this contract...")
         if user_question:
             st.session_state[chat_key].append({"role": "user", "content": user_question})
-            with st.chat_message("user"):
-                st.write(user_question)
 
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    chat_response = make_api_request(
-                        f"/contracts/{contract_id}/chat",
-                        "POST",
-                        {"question": user_question, "response_language": response_language},
+            with st.spinner("Thinking..."):
+                chat_response = make_api_request(
+                    f"/contracts/{contract_id}/chat",
+                    "POST",
+                    {"question": user_question, "response_language": response_language},
+                )
+
+                if chat_response and chat_response.status_code == 200:
+                    answer = chat_response.json().get("answer", "No answer returned")
+                    st.session_state[chat_key].append(
+                        {"role": "assistant", "content": answer}
                     )
-
-                    if chat_response and chat_response.status_code == 200:
-                        answer = chat_response.json().get("answer", "No answer returned")
-                        st.write(answer)
-                        st.session_state[chat_key].append(
-                            {"role": "assistant", "content": answer}
-                        )
-                    else:
-                        error_msg = "Failed to get AI answer"
-                        if chat_response:
-                            try:
-                                error_data = chat_response.json()
-                                error_msg = error_data.get("detail", error_msg)
-                            except Exception:
-                                pass
-                        st.error(error_msg)
+                else:
+                    error_msg = "Failed to get AI answer"
+                    if chat_response:
+                        try:
+                            error_data = chat_response.json()
+                            error_msg = error_data.get("detail", error_msg)
+                        except Exception:
+                            pass
+                    st.error(error_msg)
+            st.rerun()
         
         # Add option to clear current contract and start over
         st.markdown("---")
