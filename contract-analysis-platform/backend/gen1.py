@@ -437,9 +437,14 @@ You are a contract assistant that helps users understand a specific contract.
 
 Rules:
 - Answer using ONLY the provided contract text.
-- If the answer is not in the contract, say you cannot find it in the provided contract.
-- Be concise, clear, and practical.
+- If the answer is not in the contract, clearly say you cannot find it in the provided contract.
+- Keep the answer natural, human, practical, and easy to understand.
+- Adapt your tone and writing style to the user's style guide below without copying slang excessively.
+- Use short paragraphs and bullets when useful.
 - Response language requirement: {response_language}.
+
+User style guide:
+{user_style_guide}
 
 Contract text:
 {contract_text}
@@ -448,6 +453,47 @@ User question:
 {question}
 """
 )
+
+
+
+def infer_user_style_guide(question: str, response_language: str) -> str:
+    question_text = (question or "").strip()
+    lang = normalize_response_language(response_language)
+
+    if not question_text:
+        return (
+            "استخدم نبرة واضحة ومهنية مع شرح مبسط." if lang == "Arabic" else
+            "Use a clear, professional tone with simple explanations."
+        )
+
+    lower_question = question_text.lower()
+
+    if any(token in lower_question for token in ["simple", "explain like", "easy", "beginner", "بسيط", "شرح", "افهم"]):
+        return (
+            "استخدم أسلوبًا مبسطًا جدًا ولغة غير قانونية قدر الإمكان، مع مثال قصير إن أمكن."
+            if lang == "Arabic"
+            else "Use plain non-legal language, keep it beginner-friendly, and include one short example if helpful."
+        )
+
+    if "?" in question_text and len(question_text.split()) <= 10:
+        return (
+            "المستخدم يسأل بشكل مباشر وسريع؛ أجب بإيجاز شديد ثم أضف نقطة توضيح واحدة مهمة."
+            if lang == "Arabic"
+            else "The user asks directly; answer briefly first, then add one key clarification."
+        )
+
+    if len(question_text.split()) > 35:
+        return (
+            "المستخدم مفصل؛ قدّم إجابة منظمة مع نقاط واضحة وخطوات عملية."
+            if lang == "Arabic"
+            else "The user is detailed; provide a structured response with clear bullets and practical next steps."
+        )
+
+    return (
+        "حافظ على نبرة ودودة ومهنية، وقدم إجابة واضحة مع نقاط عملية قصيرة."
+        if lang == "Arabic"
+        else "Keep a friendly professional tone and provide a clear answer with short practical points."
+    )
 
 # Backward-compatible sentinel; pipeline is handled manually in sync helper.
 full_pipeline_chain = None
@@ -661,6 +707,7 @@ def contract_chat_sync(
             contract_text=contract_text,
             question=question,
             response_language=normalize_response_language(response_language),
+            user_style_guide=infer_user_style_guide(question, response_language),
         )
         result = llm_model.invoke(prompt_text).content
         if not isinstance(result, str) or not result.strip():
