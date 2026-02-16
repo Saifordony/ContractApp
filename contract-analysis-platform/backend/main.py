@@ -23,6 +23,11 @@ from backend.gen1 import (
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
 from backend.services.pipeline_analysis import analyze_pipeline
+from backend.services.benchmark_service import (
+    ingest_seed_dataset,
+    load_seed_from_repo,
+    run_benchmark_analysis,
+)
 
 # Load environment variables
 load_dotenv()
@@ -38,6 +43,7 @@ if not OPENAI_API_KEY:
     )
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
 if not SECRET_KEY:
     raise RuntimeError("SECRET_KEY environment variable must be set")
@@ -154,6 +160,11 @@ def parse_object_id(value: str, field_name: str) -> ObjectId:
         return ObjectId(value)
     except InvalidId as exc:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}") from exc
+
+
+def ensure_benchmark_enabled() -> None:
+    if not BENCHMARK_ENABLED:
+        raise HTTPException(status_code=404, detail="Benchmark feature is disabled")
 
 
 # Authentication utilities
@@ -872,6 +883,101 @@ async def chat_with_contract(
             }
         )
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/benchmark/ingest")
+async def ingest_benchmark_seed(
+    payload: Dict[str, Any],
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_benchmark_enabled()
+
+    allow_all = os.getenv("BENCHMARK_ALLOW_ALL_INGEST", "false").lower() == "true"
+    if not allow_all and current_user["username"] not in {"admin", "dev"}:
+        raise HTTPException(status_code=403, detail="Only admin/dev can ingest benchmark data")
+
+    use_repo_seed = bool(payload.get("use_repo_seed", True))
+    clear_first = bool(payload.get("clear_first", False))
+
+    if use_repo_seed:
+        result = load_seed_from_repo()
+    else:
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            raise HTTPException(status_code=400, detail="items must be a list")
+        result = ingest_seed_dataset(items, clear_first=clear_first)
+
+    await db.logs.insert_one(
+        {
+            "user": current_user["username"],
+            "endpoint": "/benchmark/ingest",
+            "action": "benchmark_ingest",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "ingested": result.get("ingested", 0),
+            "total": result.get("total", 0),
+        }
+    )
+    return result
+
+
+@app.post("/benchmark/analyze")
+async def benchmark_analyze_endpoint(
+    file: UploadFile = File(...),
+    contract_type: str = Form(...),
+    jurisdiction: str = Form(...),
+    industry: Optional[str] = Form(None),
+    opt_in_store_user_data: bool = Form(False),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_benchmark_enabled()
+
+    file_name = file.filename or "uploaded_contract.txt"
+    if not file_name.lower().endswith((".pdf", ".docx", ".txt")):
+        raise HTTPException(status_code=400, detail="Supported types: .pdf, .docx, .txt")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    try:
+        result = run_benchmark_analysis(
+            filename=file_name,
+            file_bytes=data,
+            contract_type=contract_type,
+            jurisdiction=jurisdiction,
+            industry=industry,
+            opt_in_store_user_data=opt_in_store_user_data,
+        )
+
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/benchmark/analyze",
+                "action": "benchmark_analyze",
+                "timestamp": datetime.utcnow(),
+                "status": "success",
+                "contract_type": contract_type,
+                "jurisdiction": jurisdiction,
+                "industry": industry,
+                "overall_score": result.get("overall_score"),
+            }
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/benchmark/analyze",
+                "action": "benchmark_analyze",
+                "timestamp": datetime.utcnow(),
+                "status": "error",
+                "error": str(exc),
+            }
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 if __name__ == "__main__":

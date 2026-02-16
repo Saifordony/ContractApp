@@ -8,6 +8,7 @@ import fitz  # PyMuPDF
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
 # Initialize session state
 if "token" not in st.session_state:
@@ -1196,6 +1197,78 @@ def clients_contracts_page():
         st.markdown("**Note:** To create new contracts with AI analysis, use the 'Contract Analysis' tab.")
 
 
+
+def benchmark_page():
+    """Benchmark Comparison page (additive feature)."""
+    st.title("Benchmark Comparison")
+    st.caption("Clause-level benchmarking only. Not legal advice.")
+
+    with st.form("benchmark_form"):
+        uploaded_file = st.file_uploader("Upload contract (.pdf, .docx, .txt)", type=["pdf", "docx", "txt"])
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            contract_type = st.selectbox(
+                "Contract Type",
+                ["employment", "msa", "vendor", "nda", "other"],
+            )
+        with col2:
+            jurisdiction = st.selectbox(
+                "Jurisdiction",
+                ["jordan", "usa", "uk", "eu", "other"],
+            )
+        with col3:
+            industry = st.text_input("Industry (optional)")
+
+        opt_in = st.checkbox("Opt-in: store embedding + minimal metadata for future benchmarks", value=False)
+        submitted = st.form_submit_button("Run Benchmark")
+
+    if submitted:
+        if not uploaded_file:
+            st.error("Please upload a contract file.")
+            return
+
+        with st.spinner("Running clause-level benchmark analysis..."):
+            files = {"file": (uploaded_file.name, uploaded_file.read(), "application/octet-stream")}
+            data = {
+                "contract_type": contract_type,
+                "jurisdiction": jurisdiction,
+                "industry": industry,
+                "opt_in_store_user_data": opt_in,
+            }
+            response = make_api_request("/benchmark/analyze", "POST", data=data, files=files)
+
+        if response and response.status_code == 200:
+            payload = response.json()
+            st.metric("Overall Alignment Score", payload.get("overall_score", "N/A"))
+
+            fallbacks = payload.get("meta", {}).get("fallbacks_used", [])
+            if fallbacks:
+                st.info(f"Fallback retrieval rules used: {', '.join(fallbacks)}")
+
+            for clause in payload.get("clause_results", []):
+                label = clause.get("alignment_label", "yellow")
+                badge = "🟢" if label == "green" else "🟡" if label == "yellow" else "🔴"
+                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} | confidence {clause.get('confidence', 0)}"):
+                    st.write(f"**Explanation:** {clause.get('explanation', '')}")
+                    st.write(f"**Typical patterns:** {', '.join(clause.get('typical_patterns', []))}")
+                    st.write(f"**Benchmark N:** {clause.get('benchmark_stats', {}).get('N', 0)}")
+                    if clause.get("suggested_revision"):
+                        st.write(f"**Suggested revision:** {clause['suggested_revision']}")
+
+                    citations = clause.get("citations", [])
+                    if citations:
+                        st.markdown("**Citations**")
+                        for cit in citations:
+                            st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
+        else:
+            st.error("Benchmark analysis failed")
+            if response:
+                try:
+                    st.error(response.json().get("detail", "Unknown error"))
+                except Exception:
+                    pass
+
+
 def admin_dashboard():
     """Admin dashboard with metrics and logs"""
     st.title("Admin Dashboard")
@@ -1309,7 +1382,7 @@ def main():
     st.sidebar.markdown("---")
     navigation = st.sidebar.radio(
         "Navigate",
-        ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"],
+        (["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard", "📚 Benchmark"] if BENCHMARK_ENABLED else ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"]),
         label_visibility="collapsed",
     )
 
@@ -1335,6 +1408,10 @@ def main():
     elif navigation == "📊 Admin Dashboard":
         admin_dashboard()
         st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
+
+    elif navigation == "📚 Benchmark":
+        benchmark_page()
+        st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
