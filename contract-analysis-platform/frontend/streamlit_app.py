@@ -16,138 +16,280 @@ if "username" not in st.session_state:
     st.session_state.username = None
 
 
-def apply_modern_theme():
+def apply_modern_theme(sidebar_compact: bool = False):
+    sidebar_width = "5.2rem" if sidebar_compact else "19.5rem"
+    sidebar_text_display = "none" if sidebar_compact else "block"
+
     st.markdown(
-        """
+        f"""
         <style>
-        .stApp {
-            background: linear-gradient(120deg, #eef3f6 0%, #e7eef2 100%);
-        }
-        .block-container {
-            padding-top: 1rem;
-            padding-bottom: 2rem;
-        }
-        h1, h2, h3 {
-            color: #20263a;
+        /* ==================== Design System ==================== */
+        .stApp {{
+            background: radial-gradient(circle at 12% 20%, rgba(125, 95, 255, 0.14), transparent 42%),
+                        radial-gradient(circle at 82% 12%, rgba(51, 96, 255, 0.14), transparent 42%),
+                        linear-gradient(140deg, #eef3f8 0%, #e8eef6 46%, #eaf2f6 100%);
+            font-family: Inter, "SF Pro Text", "Segoe UI", sans-serif;
+            animation: pageFadeIn 0.45s ease-out;
+        }}
+        .stApp::before {{
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(130deg, rgba(98, 86, 255, 0.06), rgba(67, 116, 255, 0.05), rgba(88, 168, 255, 0.05));
+            background-size: 190% 190%;
+            animation: gradientShift 14s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }}
+        .block-container {{
+            position: relative;
+            z-index: 1;
+            padding-top: 1.1rem;
+            padding-bottom: 2.2rem;
+            animation: fadeInUp 0.35s ease-out;
+        }}
+        @keyframes gradientShift {{
+            0% {{ background-position: 0% 50%; }}
+            50% {{ background-position: 100% 50%; }}
+            100% {{ background-position: 0% 50%; }}
+        }}
+        @keyframes pageFadeIn {{
+            from {{ opacity: 0; }}
+            to {{ opacity: 1; }}
+        }}
+        @keyframes fadeInUp {{
+            from {{ opacity: 0; transform: translateY(6px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        /* ==================== Typography & Layout ==================== */
+        h1, h2, h3 {{
+            color: #1d2438;
             letter-spacing: -0.02em;
-            font-weight: 700;
-        }
-        section[data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #1f2338 0%, #232845 100%);
-            border-right: 1px solid #2f365c;
-        }
-        section[data-testid="stSidebar"] * {
-            color: #eef1ff !important;
-        }
-        div[data-testid="stTabs"] button {
-            border-radius: 10px 10px 0 0;
+            font-weight: 760;
+        }}
+        .page-transition {{
+            animation: fadeInUp 0.28s ease-in-out;
+        }}
+
+        /* ==================== Sidebar ==================== */
+        section[data-testid="stSidebar"] {{
+            background: linear-gradient(180deg, #121b36 0%, #1b2342 45%, #1f2748 100%);
+            border-right: 1px solid rgba(156, 173, 211, 0.25);
+            box-shadow: 10px 0 40px rgba(12, 18, 35, 0.28);
+            min-width: {sidebar_width} !important;
+            max-width: {sidebar_width} !important;
+            transition: all 0.28s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] * {{
+            color: #e9f0ff !important;
+            transition: all 0.25s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {{ display: none; }}
+        section[data-testid="stSidebar"] .stCaption,
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] p {{
+            display: {sidebar_text_display};
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label {{
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(173, 196, 255, 0.25);
+            border-radius: 12px;
+            margin-bottom: 0.45rem;
+            padding: 0.45rem 0.5rem;
+            transition: all 0.25s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
+            transform: translateX(2px);
+            background: rgba(111, 135, 255, 0.22);
+            border-color: rgba(178, 197, 255, 0.55);
+            box-shadow: 0 8px 22px rgba(28, 43, 87, 0.35);
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
+            background: linear-gradient(90deg, rgba(74, 105, 255, 0.35), rgba(137, 94, 255, 0.35));
+            border-color: rgba(198, 210, 255, 0.72);
+            box-shadow: 0 8px 22px rgba(53, 73, 132, 0.34);
+        }}
+
+        /* ==================== Components ==================== */
+        div[data-testid="stTabs"] button {{
+            border-radius: 12px 12px 0 0;
             background: transparent;
-            color: #2b3248;
+            color: #2b3552;
             font-weight: 700;
             border: none;
-        }
-        div[data-testid="stTabs"] button[aria-selected="true"] {
-            background: #21263b !important;
+            transition: all 0.22s ease-in-out;
+        }}
+        div[data-testid="stTabs"] button[aria-selected="true"] {{
+            background: linear-gradient(90deg, #233155 0%, #2f3f67 100%) !important;
             color: #ffffff !important;
-        }
-        div[data-testid="stForm"], div[data-testid="stExpander"] {
-            background: #f8fbfc;
-            border: 1px solid #d6dfe5;
-            border-radius: 14px;
-            padding: 0.5rem;
-        }
-        .stButton > button {
-            border-radius: 10px;
-            border: 1px solid #2e344f;
-            background: linear-gradient(90deg, #21263b 0%, #343b5a 100%);
+        }}
+        div[data-testid="stForm"], div[data-testid="stExpander"] {{
+            background: rgba(255, 255, 255, 0.55);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(205, 221, 247, 0.75);
+            border-radius: 16px;
+            padding: 0.65rem;
+            box-shadow: 0 14px 36px rgba(33, 45, 77, 0.09);
+            transition: all 0.3s ease;
+        }}
+        div[data-testid="stTextInputRootElement"],
+        div[data-testid="stTextAreaRootElement"],
+        div[data-baseweb="select"] > div {{
+            border-radius: 12px !important;
+            transition: all 0.24s ease-in-out !important;
+        }}
+        div[data-testid="stTextInputRootElement"]:focus-within,
+        div[data-testid="stTextAreaRootElement"]:focus-within {{
+            box-shadow: 0 0 0 3px rgba(92, 122, 255, 0.22) !important;
+            border-color: rgba(92, 122, 255, 0.6) !important;
+        }}
+        .stButton > button,
+        .stForm [data-testid="stFormSubmitButton"] button {{
+            border-radius: 12px;
+            border: 1px solid #364976;
+            background: linear-gradient(100deg, #24335e 0%, #3a4f89 100%);
             color: white;
             font-weight: 700;
-            box-shadow: 0 4px 12px rgba(24, 28, 43, 0.25);
-        }
-        .stButton > button:hover {
-            opacity: 0.95;
-            transform: translateY(-2px);
-        }
-        div[data-testid="stMetric"] {
-            background: #ffffff;
-            border: 1px solid #d9e2e8;
-            border-radius: 12px;
-            padding: 10px;
-            box-shadow: 0 2px 8px rgba(18, 24, 38, 0.08);
-        }
-        .dashboard-chip {
-            background: #20263a;
-            color: #ffffff;
-            border-radius: 12px;
-            padding: 0.65rem 0.9rem;
-            border: 1px solid #313954;
-            margin-bottom: 0.45rem;
-        }
-        .topbar {
-            background: #f4f7f8;
-            border: 1px solid #d9e2e8;
-            border-radius: 14px;
-            padding: 0.75rem 1rem;
-            margin-bottom: 0.75rem;
+            box-shadow: 0 9px 24px rgba(26, 39, 70, 0.28);
+            transition: all 0.28s ease-in-out;
+        }}
+        .stButton > button:hover,
+        .stForm [data-testid="stFormSubmitButton"] button:hover {{
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 14px 30px rgba(33, 48, 87, 0.35);
+            filter: brightness(1.03);
+        }}
+
+        /* ==================== Reusable Cards ==================== */
+        .metric-card {{
+            background: rgba(255, 255, 255, 0.56);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(201, 216, 244, 0.8);
+            border-radius: 16px;
+            padding: 0.95rem 1rem;
+            box-shadow: 0 14px 35px rgba(30, 43, 74, 0.10);
+            transition: all 0.28s ease-in-out;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-3px);
+            box-shadow: 0 18px 36px rgba(30, 43, 74, 0.16);
+            border-color: rgba(134, 159, 255, 0.65);
+        }}
+        .metric-label {{
+            font-size: 0.81rem;
+            color: #667291;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.3rem;
+        }}
+        .metric-value {{
+            font-size: 1.45rem;
+            color: #1f2b49;
+            font-weight: 760;
+            line-height: 1.1;
+        }}
+        .metric-sub {{
+            color: #667291;
+            font-size: 0.82rem;
+            margin-top: 0.2rem;
+        }}
+
+        .topbar {{
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(201, 216, 244, 0.8);
+            border-radius: 16px;
+            padding: 0.88rem 1rem;
+            margin-bottom: 0.85rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-        .topbar-title {
+            box-shadow: 0 14px 34px rgba(30, 43, 74, 0.1);
+        }}
+        .topbar-title {{
             font-weight: 800;
-            color: #1f2438;
+            color: #1f2a45;
             letter-spacing: 0.02em;
-        }
-        .topbar-sub {
-            color: #5c647c;
+        }}
+        .topbar-sub {{
+            color: #5d6883;
             font-size: 0.9rem;
-        }
-        .chat-shell {
-            background: #f8fafc;
+        }}
+
+        .login-wrap {{
+            min-height: 85vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeInUp 0.35s ease-out;
+        }}
+        .login-card {{
+            width: min(760px, 92vw);
+            background: rgba(255, 255, 255, 0.56);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(191, 209, 241, 0.75);
+            border-radius: 18px;
+            padding: 1.25rem 1.25rem 0.55rem;
+            box-shadow: 0 20px 45px rgba(25, 38, 70, 0.16);
+        }}
+
+        .chat-shell {{
+            background: rgba(255, 255, 255, 0.55);
             border: 1px solid #d8e1e8;
             border-radius: 16px;
             padding: 1rem;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
-        }
-        .chat-scroll {
+        }}
+        .chat-scroll {{
             max-height: 360px;
             overflow-y: auto;
             padding-right: 0.25rem;
             margin-bottom: 0.5rem;
-        }
-        .chat-row {
-            display: flex;
-            margin: 0.5rem 0;
-        }
-        .chat-row.user {
-            justify-content: flex-end;
-        }
-        .chat-bubble {
+        }}
+        .chat-row {{ display: flex; margin: 0.5rem 0; }}
+        .chat-row.user {{ justify-content: flex-end; }}
+        .chat-bubble {{
             max-width: 86%;
             padding: 0.7rem 0.9rem;
             border-radius: 14px;
             border: 1px solid #dce4ec;
             line-height: 1.45;
             font-size: 0.98rem;
-        }
-        .chat-bubble.assistant {
+            transition: all 0.22s ease;
+        }}
+        .chat-bubble.assistant {{
             background: #ffffff;
             color: #222b3c;
             border-top-left-radius: 6px;
             box-shadow: 0 2px 10px rgba(30, 44, 75, 0.08);
-        }
-        .chat-bubble.user {
+        }}
+        .chat-bubble.user {{
             background: linear-gradient(140deg, #25304f 0%, #37476f 100%);
             color: #ffffff;
             border-color: #293558;
             border-top-right-radius: 6px;
             box-shadow: 0 4px 14px rgba(31, 41, 68, 0.24);
-        }
-        .chat-caption {
-            font-size: 0.8rem;
-            color: #6a768f;
-            margin: 0.1rem 0 0.6rem 0.2rem;
-        }
+        }}
+
+        .fab-chip {{
+            position: fixed;
+            right: 1.4rem;
+            bottom: 1.3rem;
+            background: linear-gradient(120deg, #2b3f79 0%, #5b48b8 100%);
+            color: #fff;
+            border-radius: 999px;
+            padding: 0.62rem 0.9rem;
+            box-shadow: 0 16px 26px rgba(35, 43, 93, 0.35);
+            border: 1px solid rgba(213, 226, 255, 0.24);
+            font-size: 0.82rem;
+            font-weight: 600;
+            z-index: 1000;
+            pointer-events: none;
+            opacity: 0.95;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -183,6 +325,19 @@ def get_dashboard_stats() -> Dict:
     return stats
 
 
+def render_metric_card(title: str, value: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div class='metric-card'>
+            <div class='metric-label'>{title}</div>
+            <div class='metric-value'>{value}</div>
+            <div class='metric-sub'>{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_chrome_header(username: str):
     stats = get_dashboard_stats()
     st.markdown(
@@ -200,25 +355,13 @@ def render_chrome_header(username: str):
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown(
-            f"<div class='dashboard-chip'><b>Total Requests</b><br>{stats['total_requests']}</div>",
-            unsafe_allow_html=True,
-        )
+        render_metric_card("Total Requests", str(stats['total_requests']), "All tracked API calls")
     with c2:
-        st.markdown(
-            f"<div class='dashboard-chip'><b>Success Rate</b><br>{stats['success_rate']}</div>",
-            unsafe_allow_html=True,
-        )
+        render_metric_card("Success Rate", str(stats['success_rate']), "Healthy backend responses")
     with c3:
-        st.markdown(
-            f"<div class='dashboard-chip'><b>Clients</b><br>{stats['clients']}</div>",
-            unsafe_allow_html=True,
-        )
+        render_metric_card("Clients", str(stats['clients']), "Managed organizations")
     with c4:
-        st.markdown(
-            f"<div class='dashboard-chip'><b>Contracts</b><br>{stats['contracts']}</div>",
-            unsafe_allow_html=True,
-        )
+        render_metric_card("Contracts", str(stats['contracts']), "Contracts in your workspace")
 
 
 def make_api_request(
@@ -340,6 +483,7 @@ def render_chat_history(chat_messages):
 
 def login_page():
     """Login and Registration page"""
+    st.markdown("<div class='login-wrap'><div class='login-card'>", unsafe_allow_html=True)
     st.title("Contract Analysis Platform")
 
     tab1, tab2 = st.tabs(["Login", "Register"])
@@ -394,6 +538,8 @@ def login_page():
                         st.error(
                             "Registration failed. Username or email might already exist."
                         )
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def get_clients_list():
@@ -1143,7 +1289,11 @@ def main():
     st.set_page_config(
         page_title="Contract Analysis Platform", page_icon="📄", layout="wide"
     )
-    apply_modern_theme()
+
+    if "sidebar_compact" not in st.session_state:
+        st.session_state.sidebar_compact = False
+
+    apply_modern_theme(st.session_state.sidebar_compact)
 
     # Check if user is logged in
     if not st.session_state.token:
@@ -1152,8 +1302,10 @@ def main():
     
 
     # Sidebar navigation (functional)
-    st.sidebar.title(f"Welcome, {st.session_state.username}")
+    st.sidebar.title("⚡ CAP")
+    st.sidebar.caption(f"Welcome, {st.session_state.username}")
     st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
+    st.sidebar.toggle("Compact sidebar", key="sidebar_compact")
     st.sidebar.markdown("---")
     navigation = st.sidebar.radio(
         "Navigate",
@@ -1169,15 +1321,22 @@ def main():
 
     render_chrome_header(st.session_state.username)
 
+    st.markdown("<div class='page-transition'>", unsafe_allow_html=True)
+
     # Main content
     if navigation == "🏠 Contract Analysis":
         contract_analysis_page()
+        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
 
     elif navigation == "🗂️ Data Management":
         clients_contracts_page()
+        st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
 
     elif navigation == "📊 Admin Dashboard":
         admin_dashboard()
+        st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
