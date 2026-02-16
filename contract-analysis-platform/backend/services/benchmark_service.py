@@ -44,6 +44,7 @@ class BenchmarkCitation(BaseModel):
 class ClauseBenchmarkResult(BaseModel):
     clause_id: str
     clause_type: str
+    clause_score: int = Field(ge=0, le=100)
     alignment_label: str
     benchmark_stats: Dict[str, Any]
     typical_patterns: List[str]
@@ -186,13 +187,16 @@ def split_clauses(contract_text: str) -> List[Tuple[str, str, str]]:
     current_body: List[str] = []
     start_idx = 0
 
-    heading_pattern = re.compile(r"^(\d+(\.\d+)*\s+)?([A-Z][A-Za-z\s/&-]{2,}|[A-Z\s]{4,})$")
+    heading_pattern = re.compile(
+        r"^(\d+(?:\.\d+)*[\)\.]?\s+)?([A-Z][A-Za-z\s/&-]{2,}|[A-Z\s]{4,})$"
+    )
 
     for idx, line in enumerate(lines):
-        is_heading = bool(heading_pattern.match(line)) and len(line.split()) <= 8
+        is_heading = bool(heading_pattern.match(line)) and len(line.split()) <= 10
         if is_heading and current_body:
             text = " ".join(current_body).strip()
-            clauses.append((current_title, text, f"line:{start_idx}-{idx}"))
+            if text:
+                clauses.append((current_title, text, f"line:{start_idx}-{idx}"))
             current_title = line.lower()
             current_body = []
             start_idx = idx
@@ -203,9 +207,34 @@ def split_clauses(contract_text: str) -> List[Tuple[str, str, str]]:
             current_body.append(line)
 
     if current_body:
-        clauses.append((current_title, " ".join(current_body).strip(), f"line:{start_idx}-{len(lines)}"))
+        text = " ".join(current_body).strip()
+        if text:
+            clauses.append((current_title, text, f"line:{start_idx}-{len(lines)}"))
 
-    return clauses
+    if len(clauses) >= 2:
+        return clauses
+
+    # fallback: paragraph-level splitting for contracts without clear headings
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", contract_text) if p.strip()]
+    para_clauses: List[Tuple[str, str, str]] = []
+    for idx, para in enumerate(paragraphs, start=1):
+        if len(para) < 40:
+            continue
+        heading = para.split(".", 1)[0][:60].strip().lower() or f"clause_{idx}"
+        para_clauses.append((heading, para, f"paragraph:{idx}"))
+
+    if len(para_clauses) >= 3:
+        return para_clauses
+
+    # fallback: sentence windows so the full contract is still compared clause-by-clause
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", contract_text) if len(s.strip()) > 25]
+    windowed: List[Tuple[str, str, str]] = []
+    for idx in range(0, len(sentences), 2):
+        chunk = " ".join(sentences[idx : idx + 2]).strip()
+        if chunk:
+            windowed.append((f"segment_{idx // 2 + 1}", chunk, f"sentence:{idx+1}-{min(idx+2, len(sentences))}"))
+
+    return windowed if windowed else clauses
 
 
 def classify_clause_type(title: str, text: str) -> str:
@@ -297,13 +326,13 @@ def _score_clause_alignment(
 
 
 def _summarize_typical_patterns(retrieved: List[Tuple[float, BenchmarkClause]]) -> List[str]:
-    snippets = [clause.snippet for _, clause in retrieved[:3]]
+    snippets = [clause.snippet for _, clause in retrieved[:2]]
     patterns = []
     for snip in snippets:
         sentence = re.split(r"(?<=[\.!?])\s+", snip.strip())[0]
         if sentence and sentence not in patterns:
-            patterns.append(sentence[:180])
-    return patterns[:3]
+            patterns.append(sentence[:120])
+    return patterns[:2]
 
 
 def _generate_explanation(
@@ -313,10 +342,8 @@ def _generate_explanation(
     benchmark_stats: Dict[str, Any],
     evidence_ids: List[str],
 ) -> str:
-    return (
-        f"Clause type '{clause_type}' scored {score}/100 ({label}) against {benchmark_stats.get('N', 0)} peers. "
-        f"Assessment is grounded in retrieved benchmark clauses: {', '.join(evidence_ids[:3])}."
-    )
+    ids = ", ".join(evidence_ids[:2]) if evidence_ids else "none"
+    return f"{clause_type}: {score}/100 ({label}), peers={benchmark_stats.get('N', 0)}, refs={ids}."
 
 
 def _build_user_clauses(contract_text: str) -> List[UserClause]:
@@ -500,14 +527,11 @@ def run_benchmark_analysis(
 
         suggested_revision = None
         if label in {"yellow", "red"}:
-            suggested_revision = (
-                f"Consider revising this {clause.clause_type} clause toward benchmark median terms "
-                f"for {contract_type}/{jurisdiction} peer contracts."
-            )
+            suggested_revision = f"Adjust {clause.clause_type} toward peer median terms."
 
         avg_similarity = (sum(scores) / len(scores)) if scores else 0.0
         if len(retrieved) < 2 or avg_similarity < 0.22:
-            explanation = "Insufficient benchmark evidence for high-confidence comparison."
+            explanation = "Low evidence: insufficient peers for a reliable comparison."
             confidence = min(confidence, 0.25)
             if label == "green":
                 label = "yellow"
@@ -516,6 +540,7 @@ def run_benchmark_analysis(
             {
                 "clause_id": clause.clause_id,
                 "clause_type": clause.clause_type,
+                "clause_score": score,
                 "alignment_label": label,
                 "benchmark_stats": benchmark_stats,
                 "typical_patterns": snippets,

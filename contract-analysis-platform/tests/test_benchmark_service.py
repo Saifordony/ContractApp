@@ -26,6 +26,15 @@ def test_clause_splitter_stable_output():
     assert any("payment" in c[0] for c in clauses)
 
 
+def test_clause_splitter_fallback_for_plain_text_contract():
+    text = (
+        "This agreement starts on Jan 1. Payment is due within 15 days of invoice. "
+        "Either party may terminate with 30 days notice. Liability is capped at 100%. "
+        "Confidential information must not be disclosed."
+    )
+    clauses = split_clauses(text)
+    assert len(clauses) >= 2
+
 def test_clause_classifier_expected_labels():
     assert classify_clause_type("Payment Terms", "invoice due in 30 days") == "payment_terms"
     assert classify_clause_type("Termination", "terminate with notice") == "termination"
@@ -55,6 +64,7 @@ def test_benchmark_analysis_integration_with_seed_fixture(tmp_path):
 
     validated = BenchmarkAnalyzeResponse.model_validate(result)
     assert validated.clause_results
+    assert all(0 <= c.clause_score <= 100 for c in validated.clause_results)
     high_conf = [c for c in validated.clause_results if c.confidence >= 0.5]
     if high_conf:
         assert any(c.citations for c in high_conf)
@@ -76,4 +86,4 @@ def test_no_evidence_case_is_low_confidence_and_not_green():
     first = result["clause_results"][0]
     assert first["confidence"] <= 0.25
     assert first["alignment_label"] != "green"
-    assert "Insufficient benchmark evidence" in first["explanation"]
+    assert "Low evidence" in first["explanation"]

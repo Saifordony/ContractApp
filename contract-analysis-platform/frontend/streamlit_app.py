@@ -1239,26 +1239,39 @@ def benchmark_page():
 
         if response and response.status_code == 200:
             payload = response.json()
+            clause_results = payload.get("clause_results", [])
             st.metric("Overall Alignment Score", payload.get("overall_score", "N/A"))
+            st.caption(f"Compared {len(clause_results)} clause(s) from this contract.")
 
             fallbacks = payload.get("meta", {}).get("fallbacks_used", [])
             if fallbacks:
-                st.info(f"Fallback retrieval rules used: {', '.join(fallbacks)}")
+                st.info(f"Fallbacks used: {', '.join(fallbacks)}")
 
-            for clause in payload.get("clause_results", []):
+            if not clause_results:
+                st.warning("No clauses detected from this file.")
+
+            for clause in clause_results:
                 label = clause.get("alignment_label", "yellow")
                 badge = "🟢" if label == "green" else "🟡" if label == "yellow" else "🔴"
-                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} | confidence {clause.get('confidence', 0)}"):
-                    st.write(f"**Explanation:** {clause.get('explanation', '')}")
-                    st.write(f"**Typical patterns:** {', '.join(clause.get('typical_patterns', []))}")
-                    st.write(f"**Benchmark N:** {clause.get('benchmark_stats', {}).get('N', 0)}")
+                score = clause.get("clause_score", "N/A")
+                conf = clause.get("confidence", 0)
+                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} — {score}/100"):
+                    st.write(f"Confidence: {conf}")
+                    st.write(f"Peers (N): {clause.get('benchmark_stats', {}).get('N', 0)}")
+
+                    patterns = clause.get('typical_patterns', [])
+                    if patterns:
+                        st.write("Typical patterns:")
+                        for pattern in patterns[:2]:
+                            st.write(f"- {pattern}")
+
                     if clause.get("suggested_revision"):
-                        st.write(f"**Suggested revision:** {clause['suggested_revision']}")
+                        st.write(f"Suggested revision: {clause['suggested_revision']}")
 
                     citations = clause.get("citations", [])
                     if citations:
-                        st.markdown("**Citations**")
-                        for cit in citations:
+                        st.write("References:")
+                        for cit in citations[:2]:
                             st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
         else:
             st.error("Benchmark analysis failed")
