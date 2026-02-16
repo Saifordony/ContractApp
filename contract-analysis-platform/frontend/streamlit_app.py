@@ -516,10 +516,23 @@ def contract_analysis_page():
             if contracts:
                 st.subheader("Existing Contracts")
                 for contract in contracts:
-                    with st.expander(f"Contract: {contract.get('title', 'Untitled')}"):
-                        st.write(f"**ID:** {contract.get('_id', 'N/A')}")
+                    contract_id = contract.get('_id', 'N/A')
+                    contract_title = contract.get('title', 'Untitled')
+                    with st.expander(f"Contract: {contract_title}"):
+                        st.write(f"**ID:** {contract_id}")
                         st.write(f"**Status:** {contract.get('status', 'N/A')}")
                         st.write(f"**Created:** {contract.get('created_at', 'N/A')}")
+
+                        if st.button("Use This Contract for AI Analysis", key=f"use_contract_{contract_id}"):
+                            st.session_state.current_contract_id = contract_id
+                            st.session_state.current_contract_title = contract_title
+                            st.session_state.current_contract_content = contract.get("content", "")
+                            if "current_pdf_bytes" in st.session_state:
+                                del st.session_state.current_pdf_bytes
+                            if "current_clauses" in st.session_state:
+                                del st.session_state.current_clauses
+                            st.success(f"Loaded contract '{contract_title}' for AI analysis")
+                            st.rerun()
 
         # Create new contract
         st.subheader("Create New Contract")
@@ -559,6 +572,7 @@ def contract_analysis_page():
                         # Store for analysis
                         st.session_state.current_contract_id = contract_id
                         st.session_state.current_pdf_bytes = pdf_bytes
+                        st.session_state.current_contract_content = contract_content
                         st.session_state.current_contract_title = contract_title
                         st.rerun()
                     else:
@@ -590,18 +604,18 @@ def contract_analysis_page():
                     del st.session_state.selected_client_name
                 st.rerun()
 
-    if (
-        "current_contract_id" in st.session_state
-        and "current_pdf_bytes" in st.session_state
-    ):
+    if "current_contract_id" in st.session_state:
         st.header("AI Contract Analysis")
 
         contract_id = st.session_state.current_contract_id
-        pdf_bytes = st.session_state.current_pdf_bytes
+        pdf_bytes = st.session_state.get("current_pdf_bytes")
+        contract_content = st.session_state.get("current_contract_content", "")
         contract_title = st.session_state.get("current_contract_title", "Unknown")
         
         # Show contract being analyzed
         st.info(f"Analyzing contract: **{contract_title}** (ID: {contract_id})")
+        if not pdf_bytes:
+            st.info("Using saved contract content from database (no re-upload needed).")
 
         response_language = st.selectbox(
             "Response Language / لغة الاستجابة",
@@ -616,14 +630,23 @@ def contract_analysis_page():
         with col1:
             if st.button("Analyze Contract Clauses"):
                 with st.spinner("Analyzing contract clauses..."):
-                    # Create a temporary file-like object for the API
-                    files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
-                    response = make_api_request(
-                        "/genai/analyze-contract",
-                        "POST",
-                        data={"response_language": response_language, "use_ocr": use_ocr},
-                        files=files,
-                    )
+                    if pdf_bytes:
+                        files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
+                        response = make_api_request(
+                            "/genai/analyze-contract",
+                            "POST",
+                            data={"response_language": response_language, "use_ocr": use_ocr},
+                            files=files,
+                        )
+                    elif contract_content:
+                        response = make_api_request(
+                            "/genai/analyze-contract-text",
+                            "POST",
+                            {"contract_text": contract_content, "response_language": response_language},
+                        )
+                    else:
+                        response = None
+                        st.error("This contract has no stored content to analyze.")
 
                     if response and response.status_code == 200:
                         data = response.json()
@@ -638,14 +661,13 @@ def contract_analysis_page():
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
-                    else:
+                    elif response is not None:
                         st.error("Failed to analyze contract")
-                        if response:
-                            try:
-                                error_data = response.json()
-                                st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
-                            except:
-                                pass
+                        try:
+                            error_data = response.json()
+                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                        except Exception:
+                            pass
 
         with col2:
             if "current_clauses" in st.session_state:
@@ -748,7 +770,7 @@ def contract_analysis_page():
         # Add option to clear current contract and start over
         st.markdown("---")
         if st.button("Clear Contract and Start Over"):
-            keys_to_remove = ["current_contract_id", "current_pdf_bytes", "current_contract_title", "current_clauses"]
+            keys_to_remove = ["current_contract_id", "current_pdf_bytes", "current_contract_content", "current_contract_title", "current_clauses"]
             for key in keys_to_remove:
                 if key in st.session_state:
                     del st.session_state[key]

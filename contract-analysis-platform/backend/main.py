@@ -81,6 +81,12 @@ class ContractAnalysis(BaseModel):
     created_at: datetime
 
 
+
+
+class ContractTextAnalysisRequest(BaseModel):
+    contract_text: str
+    response_language: str = "english"
+
 class ContractChatRequest(BaseModel):
     question: str
     response_language: str = "english"
@@ -277,6 +283,54 @@ async def analyze_contract_endpoint(
         )
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+
+@app.post("/genai/analyze-contract-text")
+async def analyze_contract_text_endpoint(
+    payload: ContractTextAnalysisRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    if not OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="GenAI service unavailable: OpenAI API key not configured",
+        )
+
+    contract_text = (payload.contract_text or "").strip()
+    if not contract_text:
+        raise HTTPException(status_code=400, detail="contract_text cannot be empty")
+
+    try:
+        clauses = await analyze_contract(
+            contract_text,
+            response_language=payload.response_language,
+        )
+
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/genai/analyze-contract-text",
+                "action": "contract_analysis_text",
+                "timestamp": datetime.utcnow(),
+                "status": "success",
+            }
+        )
+        return {"clauses": clauses}
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/genai/analyze-contract-text",
+                "action": "contract_analysis_text",
+                "timestamp": datetime.utcnow(),
+                "status": "error",
+                "error": str(e),
+            }
+        )
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
