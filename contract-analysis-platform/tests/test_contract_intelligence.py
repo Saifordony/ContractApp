@@ -45,3 +45,9 @@ def test_question_answer_contains_evidence_and_no_hallucinated_structure():
     assert "evidence" in result and isinstance(result["evidence"], list)
     assert result["evidence"], "must include evidence"
     assert all("location" in e and "quote" in e for e in result["evidence"])
+
+
+def test_question_with_no_relevant_terms_returns_not_found():
+    result = answer_contract_question(SAMPLE_CONTRACT, "Can I get a part-time job after working hours?")
+    assert result["answer"].startswith("Not Found")
+    assert result["not_found"]

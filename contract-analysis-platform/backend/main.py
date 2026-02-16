@@ -835,8 +835,14 @@ async def chat_with_contract(
         )
         structured_answer = answer_contract_question(contract["content"], request.question)
 
-        if structured_answer.get("answer", "").startswith("Not Found") and llm_answer:
-            structured_answer["answer"] = "Not Found in the provided contract text."
+        if (
+            not structured_answer.get("answer", "").startswith("Not Found")
+            and isinstance(llm_answer, str)
+            and llm_answer.strip()
+            and "not found" not in llm_answer.lower()
+            and "cannot find" not in llm_answer.lower()
+        ):
+            structured_answer["answer"] = llm_answer.strip()
 
         await db.logs.insert_one(
             {
@@ -846,6 +852,8 @@ async def chat_with_contract(
                 "timestamp": datetime.utcnow(),
                 "status": "success",
                 "retrieved_chunk_ids": structured_answer.get("retrieved_chunk_ids", []),
+                "retrieval_scores": structured_answer.get("retrieval_scores", []),
+                "evidence_count": len(structured_answer.get("evidence", [])),
                 "prompt_preview": request.question[:200],
                 "output_preview": structured_answer.get("answer", "")[:240],
             }
