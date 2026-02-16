@@ -1,0 +1,21 @@
+MASTER SERVICES AGREEMENT
+
+This Agreement is made between Alpha LLC ("Provider") and Beta Inc. ("Client") effective January 1, 2026.
+
+Payment Terms
+Client shall pay Provider USD 25,000 within thirty (30) days of invoice.
+
+Termination
+Either party may terminate for material breach with 30 days cure period.
+
+Limitation of Liability
+Neither party shall be liable for indirect damages. Total liability is capped at fees paid in prior 12 months.
+
+Confidentiality
+Both parties will maintain confidentiality of proprietary information.
+
+Dispute Resolution
+Disputes will be resolved by arbitration in New York.
+
+Governing Law
+This Agreement is governed by the laws of New York.

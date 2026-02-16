@@ -20,6 +20,9 @@ from backend.gen1 import (
     analyze_and_evaluate_contract,
     contract_chat,
 )
+from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
+from backend.services.contract_health import evaluate_contract_health_from_clauses
+from backend.services.pipeline_analysis import analyze_pipeline
 
 # Load environment variables
 load_dotenv()
@@ -90,6 +93,22 @@ class ContractTextAnalysisRequest(BaseModel):
 class ContractChatRequest(BaseModel):
     question: str
     response_language: str = "english"
+
+
+class PipelineOpportunity(BaseModel):
+    client: str
+    opportunity_name: str
+    stage: str
+    value: float
+    expected_close_date: Optional[str] = None
+    last_updated: Optional[str] = None
+    owner: Optional[str] = None
+    close_target: Optional[float] = 0
+
+
+class PipelineAnalysisRequest(BaseModel):
+    opportunities: list[PipelineOpportunity]
+    stage_probabilities: Optional[Dict[str, float]] = None
 
 
 # Database setup
@@ -306,6 +325,7 @@ async def analyze_contract_text_endpoint(
             contract_text,
             response_language=payload.response_language,
         )
+        structured_clauses = extract_key_clauses(contract_text)
 
         await db.logs.insert_one(
             {
@@ -314,9 +334,11 @@ async def analyze_contract_text_endpoint(
                 "action": "contract_analysis_text",
                 "timestamp": datetime.utcnow(),
                 "status": "success",
+                "chunk_count": structured_clauses.get("chunk_count", 0),
+                "conflicts_count": len(structured_clauses.get("conflicts", [])),
             }
         )
-        return {"clauses": clauses}
+        return {"clauses": clauses, "structured_clauses": structured_clauses}
     except HTTPException:
         raise
     except Exception as e:
@@ -345,10 +367,18 @@ async def evaluate_contract_endpoint(
     try:
         clauses = payload.get("clauses", payload)
         response_language = payload.get("response_language", "english")
-        evaluation = await evaluate_contract(
+
+        llm_evaluation = await evaluate_contract(
             clauses,
             response_language=response_language,
         )
+        rule_evaluation = evaluate_contract_health_from_clauses(clauses)
+
+        evaluation = {
+            **llm_evaluation,
+            **rule_evaluation,
+            "module": "contract_health",
+        }
 
         # Log the action
         await db.logs.insert_one(
@@ -379,6 +409,27 @@ async def evaluate_contract_endpoint(
 
 
 # Backend Services endpoints
+@app.post("/pipeline/analyze")
+async def pipeline_analysis_endpoint(
+    payload: PipelineAnalysisRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    opportunities = [op.model_dump() for op in payload.opportunities]
+    results = analyze_pipeline(opportunities, payload.stage_probabilities)
+
+    await db.logs.insert_one(
+        {
+            "user": current_user["username"],
+            "endpoint": "/pipeline/analyze",
+            "action": "pipeline_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "opportunities_count": len(opportunities),
+        }
+    )
+    return results
+
+
 @app.get("/logs")
 async def get_logs(
     user: Optional[str] = Query(None),
@@ -777,11 +828,15 @@ async def chat_with_contract(
         )
 
     try:
-        answer = await contract_chat(
+        llm_answer = await contract_chat(
             contract_text=contract["content"],
             question=request.question,
             response_language=request.response_language,
         )
+        structured_answer = answer_contract_question(contract["content"], request.question)
+
+        if structured_answer.get("answer", "").startswith("Not Found") and llm_answer:
+            structured_answer["answer"] = "Not Found in the provided contract text."
 
         await db.logs.insert_one(
             {
@@ -790,10 +845,13 @@ async def chat_with_contract(
                 "action": "contract_chat",
                 "timestamp": datetime.utcnow(),
                 "status": "success",
+                "retrieved_chunk_ids": structured_answer.get("retrieved_chunk_ids", []),
+                "prompt_preview": request.question[:200],
+                "output_preview": structured_answer.get("answer", "")[:240],
             }
         )
 
-        return {"answer": answer}
+        return structured_answer
     except Exception as e:
         await db.logs.insert_one(
             {
