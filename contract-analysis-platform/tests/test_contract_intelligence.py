@@ -58,3 +58,10 @@ def test_retrieval_handles_synonym_query_for_jurisdiction():
     hits = retrieve_relevant_chunks("Which jurisdiction applies?", chunks, top_k=2)
     assert hits
     assert any("governed by the laws of New York" in h.text for h in hits)
+
+
+def test_personal_nonlegal_question_returns_contract_scope_message():
+    result = answer_contract_question(SAMPLE_CONTRACT, "i dont feel like going to work tomorrow what can i do ?")
+    assert "contract-related" in result["answer"].lower()
+    assert result["not_found"]
+    assert result["confidence"] == 0.0

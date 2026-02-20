@@ -26,6 +26,19 @@ SYNONYM_MAP: Dict[str, List[str]] = {
 }
 
 
+LEGAL_QUESTION_HINTS = {
+    "contract", "clause", "agreement", "salary", "payment", "invoice", "leave",
+    "vacation", "sick", "notice", "termination", "resignation", "overtime",
+    "benefits", "working", "hours", "liability", "confidential", "governing", "law",
+    "dispute", "arbitration", "renewal", "probation", "penalty", "obligation",
+}
+
+PERSONAL_NONLEGAL_HINTS = {
+    "feel", "tired", "sad", "stressed", "depressed", "anxious", "tomorrow",
+    "donot", "dont", "don't", "can i do", "what can i do", "life", "motivation",
+}
+
+
 @dataclass
 class RetrievalHit:
     score: float
@@ -285,7 +298,37 @@ def _best_evidence_quotes(chunk: TextChunk, question_tokens: set[str], limit: in
     return [sent for _, sent in ranked[:limit]]
 
 
+
+
+def _is_out_of_scope_personal_question(question: str) -> bool:
+    q = (question or "").strip().lower()
+    if not q:
+        return True
+
+    q_tokens = set(_tokenize(q))
+    has_legal_signal = bool(q_tokens & LEGAL_QUESTION_HINTS)
+
+    has_personal_signal = any(hint in q for hint in PERSONAL_NONLEGAL_HINTS)
+
+    return has_personal_signal and not has_legal_signal
+
+
 def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any]:
+    if _is_out_of_scope_personal_question(question):
+        return {
+            "answer": "I can only answer contract-related questions. I can’t give personal life advice.",
+            "confidence": 0.0,
+            "evidence": [],
+            "not_found": [question],
+            "follow_up_questions": [
+                "Try asking: What does my contract say about leave, sick days, or notice?",
+                "Try asking: Can I take unpaid leave and what notice is required?",
+            ],
+            "risk_flags": _build_risk_flags(contract_text, []),
+            "retrieved_chunk_ids": [],
+            "retrieval_scores": [],
+        }
+
     chunks = chunk_contract_text(contract_text)
     scored_chunks = retrieve_relevant_chunks_with_scores(question, chunks)
 
@@ -337,7 +380,7 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
         confidence = 0.15
         not_found = [question]
     else:
-        answer = " ".join(answer_sentences[:2])
+        answer = "Based on your contract: " + " ".join(answer_sentences[:2])
         confidence = min(0.97, max(0.25, top_score))
         not_found = []
 
