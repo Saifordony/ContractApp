@@ -19,6 +19,7 @@ from backend.gen1 import (
     extract_text_from_pdf_bytes,
     analyze_and_evaluate_contract,
     contract_chat,
+    explain_clauses_for_layman,
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
@@ -285,7 +286,11 @@ async def analyze_contract_endpoint(
             contract_text,
             response_language=response_language,
         )
-        
+        clause_explanations = await explain_clauses_for_layman(
+            clauses,
+            response_language=response_language,
+        )
+
         # Log the action
         await db.logs.insert_one(
             {
@@ -297,7 +302,7 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"clauses": clauses}
+        return {"clauses": clauses, "clause_explanations": clause_explanations}
     except HTTPException:
         raise
     except Exception as e:
@@ -336,6 +341,10 @@ async def analyze_contract_text_endpoint(
             contract_text,
             response_language=payload.response_language,
         )
+        clause_explanations = await explain_clauses_for_layman(
+            clauses,
+            response_language=payload.response_language,
+        )
         structured_clauses = extract_key_clauses(contract_text)
 
         await db.logs.insert_one(
@@ -349,7 +358,11 @@ async def analyze_contract_text_endpoint(
                 "conflicts_count": len(structured_clauses.get("conflicts", [])),
             }
         )
-        return {"clauses": clauses, "structured_clauses": structured_clauses}
+        return {
+            "clauses": clauses,
+            "clause_explanations": clause_explanations,
+            "structured_clauses": structured_clauses,
+        }
     except HTTPException:
         raise
     except Exception as e:

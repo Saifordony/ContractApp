@@ -431,6 +431,26 @@ Output:
 
 prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
+
+layman_clause_explainer_prompt = PromptTemplate.from_template(
+    """
+You are a legal explainer for non-lawyers.
+
+Given contract clauses in JSON, return JSON with the EXACT SAME KEYS where each value is:
+- a short, plain-English (or requested language) explanation of what that clause means in practice
+- max 2 short sentences
+- avoid legal jargon as much as possible
+- do not invent details beyond the clause text
+
+Response language requirement: {response_language}.
+
+Clauses JSON:
+{clauses_json}
+
+Return valid JSON only.
+"""
+)
+
 contract_chat_prompt = PromptTemplate.from_template(
     """
 You are a contract assistant that helps users understand a specific contract.
@@ -552,6 +572,41 @@ def analyze_contract_sync(
     except Exception as e:
         raise RuntimeError(f"Failed to extract clauses: {str(e)}")
 
+
+
+
+def explain_clauses_for_layman_sync(
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
+) -> Dict[str, str]:
+    if not isinstance(contract_clauses, dict) or not contract_clauses:
+        raise ValueError("contract_clauses must be a non-empty dictionary")
+
+    for key, value in contract_clauses.items():
+        if not isinstance(value, str):
+            raise ValueError(f"Clause content for '{key}' must be a string")
+
+    try:
+        prompt_text = layman_clause_explainer_prompt.format(
+            clauses_json=json.dumps(contract_clauses),
+            response_language=normalize_response_language(response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        explanations = json.loads(result)
+
+        if not isinstance(explanations, dict):
+            raise ValueError("Model output for explanations is not a JSON object")
+
+        normalized_explanations: Dict[str, str] = {}
+        for key in contract_clauses.keys():
+            text = explanations.get(key, "")
+            normalized_explanations[key] = str(text).strip() if text else "No simple explanation generated."
+
+        return normalized_explanations
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to explain clauses in layman terms: {str(e)}")
 
 def evaluate_contract_sync(
     contract_clauses: Dict[str, str],
@@ -676,6 +731,17 @@ async def analyze_contract(
         executor, analyze_contract_sync, contract_text, response_language
     )
 
+
+
+
+async def explain_clauses_for_layman(
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
+) -> Dict[str, str]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, explain_clauses_for_layman_sync, contract_clauses, response_language
+    )
 
 async def analyze_and_evaluate_contract(
     contract_text: str,

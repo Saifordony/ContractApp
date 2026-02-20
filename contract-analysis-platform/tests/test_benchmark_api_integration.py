@@ -23,6 +23,7 @@ def app_module(monkeypatch):
     fake_gen1.analyze_contract = _async_dict
     fake_gen1.evaluate_contract = _async_dict
     fake_gen1.analyze_and_evaluate_contract = _async_dict
+    fake_gen1.explain_clauses_for_layman = _async_dict
     fake_gen1.contract_chat = _async_str
     fake_gen1.extract_text_from_pdf_bytes = lambda *args, **kwargs: "sample text"
 

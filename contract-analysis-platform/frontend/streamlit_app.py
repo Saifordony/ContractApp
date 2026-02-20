@@ -796,6 +796,7 @@ def contract_analysis_page():
                     if response and response.status_code == 200:
                         data = response.json()
                         clauses = data["clauses"]
+                        clause_explanations = data.get("clause_explanations", {})
 
                         st.success("Contract analyzed successfully!")
                         st.subheader("Extracted Clauses")
@@ -803,6 +804,10 @@ def contract_analysis_page():
                         for clause_type, content in clauses.items():
                             with st.expander(f"{clause_type}"):
                                 st.write(content)
+                                explanation = clause_explanations.get(clause_type)
+                                if explanation:
+                                    st.markdown("**In simple terms:**")
+                                    st.write(explanation)
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
