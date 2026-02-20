@@ -519,6 +519,77 @@ def infer_user_style_guide(question: str, response_language: str) -> str:
 full_pipeline_chain = None
 
 
+
+
+def _coerce_llm_content(raw_content: Any) -> str:
+    """Normalize LangChain/OpenAI response content into plain text."""
+    if raw_content is None:
+        return ""
+    if isinstance(raw_content, str):
+        return raw_content
+    if isinstance(raw_content, list):
+        parts = []
+        for item in raw_content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                elif item.get("type") == "text" and isinstance(item.get("content"), str):
+                    parts.append(item["content"])
+                else:
+                    parts.append(str(item))
+            else:
+                parts.append(str(item))
+        return "\n".join([p for p in parts if p]).strip()
+    return str(raw_content)
+
+
+def _extract_json_payload(raw_content: Any) -> Any:
+    """Extract JSON from model output even when wrapped in markdown/code fences."""
+    text = _coerce_llm_content(raw_content).strip()
+    if not text:
+        raise ValueError("Model returned an empty response")
+
+    # direct JSON first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # fenced block extraction
+    if "```" in text:
+        for block in text.split("```"):
+            candidate = block.strip()
+            if not candidate:
+                continue
+            if candidate.lower().startswith("json"):
+                candidate = candidate[4:].strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+    # first JSON object / array region fallback
+    start_obj = text.find("{")
+    end_obj = text.rfind("}")
+    start_arr = text.find("[")
+    end_arr = text.rfind("]")
+
+    candidates = []
+    if start_obj != -1 and end_obj > start_obj:
+        candidates.append(text[start_obj : end_obj + 1])
+    if start_arr != -1 and end_arr > start_arr:
+        candidates.append(text[start_arr : end_arr + 1])
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    raise ValueError("Model output is not valid JSON")
+
 def normalize_response_language(response_language: str) -> str:
     lang = (response_language or "english").strip().lower()
     if lang in {"ar", "ara", "arabic", "العربية"}:
@@ -561,13 +632,15 @@ def analyze_contract_sync(
             response_language=normalize_response_language(response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        clauses = json.loads(result)
+        clauses = _extract_json_payload(result)
 
         if not clauses:
             raise ValueError("The model returned an empty clause dictionary.")
         return clauses
 
     except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
         raise ValueError(f"Model output is not valid JSON: {str(e)}")
     except Exception as e:
         raise RuntimeError(f"Failed to extract clauses: {str(e)}")
@@ -592,7 +665,7 @@ def explain_clauses_for_layman_sync(
             response_language=normalize_response_language(response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        explanations = json.loads(result)
+        explanations = _extract_json_payload(result)
 
         if not isinstance(explanations, dict):
             raise ValueError("Model output for explanations is not a JSON object")
@@ -604,6 +677,8 @@ def explain_clauses_for_layman_sync(
 
         return normalized_explanations
     except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
         raise ValueError(f"Model output is not valid JSON: {str(e)}")
     except Exception as e:
         raise RuntimeError(f"Failed to explain clauses in layman terms: {str(e)}")
@@ -642,7 +717,7 @@ def evaluate_contract_sync(
             response_language=normalize_response_language(response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        assessment = json.loads(result)
+        assessment = _extract_json_payload(result)
 
         if "approved" not in assessment or "reasoning" not in assessment:
             raise ValueError(
@@ -666,6 +741,8 @@ def evaluate_contract_sync(
         return assessment
 
     except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
         raise ValueError(f"Model output is not valid JSON: {str(e)}")
     except Exception as e:
         raise RuntimeError(f"Failed to assess contract health: {str(e)}")
