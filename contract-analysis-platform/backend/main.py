@@ -889,14 +889,14 @@ async def chat_with_contract(
         )
         structured_answer = answer_contract_question(contract["content"], request.question)
 
+        # Keep chat strictly grounded: never replace structured evidence-based answer with free-form LLM text.
+        # Preserve LLM phrasing as optional alternative only when structured grounding succeeded.
         if (
             not structured_answer.get("answer", "").startswith("Not Found")
             and isinstance(llm_answer, str)
             and llm_answer.strip()
-            and "not found" not in llm_answer.lower()
-            and "cannot find" not in llm_answer.lower()
         ):
-            structured_answer["answer"] = llm_answer.strip()
+            structured_answer["suggested_natural_answer"] = llm_answer.strip()
 
         await db.logs.insert_one(
             {

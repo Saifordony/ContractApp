@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
@@ -14,8 +15,35 @@ class TextChunk:
     end_offset: int
 
 
+SYNONYM_MAP: Dict[str, List[str]] = {
+    "law": ["governing law", "jurisdiction", "laws"],
+    "governs": ["governing", "jurisdiction"],
+    "jurisdiction": ["governing law", "law", "governed"],
+    "payment": ["invoice", "fee", "price", "compensation", "pay"],
+    "terminate": ["termination", "end", "cancel"],
+    "confidential": ["non-disclosure", "nda", "privacy"],
+    "liability": ["damages", "cap", "indemnity"],
+}
+
+
+@dataclass
+class RetrievalHit:
+    score: float
+    chunk: TextChunk
+    lexical_score: float
+    semantic_score: float
+
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[a-zA-Z0-9_\-']+", (text or "").lower())
+
+
+def _expand_query_tokens(tokens: set[str]) -> set[str]:
+    expanded = set(tokens)
+    for token in list(tokens):
+        for synonym in SYNONYM_MAP.get(token, []):
+            expanded.update(_tokenize(synonym))
+    return expanded
 
 
 def chunk_contract_text(contract_text: str, chunk_size: int = 900) -> List[TextChunk]:
@@ -82,38 +110,65 @@ def chunk_contract_text(contract_text: str, chunk_size: int = 900) -> List[TextC
     return chunks
 
 
+def _idf_lookup(chunks: List[TextChunk]) -> Dict[str, float]:
+    total_docs = max(len(chunks), 1)
+    doc_freq: Dict[str, int] = {}
+    for chunk in chunks:
+        unique = set(_tokenize(chunk.text))
+        for tok in unique:
+            doc_freq[tok] = doc_freq.get(tok, 0) + 1
+    return {tok: math.log(1 + total_docs / (1 + df)) for tok, df in doc_freq.items()}
+
+
 def retrieve_relevant_chunks_with_scores(
     question: str,
     chunks: List[TextChunk],
     top_k: int = 4,
 ) -> List[Tuple[float, TextChunk]]:
-    q_tokens = set(_tokenize(question))
+    base_tokens = set(_tokenize(question))
+    q_tokens = _expand_query_tokens(base_tokens)
     if not q_tokens:
         return [(1.0, chunk) for chunk in chunks[:top_k]]
 
-    scored: List[Tuple[float, TextChunk]] = []
+    idf = _idf_lookup(chunks)
+    scored: List[RetrievalHit] = []
     q_lower = (question or "").lower()
+
     for chunk in chunks:
         c_tokens = _tokenize(chunk.text)
         if not c_tokens:
             continue
 
         c_token_set = set(c_tokens)
-        overlap = len(q_tokens & c_token_set)
-        lexical = overlap / max(len(q_tokens), 1)
+        overlap = q_tokens & c_token_set
+        lexical = len(overlap) / max(len(q_tokens), 1)
 
         tf_bonus = 0.0
-        for token in q_tokens:
-            tf_bonus += min(0.06, c_tokens.count(token) * 0.02)
+        for token in overlap:
+            tf_bonus += min(0.12, c_tokens.count(token) * 0.02 * (1 + idf.get(token, 0.0)))
 
-        phrase_bonus = 0.12 if q_lower and q_lower in chunk.text.lower() else 0.0
+        phrase_bonus = 0.14 if q_lower and q_lower in chunk.text.lower() else 0.0
 
-        score = lexical + tf_bonus + phrase_bonus
+        semantic = 0.0
+        for token in base_tokens:
+            for syn in SYNONYM_MAP.get(token, []):
+                syn_tokens = set(_tokenize(syn))
+                if syn_tokens & c_token_set:
+                    semantic += 0.06
+
+        score = lexical + tf_bonus + phrase_bonus + semantic
         if score > 0:
-            scored.append((round(score, 4), chunk))
+            scored.append(
+                RetrievalHit(
+                    score=round(score, 4),
+                    chunk=chunk,
+                    lexical_score=round(lexical, 4),
+                    semantic_score=round(semantic, 4),
+                )
+            )
 
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return scored[:top_k]
+    scored.sort(key=lambda item: item.score, reverse=True)
+    return [(hit.score, hit.chunk) for hit in scored[:top_k]]
 
 
 def retrieve_relevant_chunks(question: str, chunks: List[TextChunk], top_k: int = 4) -> List[TextChunk]:
@@ -214,8 +269,6 @@ def _build_risk_flags(text: str, evidence: List[Dict[str, str]]) -> List[Dict[st
     return flags
 
 
-
-
 def _best_evidence_quotes(chunk: TextChunk, question_tokens: set[str], limit: int = 2) -> List[str]:
     sentences = re.split(r"(?<=[\.!?])\s+", chunk.text)
     ranked: List[Tuple[int, str]] = []
@@ -230,6 +283,7 @@ def _best_evidence_quotes(chunk: TextChunk, question_tokens: set[str], limit: in
 
     ranked.sort(key=lambda item: item[0], reverse=True)
     return [sent for _, sent in ranked[:limit]]
+
 
 def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any]:
     chunks = chunk_contract_text(contract_text)
@@ -248,9 +302,9 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
         }
 
     top_score = scored_chunks[0][0]
-    question_tokens = set(_tokenize(question))
+    question_tokens = _expand_query_tokens(set(_tokenize(question)))
 
-    if top_score < 0.22:
+    if top_score < 0.28:
         return {
             "answer": "Not Found in the provided contract text.",
             "confidence": 0.1,

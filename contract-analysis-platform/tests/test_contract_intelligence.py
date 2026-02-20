@@ -51,3 +51,10 @@ def test_question_with_no_relevant_terms_returns_not_found():
     result = answer_contract_question(SAMPLE_CONTRACT, "Can I get a part-time job after working hours?")
     assert result["answer"].startswith("Not Found")
     assert result["not_found"]
+
+
+def test_retrieval_handles_synonym_query_for_jurisdiction():
+    chunks = chunk_contract_text(SAMPLE_CONTRACT)
+    hits = retrieve_relevant_chunks("Which jurisdiction applies?", chunks, top_k=2)
+    assert hits
+    assert any("governed by the laws of New York" in h.text for h in hits)
