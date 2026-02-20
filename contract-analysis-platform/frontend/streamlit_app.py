@@ -2,9 +2,14 @@ import streamlit as st
 import requests
 import os
 import html
-from typing import Dict
+import io
+import json
+from datetime import datetime
+from typing import Any, Dict
 import pandas as pd
 import fitz  # PyMuPDF
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
@@ -434,6 +439,16 @@ def render_contract_evaluation(evaluation: Dict):
     else:
         st.error("Contract Not Approved")
 
+    contract_type = evaluation.get("contract_type")
+    if contract_type:
+        confidence = evaluation.get("contract_type_confidence")
+        confidence_text = f" (confidence: {confidence})" if confidence is not None else ""
+        st.write(f"**Detected Contract Type:** {str(contract_type).replace('_', ' ').title()}{confidence_text}")
+
+    score = int(evaluation.get("health_score", 0))
+    st.write(f"**Health Score:** {score}/100")
+    st.progress(max(0, min(100, score)) / 100)
+
     risk_level = str(evaluation.get("risk_level", "medium")).lower()
     st.write(f"**Risk Level:** {risk_level.title()}")
 
@@ -441,13 +456,27 @@ def render_contract_evaluation(evaluation: Dict):
     st.write(evaluation.get("reasoning", "No reasoning provided"))
 
     missing = evaluation.get("missing_critical_clauses", [])
+    recommended = evaluation.get("missing_recommended_clauses", [])
+    ambiguous = evaluation.get("ambiguous_clauses", [])
     issues = evaluation.get("issues", [])
     changes = evaluation.get("required_changes", [])
 
     if missing:
-        st.markdown("#### Missing Critical Clauses")
+        st.markdown("#### Missing Mandatory Clauses")
         for item in missing:
             st.write(f"- {item}")
+
+    if recommended:
+        st.markdown("#### Missing Recommended Clauses")
+        for item in recommended:
+            st.write(f"- {item}")
+
+    if ambiguous:
+        st.markdown("#### Ambiguous Clauses To Fix")
+        for item in ambiguous:
+            clause_name = item.get("clause", "unknown")
+            reason = item.get("reason", "Needs clarification")
+            st.write(f"- **{clause_name}**: {reason}")
 
     if issues:
         st.markdown("#### Specific Issues Found")
@@ -458,6 +487,63 @@ def render_contract_evaluation(evaluation: Dict):
         st.markdown("#### What This Contract Needs")
         for item in changes:
             st.write(f"- {item}")
+
+
+def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any]) -> bytes:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    y = height - 40
+
+    def write_line(text: str, size: int = 10, indent: int = 0):
+        nonlocal y
+        c.setFont("Helvetica", size)
+        max_chars = 105 - int(indent / 3)
+        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
+        for chunk in chunks:
+            if y < 50:
+                c.showPage()
+                y = height - 40
+                c.setFont("Helvetica", size)
+            c.drawString(40 + indent, y, chunk)
+            y -= 14
+
+    health = report_payload.get("health_evaluation", report_payload)
+    clauses = report_payload.get("clauses", {})
+
+    write_line("Contract Analysis Final Report", size=14)
+    write_line(f"Contract: {contract_title}")
+    write_line(f"Generated: {datetime.utcnow().isoformat()} UTC")
+    write_line("")
+    write_line(f"Detected Type: {str(health.get('contract_type', 'unknown')).replace('_', ' ')}")
+    write_line(f"Health Score: {health.get('health_score', 'N/A')}/100")
+    write_line(f"Risk Level: {health.get('risk_level', 'N/A')}")
+    write_line(f"Approved: {health.get('approved', False)}")
+    write_line("")
+
+    write_line("Missing Mandatory Clauses:")
+    for item in health.get("missing_critical_clauses", []):
+        write_line(f"- {item}", indent=10)
+
+    write_line("Required Fixes:")
+    for item in health.get("required_changes", []):
+        write_line(f"- {item}", indent=10)
+
+    ambiguous = health.get("ambiguous_clauses", [])
+    if ambiguous:
+        write_line("Ambiguous Clauses:")
+        for item in ambiguous:
+            write_line(f"- {item.get('clause', 'unknown')}: {item.get('reason', 'Needs clarification')}", indent=10)
+
+    write_line("")
+    write_line("Clause-by-Clause Extract:")
+    for clause_type, text in clauses.items():
+        write_line(f"{clause_type}:", indent=5)
+        write_line(text[:380], indent=15)
+
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
 
 
 def render_chat_history(chat_messages):
@@ -849,13 +935,28 @@ def contract_analysis_page():
 
                 if pipeline_response and pipeline_response.status_code == 200:
                     st.success("Analysis pipeline completed successfully!")
-                    
+
                     # Display the analysis results
                     results = pipeline_response.json().get("results", {})
                     if results:
                         st.markdown("### Analysis Results")
-                        render_contract_evaluation(results)
-                        
+                        health_result = results.get("health_evaluation", results)
+                        render_contract_evaluation(health_result)
+
+                        if results.get("clauses"):
+                            st.markdown("#### Clause-by-Clause Summary")
+                            for clause_name in results.get("clauses", {}).keys():
+                                st.write(f"- {clause_name}")
+
+                        report_pdf = build_pipeline_report_pdf(contract_title, results)
+                        st.download_button(
+                            "Download Final Report (PDF)",
+                            data=report_pdf,
+                            file_name=f"contract_report_{contract_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_report_{contract_id}",
+                        )
+
                         # Store results in session state for later reference
                         st.session_state[f"analysis_results_{contract_id}"] = results
                 else:
@@ -1120,7 +1221,7 @@ def clients_contracts_page():
                                         results = response.json().get("results", {})
                                         if results:
                                             st.markdown("#### Analysis Results")
-                                            render_contract_evaluation(results)
+                                            render_contract_evaluation(results.get("health_evaluation", results))
                                         
                                         st.rerun()
                                     else:

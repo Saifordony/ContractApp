@@ -1,4 +1,7 @@
-from backend.services.contract_health import evaluate_contract_health_from_clauses
+from backend.services.contract_health import (
+    evaluate_contract_health_from_clauses,
+    infer_contract_type_from_clauses,
+)
 
 
 def test_contract_health_scores_and_flags_unlimited_liability():
@@ -9,6 +12,7 @@ def test_contract_health_scores_and_flags_unlimited_liability():
         "Dispute Resolution Clause": "Disputes resolved by arbitration.",
         "Liability": "Supplier has unlimited liability without limitation.",
         "Confidentiality Clause": "Both parties must keep information confidential.",
+        "Scope of Work Clause": "Vendor provides implementation services.",
     }
 
     result = evaluate_contract_health_from_clauses(clauses)
@@ -16,6 +20,7 @@ def test_contract_health_scores_and_flags_unlimited_liability():
     assert "dimensions" in result
     assert any(flag["type"] == "unlimited_liability" for flag in result["red_flags"])
     assert result["risk_level"] in {"low", "medium", "high"}
+    assert result["contract_type"] in {"service_agreement", "general_commercial"}
 
 
 def test_contract_health_missing_governing_law_flagged():
@@ -24,4 +29,16 @@ def test_contract_health_missing_governing_law_flagged():
         "Termination Clause": "30 day notice",
     }
     result = evaluate_contract_health_from_clauses(clauses)
-    assert any("governing" in issue for issue in result["issues"])
+    assert any("missing_governing_law" in issue for issue in result["issues"])
+
+
+def test_contract_type_detection_employment_contract():
+    clauses = {
+        "Role": "Employee will work as software engineer.",
+        "Compensation": "Employee salary is 5000 monthly.",
+        "Benefits": "Paid leave and health insurance.",
+        "Termination": "Employer may terminate for cause.",
+    }
+    detected = infer_contract_type_from_clauses(clauses)
+    assert detected["contract_type"] == "employment"
+    assert 0 <= detected["confidence"] <= 1

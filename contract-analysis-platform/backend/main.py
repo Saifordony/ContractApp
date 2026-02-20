@@ -401,6 +401,7 @@ async def evaluate_contract_endpoint(
         evaluation = {
             **llm_evaluation,
             **rule_evaluation,
+            "llm_assessment": llm_evaluation,
             "module": "contract_health",
         }
 
@@ -798,10 +799,39 @@ async def init_genai_analysis(
         )
 
     try:
-        results = await analyze_and_evaluate_contract(
+        clauses = await analyze_contract(
             contract["content"],
             response_language=response_language,
         )
+        clause_explanations = await explain_clauses_for_layman(
+            clauses,
+            response_language=response_language,
+        )
+        llm_evaluation = await evaluate_contract(
+            clauses,
+            response_language=response_language,
+        )
+        rule_evaluation = evaluate_contract_health_from_clauses(clauses)
+
+        health_evaluation = {
+            **llm_evaluation,
+            **rule_evaluation,
+            "llm_assessment": llm_evaluation,
+            "module": "contract_health",
+        }
+        results = {
+            "contract_type": rule_evaluation.get("contract_type"),
+            "clauses": clauses,
+            "clause_explanations": clause_explanations,
+            "health_evaluation": health_evaluation,
+            "final_report_summary": {
+                "approved": health_evaluation.get("approved"),
+                "health_score": health_evaluation.get("health_score"),
+                "risk_level": health_evaluation.get("risk_level"),
+                "missing_critical_clauses": health_evaluation.get("missing_critical_clauses", []),
+                "required_changes": health_evaluation.get("required_changes", []),
+            },
+        }
 
         analysis_dict = {
             "contract_id": contract_id,

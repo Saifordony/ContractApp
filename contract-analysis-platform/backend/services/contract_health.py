@@ -1,6 +1,92 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Tuple
+
+
+CONTRACT_TYPE_RULES: Dict[str, Dict[str, Any]] = {
+    "employment": {
+        "keywords": ["employee", "employer", "salary", "probation", "benefits"],
+        "required": [
+            "compensation",
+            "working_hours",
+            "termination",
+            "confidentiality",
+            "governing_law",
+        ],
+        "recommended": ["non_compete", "ip_assignment", "leave_policy"],
+    },
+    "service_agreement": {
+        "keywords": ["services", "deliverables", "statement of work", "client", "vendor"],
+        "required": [
+            "scope_of_work",
+            "payment_terms",
+            "acceptance_criteria",
+            "termination",
+            "limitation_of_liability",
+            "confidentiality",
+            "governing_law",
+            "dispute_resolution",
+        ],
+        "recommended": ["change_control", "sla", "indemnification", "audit_rights"],
+    },
+    "nda": {
+        "keywords": ["confidential", "non-disclosure", "receiving party", "disclosing party"],
+        "required": ["confidentiality", "term", "permitted_use", "remedies", "governing_law"],
+        "recommended": ["exceptions", "return_or_destroy", "injunctive_relief"],
+    },
+    "lease": {
+        "keywords": ["tenant", "landlord", "rent", "premises", "lease term"],
+        "required": ["rent", "term", "maintenance", "default", "termination", "governing_law"],
+        "recommended": ["security_deposit", "renewal", "insurance"],
+    },
+    "general_commercial": {
+        "keywords": [],
+        "required": [
+            "scope_of_work",
+            "payment_terms",
+            "termination",
+            "limitation_of_liability",
+            "governing_law",
+            "dispute_resolution",
+        ],
+        "recommended": ["confidentiality", "indemnification", "force_majeure", "notice"],
+    },
+}
+
+CLAUSE_KEYWORDS: Dict[str, List[str]] = {
+    "scope_of_work": ["scope", "deliverable", "services"],
+    "payment_terms": ["payment", "invoice", "fee", "price", "compensation"],
+    "acceptance_criteria": ["acceptance", "milestone", "sign off"],
+    "termination": ["termination", "terminate", "expiry", "end of term"],
+    "limitation_of_liability": ["liability", "damages", "cap", "without limitation", "unlimited"],
+    "confidentiality": ["confidential", "non-disclosure"],
+    "governing_law": ["governing law", "laws of", "jurisdiction"],
+    "dispute_resolution": ["dispute", "arbitration", "mediation", "court"],
+    "change_control": ["change order", "amendment", "modification"],
+    "sla": ["sla", "service level", "uptime", "response time"],
+    "indemnification": ["indemnif"],
+    "audit_rights": ["audit", "inspection rights"],
+    "working_hours": ["working hours", "hours per week"],
+    "non_compete": ["non-compete", "non solicitation", "non-solicitation"],
+    "ip_assignment": ["intellectual property", "work product", "assign"],
+    "leave_policy": ["leave", "vacation", "sick leave"],
+    "term": ["term", "duration", "effective date"],
+    "permitted_use": ["permitted use", "purpose"],
+    "remedies": ["remedies", "injunctive"],
+    "exceptions": ["exceptions"],
+    "return_or_destroy": ["return", "destroy"],
+    "injunctive_relief": ["injunctive"],
+    "rent": ["rent"],
+    "maintenance": ["maintenance", "repair"],
+    "default": ["default", "breach"],
+    "security_deposit": ["security deposit"],
+    "renewal": ["renewal", "auto renew"],
+    "insurance": ["insurance"],
+    "force_majeure": ["force majeure"],
+    "notice": ["notice"],
+    "compensation": ["salary", "compensation"],
+}
 
 
 def _dimension(name: str, score: int, explanation: str, evidence: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -12,100 +98,205 @@ def _dimension(name: str, score: int, explanation: str, evidence: List[Dict[str,
     }
 
 
-def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, Any]:
-    normalized = {str(k).lower(): str(v) for k, v in (clauses or {}).items()}
+def _normalize_clauses(clauses: Dict[str, str]) -> Dict[str, str]:
+    return {str(k).strip().lower(): str(v).strip() for k, v in (clauses or {}).items() if str(v).strip()}
 
-    def has_any(*keys: str) -> bool:
-        return any(key in normalized for key in keys)
 
-    dimensions: List[Dict[str, Any]] = []
-    red_flags: List[Dict[str, Any]] = []
+def _find_clause_text(normalized: Dict[str, str], logical_clause: str) -> Tuple[str, str]:
+    keywords = CLAUSE_KEYWORDS.get(logical_clause, [logical_clause.replace("_", " ")])
+    for key, text in normalized.items():
+        key_text = f"{key} {text[:220].lower()}"
+        if any(keyword in key_text for keyword in keywords):
+            return key, text
+    return "", ""
 
-    risk_score = 80
-    risk_evidence: List[Dict[str, str]] = []
-    liability_text = normalized.get("limitation of liability clause", "") + normalized.get("liability", "")
-    if "unlimited" in liability_text.lower() or "without limitation" in liability_text.lower():
-        risk_score = 30
-        red_flags.append({"type": "unlimited_liability", "severity": "high", "evidence": [{"quote": liability_text[:240], "location": "clause:liability"}]})
-    elif not liability_text:
-        risk_score = 45
-        red_flags.append({"type": "missing_liability_limit", "severity": "high", "evidence": []})
-    if liability_text:
-        risk_evidence.append({"quote": liability_text[:240], "location": "clause:liability"})
-    dimensions.append(_dimension("Risk Exposure", risk_score, "Assesses liability/indemnity exposure and cap clarity.", risk_evidence))
 
-    comm_score = 85 if has_any("payment terms clause", "payment terms", "scope of work clause") else 50
-    comm_evidence = []
-    for key in ["payment terms clause", "payment terms", "scope of work clause", "scope of work"]:
-        if key in normalized:
-            comm_evidence.append({"quote": normalized[key][:240], "location": f"clause:{key}"})
-    dimensions.append(_dimension("Commercial Clarity", comm_score, "Checks payment clarity and deliverable definition.", comm_evidence[:2]))
+def infer_contract_type_from_clauses(clauses: Dict[str, str]) -> Dict[str, Any]:
+    normalized = _normalize_clauses(clauses)
+    doc_text = "\n".join([f"{k}\n{v}" for k, v in normalized.items()]).lower()
 
-    comp_score = 82 if has_any("confidentiality clause", "confidentiality", "sla_obligations", "obligations") else 55
-    comp_evidence = []
-    for key in ["confidentiality clause", "confidentiality", "sla_obligations", "obligations"]:
-        if key in normalized:
-            comp_evidence.append({"quote": normalized[key][:240], "location": f"clause:{key}"})
-    dimensions.append(_dimension("Compliance & Obligations", comp_score, "Assesses obligation tracking and compliance language.", comp_evidence[:2]))
+    scores: Dict[str, int] = {}
+    for contract_type, rule in CONTRACT_TYPE_RULES.items():
+        score = 0
+        for kw in rule["keywords"]:
+            if kw in doc_text:
+                score += 2
+        for req in rule["required"]:
+            if _find_clause_text(normalized, req)[1]:
+                score += 1
+        scores[contract_type] = score
 
-    term_score = 78
-    term_text = normalized.get("termination clause", "") + normalized.get("renewal", "")
-    if "automatic renewal" in term_text.lower() and "notice" not in term_text.lower():
-        term_score = 45
-        red_flags.append({"type": "auto_renewal_no_notice", "severity": "medium", "evidence": [{"quote": term_text[:240], "location": "clause:term-renewal"}]})
-    if not term_text:
-        term_score = 40
-        red_flags.append({"type": "missing_termination_terms", "severity": "high", "evidence": []})
-    dimensions.append(_dimension("Term & Renewal Risk", term_score, "Evaluates renewal mechanics and termination rights.", [{"quote": term_text[:240], "location": "clause:term-renewal"}] if term_text else []))
-
-    law_score = 80 if has_any("governing law / choice of law clause", "governing law", "dispute resolution clause") else 35
-    if law_score < 50:
-        red_flags.append({"type": "missing_governing_law_or_dispute", "severity": "high", "evidence": []})
-    law_evidence = []
-    for key in ["governing law / choice of law clause", "governing law", "dispute resolution clause"]:
-        if key in normalized:
-            law_evidence.append({"quote": normalized[key][:240], "location": f"clause:{key}"})
-    dimensions.append(_dimension("Dispute & Governing Law", law_score, "Assesses legal forum and dispute mechanism complexity.", law_evidence[:2]))
-
-    health_score = round(sum(d["score"] for d in dimensions) / max(len(dimensions), 1))
-    risk_level = "low" if health_score >= 75 else "medium" if health_score >= 55 else "high"
-    approved = health_score >= 65 and not any(flag["severity"] == "high" for flag in red_flags)
-
-    missing = []
-    for required in [
-        "governing law",
-        "dispute resolution clause",
-        "termination clause",
-        "payment terms clause",
-        "confidentiality clause",
-    ]:
-        if required not in normalized:
-            missing.append(required)
-
-    issues = [flag["type"] for flag in red_flags]
-    required_changes = []
-    if "missing_governing_law_or_dispute" in issues:
-        required_changes.append("Add governing law and dispute resolution clauses with explicit jurisdiction.")
-    if "unlimited_liability" in issues or "missing_liability_limit" in issues:
-        required_changes.append("Define a clear liability cap and carve-outs for gross negligence/fraud only.")
-    if "missing_termination_terms" in issues:
-        required_changes.append("Add bilateral termination rights and notice periods.")
-    if "auto_renewal_no_notice" in issues:
-        required_changes.append("Add explicit opt-out notice window for renewal.")
-
-    evidence = []
-    for dim in dimensions:
-        evidence.extend(dim["evidence"])
+    best_type = max(scores, key=scores.get)
+    ordered = sorted(scores.values(), reverse=True)
+    gap = (ordered[0] - ordered[1]) if len(ordered) > 1 else ordered[0]
+    confidence = min(0.95, 0.45 + max(gap, 0) * 0.08 + ordered[0] * 0.02)
 
     return {
+        "contract_type": best_type,
+        "confidence": round(confidence, 2),
+        "candidates": scores,
+    }
+
+
+def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, Any]:
+    normalized = _normalize_clauses(clauses)
+    contract_type_info = infer_contract_type_from_clauses(clauses)
+    contract_type = contract_type_info["contract_type"]
+    rules = CONTRACT_TYPE_RULES.get(contract_type, CONTRACT_TYPE_RULES["general_commercial"])
+
+    missing_required: List[str] = []
+    missing_recommended: List[str] = []
+    ambiguous_clauses: List[Dict[str, str]] = []
+    red_flags: List[Dict[str, Any]] = []
+
+    for item in rules["required"]:
+        if not _find_clause_text(normalized, item)[1]:
+            missing_required.append(item)
+    for item in rules["recommended"]:
+        if not _find_clause_text(normalized, item)[1]:
+            missing_recommended.append(item)
+
+    liability_key, liability_text = _find_clause_text(normalized, "limitation_of_liability")
+    term_key, term_text = _find_clause_text(normalized, "termination")
+    payment_key, payment_text = _find_clause_text(normalized, "payment_terms")
+    law_key, law_text = _find_clause_text(normalized, "governing_law")
+    dispute_key, dispute_text = _find_clause_text(normalized, "dispute_resolution")
+
+    risk_score = 88
+    risk_evidence: List[Dict[str, str]] = []
+    if liability_text:
+        risk_evidence.append({"quote": liability_text[:240], "location": f"clause:{liability_key}"})
+        if re.search(r"\bunlimited\b|without limitation", liability_text.lower()):
+            risk_score -= 55
+            red_flags.append({
+                "type": "unlimited_liability",
+                "severity": "high",
+                "evidence": [{"quote": liability_text[:220], "location": f"clause:{liability_key}"}],
+            })
+    else:
+        risk_score -= 35
+        red_flags.append({"type": "missing_liability_limit", "severity": "high", "evidence": []})
+
+    if not _find_clause_text(normalized, "indemnification")[1]:
+        risk_score -= 12
+
+    comm_score = 90
+    comm_evidence: List[Dict[str, str]] = []
+    if payment_text:
+        comm_evidence.append({"quote": payment_text[:220], "location": f"clause:{payment_key}"})
+        if not re.search(r"\b\d+\s*(day|days|month|months)\b", payment_text.lower()):
+            comm_score -= 20
+            ambiguous_clauses.append({
+                "clause": payment_key,
+                "reason": "Payment timing is unclear (missing specific due period).",
+            })
+    else:
+        comm_score -= 35
+
+    if not _find_clause_text(normalized, "scope_of_work")[1]:
+        comm_score -= 25
+    if not _find_clause_text(normalized, "acceptance_criteria")[1] and contract_type in {"service_agreement", "general_commercial"}:
+        comm_score -= 10
+        missing_recommended.append("acceptance_criteria")
+
+    comp_score = 86
+    comp_evidence: List[Dict[str, str]] = []
+    confidentiality_key, confidentiality_text = _find_clause_text(normalized, "confidentiality")
+    if confidentiality_text:
+        comp_evidence.append({"quote": confidentiality_text[:220], "location": f"clause:{confidentiality_key}"})
+    else:
+        comp_score -= 20
+
+    if contract_type in {"service_agreement", "general_commercial"} and not _find_clause_text(normalized, "sla")[1]:
+        comp_score -= 14
+    if not _find_clause_text(normalized, "audit_rights")[1]:
+        comp_score -= 8
+
+    term_score = 84
+    term_evidence: List[Dict[str, str]] = []
+    if term_text:
+        term_evidence.append({"quote": term_text[:220], "location": f"clause:{term_key}"})
+        if "for cause" in term_text.lower() and "without cause" not in term_text.lower():
+            term_score -= 18
+            ambiguous_clauses.append({
+                "clause": term_key,
+                "reason": "Termination appears one-sided (for-cause only).",
+            })
+        if "automatic renewal" in term_text.lower() and "notice" not in term_text.lower():
+            term_score -= 18
+            red_flags.append({
+                "type": "auto_renewal_no_notice",
+                "severity": "medium",
+                "evidence": [{"quote": term_text[:220], "location": f"clause:{term_key}"}],
+            })
+    else:
+        term_score -= 40
+
+    law_score = 88
+    law_evidence: List[Dict[str, str]] = []
+    if law_text:
+        law_evidence.append({"quote": law_text[:220], "location": f"clause:{law_key}"})
+    else:
+        law_score -= 35
+        red_flags.append({"type": "missing_governing_law", "severity": "high", "evidence": []})
+
+    if dispute_text:
+        law_evidence.append({"quote": dispute_text[:220], "location": f"clause:{dispute_key}"})
+    else:
+        law_score -= 25
+        red_flags.append({"type": "missing_dispute_resolution", "severity": "high", "evidence": []})
+
+    dimensions = [
+        _dimension("Risk Exposure", risk_score, "Liability cap, indemnity balance, and uncapped exposure.", risk_evidence),
+        _dimension("Commercial Clarity", comm_score, "Payment certainty, scope detail, and acceptance mechanics.", comm_evidence),
+        _dimension("Compliance & Obligations", comp_score, "Operational obligations, confidentiality, SLA/audit governance.", comp_evidence),
+        _dimension("Term & Renewal Risk", term_score, "Termination rights, renewal control, and notice structure.", term_evidence),
+        _dimension("Dispute & Governing Law", law_score, "Jurisdiction clarity and dispute-resolution pathway.", law_evidence),
+    ]
+
+    health_score = round(sum(d["score"] for d in dimensions) / max(len(dimensions), 1))
+    risk_level = "low" if health_score >= 80 else "medium" if health_score >= 60 else "high"
+
+    required_changes: List[str] = []
+    if missing_required:
+        required_changes.append(
+            f"Add missing mandatory clauses for {contract_type.replace('_', ' ')}: {', '.join(sorted(set(missing_required)))}."
+        )
+    if any(flag["type"] == "unlimited_liability" for flag in red_flags):
+        required_changes.append("Replace uncapped liability with a negotiated cap and narrow carve-outs (fraud/willful misconduct only).")
+    if any(flag["type"] in {"missing_governing_law", "missing_dispute_resolution"} for flag in red_flags):
+        required_changes.append("Add explicit governing law and a clear dispute forum (court/arbitration seat and rules).")
+    if ambiguous_clauses:
+        required_changes.append("Clarify ambiguous provisions with objective triggers, dates, and measurable obligations.")
+
+    approved = health_score >= 70 and not any(flag["severity"] == "high" for flag in red_flags)
+
+    issues = [
+        *[f"missing_required:{item}" for item in missing_required],
+        *[f"missing_recommended:{item}" for item in sorted(set(missing_recommended))],
+        *[flag["type"] for flag in red_flags],
+        *[f"ambiguous:{item['clause']}" for item in ambiguous_clauses],
+    ]
+
+    return {
+        "module": "contract_health",
+        "legal_parameters_version": "strict-v2",
+        "contract_type": contract_type,
+        "contract_type_confidence": contract_type_info["confidence"],
+        "contract_type_candidates": contract_type_info["candidates"],
         "approved": approved,
-        "reasoning": f"Health score {health_score}/100 across 5 dimensions; risk level is {risk_level}.",
-        "missing_critical_clauses": missing,
+        "health_score": health_score,
+        "risk_level": risk_level,
+        "reasoning": (
+            f"Detected contract type: {contract_type.replace('_', ' ')}. "
+            f"Health score {health_score}/100 using 5 legal dimensions with type-specific mandatory clause checks."
+        ),
+        "missing_critical_clauses": sorted(set(missing_required)),
+        "missing_recommended_clauses": sorted(set(missing_recommended)),
+        "ambiguous_clauses": ambiguous_clauses,
         "issues": issues,
         "required_changes": required_changes,
-        "risk_level": risk_level,
-        "health_score": health_score,
         "dimensions": dimensions,
         "red_flags": red_flags,
-        "evidence": evidence[:6],
+        "evidence": [e for d in dimensions for e in d.get("evidence", [])][:8],
     }
