@@ -221,14 +221,13 @@ def apply_modern_theme(sidebar_compact: bool = False):
         }}
 
         .login-wrap {{
-            min-height: 85vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            width: 100%;
+            display: block;
             animation: fadeInUp 0.35s ease-out;
         }}
         .login-card {{
-            width: min(760px, 92vw);
+            width: min(760px, 96vw);
+            margin: 0 auto;
             background: rgba(255, 255, 255, 0.56);
             backdrop-filter: blur(14px);
             border: 1px solid rgba(191, 209, 241, 0.75);
@@ -486,15 +485,15 @@ def login_page():
     """Login and Registration page"""
     st.markdown("<div class='login-wrap'><div class='login-card'>", unsafe_allow_html=True)
     st.title("Contract Analysis Platform")
+    st.caption("Use Sign In or Sign Up below.")
 
-    tab1, tab2 = st.tabs(["Login", "Register"])
+    tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
 
     with tab1:
-        st.header("Login")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
+            submit = st.form_submit_button("Sign In")
 
             if submit:
                 response = make_api_request(
@@ -514,13 +513,12 @@ def login_page():
                     st.error("Login failed. Please check your credentials.")
 
     with tab2:
-        st.header("Register")
         with st.form("register_form"):
             username = st.text_input("Username")
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
-            submit = st.form_submit_button("Register")
+            submit = st.form_submit_button("Sign Up")
 
             if submit:
                 if password != confirm_password:
@@ -534,7 +532,7 @@ def login_page():
                     )
 
                     if response and response.status_code == 200:
-                        st.success("Registration successful! Please login.")
+                        st.success("Registration successful! Please sign in.")
                     else:
                         st.error(
                             "Registration failed. Username or email might already exist."
