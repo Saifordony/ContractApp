@@ -430,7 +430,7 @@ async def evaluate_contract_endpoint(
             clauses,
             response_language=response_language,
         )
-        rule_evaluation = evaluate_contract_health_from_clauses(clauses)
+        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
 
         evaluation = {
             **llm_evaluation,
@@ -862,7 +862,7 @@ async def init_genai_analysis(
             clauses,
             response_language=response_language,
         )
-        rule_evaluation = evaluate_contract_health_from_clauses(clauses)
+        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
 
         health_evaluation = {
             **llm_evaluation,
@@ -947,7 +947,7 @@ async def chat_with_contract(
             question=request.question,
             response_language=request.response_language,
         )
-        structured_answer = answer_contract_question(chat_context_text, request.question)
+        structured_answer = answer_contract_question(chat_context_text, request.question, response_language=request.response_language)
 
         # Keep chat strictly grounded: never replace structured evidence-based answer with free-form LLM text.
         # Preserve LLM phrasing as optional alternative only when structured grounding succeeded.

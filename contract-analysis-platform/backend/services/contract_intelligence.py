@@ -31,11 +31,13 @@ LEGAL_QUESTION_HINTS = {
     "vacation", "sick", "notice", "termination", "resignation", "overtime",
     "benefits", "working", "hours", "liability", "confidential", "governing", "law",
     "dispute", "arbitration", "renewal", "probation", "penalty", "obligation",
+    "عقد", "بند", "إجازة", "راتب", "دفع", "إنهاء", "إشعار", "سرية", "تحكيم", "قانون",
 }
 
 PERSONAL_NONLEGAL_HINTS = {
     "feel", "tired", "sad", "stressed", "depressed", "anxious", "tomorrow",
     "donot", "dont", "don't", "can i do", "what can i do", "life", "motivation",
+    "لا", "اشعر", "ماذا افعل", "غدا", "حياتي", "نفسي",
 }
 
 
@@ -325,6 +327,17 @@ def _is_out_of_scope_personal_question(question: str) -> bool:
 
 
 
+
+
+def _is_arabic_response(response_language: str) -> bool:
+    lang = (response_language or "english").strip().lower()
+    return lang in {"arabic", "ar", "ara", "العربية", "arab"}
+
+
+def _msg(en: str, ar: str, response_language: str) -> str:
+    return ar if _is_arabic_response(response_language) else en
+
+
 def classify_question_intent(question: str) -> str:
     q_tokens = set(_tokenize(question))
     scored: List[Tuple[int, str]] = []
@@ -335,7 +348,7 @@ def classify_question_intent(question: str) -> str:
     return scored[0][1] if scored and scored[0][0] > 0 else "general_contract"
 
 
-def follow_ups_for_intent(intent: str) -> List[str]:
+def follow_ups_for_intent(intent: str, response_language: str = "english") -> List[str]:
     mapping = {
         "leave_policy": [
             "Do you want the exact leave entitlement and approval steps from your contract?",
@@ -362,25 +375,44 @@ def follow_ups_for_intent(intent: str) -> List[str]:
             "Do you want a plain-language explanation of arbitration vs court language?",
         ],
     }
-    return mapping.get(
+    selected = mapping.get(
         intent,
         [
             "Do you want me to summarize only the obligations that apply to you?",
             "Should I extract the exact clause text and provide a plain-language interpretation?",
         ],
     )
+    if _is_arabic_response(response_language):
+        ar_map = {
+            "Do you want the exact leave entitlement and approval steps from your contract?": "هل تريد استخراج استحقاق الإجازات وخطوات الموافقة كما وردت في العقد؟",
+            "Should I summarize sick leave vs annual leave separately?": "هل ألخّص لك الإجازة المرضية مقابل الإجازة السنوية بشكل منفصل؟",
+            "Should I extract standard hours and overtime compensation terms?": "هل تريد استخراج ساعات العمل الأساسية وشروط تعويض العمل الإضافي؟",
+            "Do you want a plain-language summary of attendance obligations?": "هل تريد ملخصًا مبسطًا لالتزامات الحضور والانضباط؟",
+            "Do you want payment timing, method, and late-payment terms extracted exactly?": "هل تريد استخراج مواعيد الدفع والطريقة وشروط التأخير بشكل دقيق؟",
+            "Should I summarize salary/fees and any deductions in simple terms?": "هل ألخّص الراتب/الرسوم وأي استقطاعات بلغة بسيطة؟",
+            "Should I list notice periods and who can terminate under what conditions?": "هل تريد قائمة بفترات الإشعار ومن يملك حق الإنهاء وتحت أي شروط؟",
+            "Do you want a risk summary of one-sided termination clauses?": "هل تريد ملخص مخاطر البنود أحادية الجانب في الإنهاء؟",
+            "Should I summarize what information is protected and for how long?": "هل ألخّص ما هي المعلومات المحمية ولمدة كم؟",
+            "Do you want exceptions and breach consequences extracted?": "هل تريد استخراج الاستثناءات ونتائج الإخلال؟",
+            "Should I extract governing law, jurisdiction, and dispute forum clauses?": "هل تريد استخراج القانون الواجب التطبيق والاختصاص القضائي وآلية فض النزاع؟",
+            "Do you want a plain-language explanation of arbitration vs court language?": "هل تريد شرحًا مبسطًا للفرق بين التحكيم والتقاضي في صياغة العقد؟",
+            "Do you want me to summarize only the obligations that apply to you?": "هل تريد أن ألخّص فقط الالتزامات التي تنطبق عليك؟",
+            "Should I extract the exact clause text and provide a plain-language interpretation?": "هل تريد استخراج نص البند حرفيًا ثم تقديم تفسير مبسط له؟",
+        }
+        return [ar_map.get(item, item) for item in selected]
+    return selected
 
 
-def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any]:
+def answer_contract_question(contract_text: str, question: str, response_language: str = "english") -> Dict[str, Any]:
     if _is_out_of_scope_personal_question(question):
         return {
-            "answer": "I can only answer contract-related questions. I can’t give personal life advice.",
+            "answer": _msg("I can only answer contract-related questions. I can’t give personal life advice.", "يمكنني الإجابة فقط عن الأسئلة المتعلقة بالعقد، ولا أقدّم نصائح شخصية.", response_language),
             "confidence": 0.0,
             "evidence": [],
             "not_found": [question],
             "follow_up_questions": [
-                "Try asking: What does my contract say about leave, sick days, or notice?",
-                "Try asking: Can I take unpaid leave and what notice is required?",
+                _msg("Try asking: What does my contract say about leave, sick days, or notice?", "جرّب أن تسأل: ماذا ينص عقدي بخصوص الإجازات المرضية أو السنوية أو فترات الإشعار؟", response_language),
+                _msg("Try asking: Can I take unpaid leave and what notice is required?", "جرّب أن تسأل: هل يمكنني أخذ إجازة غير مدفوعة وما فترة الإشعار المطلوبة؟", response_language),
             ],
             "risk_flags": _build_risk_flags(contract_text, []),
             "retrieved_chunk_ids": [],
@@ -394,11 +426,11 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
 
     if not scored_chunks:
         return {
-            "answer": "Not Found in the provided contract text.",
+            "answer": _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language),
             "confidence": 0.0,
             "evidence": [],
             "not_found": [question],
-            "follow_up_questions": ["Can you provide the exact clause title to check?"],
+            "follow_up_questions": [_msg("Can you provide the exact clause title to check?", "هل يمكنك ذكر عنوان البند بدقة حتى أتحقق منه؟", response_language)],
             "risk_flags": [],
             "retrieved_chunk_ids": [],
             "retrieval_scores": [],
@@ -410,13 +442,13 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
 
     if top_score < 0.28:
         return {
-            "answer": "Not Found in the provided contract text.",
+            "answer": _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language),
             "confidence": 0.1,
             "evidence": [],
             "not_found": [question],
             "follow_up_questions": [
-                "Can you rephrase with a clause title (e.g., termination, payment, confidentiality)?",
-                "Do you want me to list related clauses that might partially address this?",
+                _msg("Can you rephrase with a clause title (e.g., termination, payment, confidentiality)?", "هل يمكنك إعادة الصياغة مع ذكر اسم البند (مثل الإنهاء، الدفع، السرية)؟", response_language),
+                _msg("Do you want me to list related clauses that might partially address this?", "هل تريد أن أسرد البنود ذات الصلة التي قد تعالج هذا بشكل جزئي؟", response_language),
             ],
             "risk_flags": _build_risk_flags(contract_text, []),
             "retrieved_chunk_ids": [chunk.chunk_id for _, chunk in scored_chunks],
@@ -438,15 +470,15 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
     answer_sentences = list(dict.fromkeys(answer_sentences))
 
     if not answer_sentences:
-        answer = "Not Found in the provided contract text."
+        answer = _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language)
         confidence = 0.15
         not_found = [question]
     else:
-        answer = "Based on your contract: " + " ".join(answer_sentences[:2])
+        answer = _msg("Based on your contract: ", "استنادًا إلى عقدك: ", response_language) + " ".join(answer_sentences[:2])
         confidence = min(0.97, max(0.25, top_score))
         not_found = []
 
-    follow_ups = follow_ups_for_intent(intent)
+    follow_ups = follow_ups_for_intent(intent, response_language=response_language)
 
     risk_flags = _build_risk_flags(contract_text, evidence)
 

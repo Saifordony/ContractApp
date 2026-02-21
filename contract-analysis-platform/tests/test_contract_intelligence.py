@@ -76,3 +76,13 @@ def test_intent_classifier_detects_leave_policy():
 def test_answer_includes_intent_for_grounded_response():
     result = answer_contract_question(SAMPLE_CONTRACT, "Which law governs this agreement?")
     assert result.get("intent") in {"governing_law", "general_contract"}
+
+
+def test_arabic_response_language_returns_arabic_not_found_text():
+    result = answer_contract_question(SAMPLE_CONTRACT, "هل توجد عقوبة تأخير؟", response_language="arabic")
+    assert "غير موجود" in result["answer"] or result.get("confidence", 0) > 0
+
+
+def test_arabic_out_of_scope_returns_arabic_scope_message():
+    result = answer_contract_question(SAMPLE_CONTRACT, "لا اريد الذهاب للعمل غدا ماذا افعل؟", response_language="arabic")
+    assert "العقد" in result["answer"]

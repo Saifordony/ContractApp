@@ -42,3 +42,12 @@ def test_contract_type_detection_employment_contract():
     detected = infer_contract_type_from_clauses(clauses)
     assert detected["contract_type"] == "employment"
     assert 0 <= detected["confidence"] <= 1
+
+
+def test_contract_health_arabic_reasoning_when_language_arabic():
+    clauses = {
+        "Payment Terms Clause": "Net 30",
+        "Termination Clause": "30 day notice",
+    }
+    result = evaluate_contract_health_from_clauses(clauses, response_language="arabic")
+    assert "درجة" in result["reasoning"] or "العقد" in result["reasoning"]

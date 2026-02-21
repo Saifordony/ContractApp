@@ -89,6 +89,54 @@ CLAUSE_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
+
+
+def _is_arabic_response(response_language: str) -> bool:
+    lang = (response_language or "english").strip().lower()
+    return lang in {"arabic", "ar", "ara", "العربية", "arab"}
+
+
+def _msg(en: str, ar: str, response_language: str) -> str:
+    return ar if _is_arabic_response(response_language) else en
+
+
+def _pretty_clause_name(name: str, response_language: str) -> str:
+    arabic_map = {
+        "scope_of_work": "نطاق العمل",
+        "payment_terms": "شروط الدفع",
+        "acceptance_criteria": "معايير القبول",
+        "termination": "الإنهاء",
+        "limitation_of_liability": "تحديد المسؤولية",
+        "confidentiality": "السرية",
+        "governing_law": "القانون الواجب التطبيق",
+        "dispute_resolution": "فض النزاعات",
+        "change_control": "إدارة التغييرات",
+        "sla": "مستويات الخدمة",
+        "indemnification": "التعويض",
+        "audit_rights": "حقوق التدقيق",
+        "working_hours": "ساعات العمل",
+        "non_compete": "عدم المنافسة",
+        "ip_assignment": "تخصيص الملكية الفكرية",
+        "leave_policy": "سياسة الإجازات",
+        "term": "المدة",
+        "permitted_use": "الاستخدام المسموح",
+        "remedies": "سبل الانتصاف",
+        "exceptions": "الاستثناءات",
+        "return_or_destroy": "الإرجاع أو الإتلاف",
+        "injunctive_relief": "أمر قضائي عاجل",
+        "rent": "الإيجار",
+        "maintenance": "الصيانة",
+        "default": "الإخلال",
+        "security_deposit": "التأمين",
+        "renewal": "التجديد",
+        "insurance": "التأمين",
+        "force_majeure": "القوة القاهرة",
+        "notice": "الإشعار",
+        "compensation": "الأجر/التعويض",
+    }
+    return arabic_map.get(name, name) if _is_arabic_response(response_language) else name
+
+
 def _dimension(name: str, score: int, explanation: str, evidence: List[Dict[str, str]]) -> Dict[str, Any]:
     return {
         "name": name,
@@ -138,7 +186,7 @@ def infer_contract_type_from_clauses(clauses: Dict[str, str]) -> Dict[str, Any]:
     }
 
 
-def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, Any]:
+def evaluate_contract_health_from_clauses(clauses: Dict[str, str], response_language: str = "english") -> Dict[str, Any]:
     normalized = _normalize_clauses(clauses)
     contract_type_info = infer_contract_type_from_clauses(clauses)
     contract_type = contract_type_info["contract_type"]
@@ -188,7 +236,7 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, 
             comm_score -= 20
             ambiguous_clauses.append({
                 "clause": payment_key,
-                "reason": "Payment timing is unclear (missing specific due period).",
+                "reason": _msg("Payment timing is unclear (missing specific due period).", "توقيت الدفع غير واضح (لا توجد مدة استحقاق محددة).", response_language),
             })
     else:
         comm_score -= 35
@@ -220,7 +268,7 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, 
             term_score -= 18
             ambiguous_clauses.append({
                 "clause": term_key,
-                "reason": "Termination appears one-sided (for-cause only).",
+                "reason": _msg("Termination appears one-sided (for-cause only).", "بند الإنهاء يبدو أحادي الجانب (لسبب فقط).", response_language),
             })
         if "automatic renewal" in term_text.lower() and "notice" not in term_text.lower():
             term_score -= 18
@@ -247,11 +295,11 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, 
         red_flags.append({"type": "missing_dispute_resolution", "severity": "high", "evidence": []})
 
     dimensions = [
-        _dimension("Risk Exposure", risk_score, "Liability cap, indemnity balance, and uncapped exposure.", risk_evidence),
-        _dimension("Commercial Clarity", comm_score, "Payment certainty, scope detail, and acceptance mechanics.", comm_evidence),
-        _dimension("Compliance & Obligations", comp_score, "Operational obligations, confidentiality, SLA/audit governance.", comp_evidence),
-        _dimension("Term & Renewal Risk", term_score, "Termination rights, renewal control, and notice structure.", term_evidence),
-        _dimension("Dispute & Governing Law", law_score, "Jurisdiction clarity and dispute-resolution pathway.", law_evidence),
+        _dimension("Risk Exposure", risk_score, _msg("Liability cap, indemnity balance, and uncapped exposure.", "حدود المسؤولية وتوازن التعويض والمخاطر غير المحدودة.", response_language), risk_evidence),
+        _dimension("Commercial Clarity", comm_score, _msg("Payment certainty, scope detail, and acceptance mechanics.", "وضوح الدفع وتفاصيل نطاق العمل وآلية القبول.", response_language), comm_evidence),
+        _dimension("Compliance & Obligations", comp_score, _msg("Operational obligations, confidentiality, SLA/audit governance.", "الالتزامات التشغيلية والسرية وحوكمة مستويات الخدمة والتدقيق.", response_language), comp_evidence),
+        _dimension("Term & Renewal Risk", term_score, _msg("Termination rights, renewal control, and notice structure.", "حقوق الإنهاء وضبط التجديد وهيكل الإشعارات.", response_language), term_evidence),
+        _dimension("Dispute & Governing Law", law_score, _msg("Jurisdiction clarity and dispute-resolution pathway.", "وضوح الاختصاص القانوني وآلية حل النزاعات.", response_language), law_evidence),
     ]
 
     health_score = round(sum(d["score"] for d in dimensions) / max(len(dimensions), 1))
@@ -260,14 +308,14 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, 
     required_changes: List[str] = []
     if missing_required:
         required_changes.append(
-            f"Add missing mandatory clauses for {contract_type.replace('_', ' ')}: {', '.join(sorted(set(missing_required)))}."
+            _msg(f"Add missing mandatory clauses for {contract_type.replace('_', ' ')}: {', '.join(_pretty_clause_name(x, response_language) for x in sorted(set(missing_required)))}.", f"أضف البنود الإلزامية المفقودة لنوع العقد {contract_type.replace('_', ' ')}: {', '.join(_pretty_clause_name(x, response_language) for x in sorted(set(missing_required)))}.", response_language)
         )
     if any(flag["type"] == "unlimited_liability" for flag in red_flags):
-        required_changes.append("Replace uncapped liability with a negotiated cap and narrow carve-outs (fraud/willful misconduct only).")
+        required_changes.append(_msg("Replace uncapped liability with a negotiated cap and narrow carve-outs (fraud/willful misconduct only).", "استبدل المسؤولية غير المحدودة بحد أقصى متفق عليه مع استثناءات ضيقة (الاحتيال/سوء السلوك الجسيم فقط).", response_language))
     if any(flag["type"] in {"missing_governing_law", "missing_dispute_resolution"} for flag in red_flags):
-        required_changes.append("Add explicit governing law and a clear dispute forum (court/arbitration seat and rules).")
+        required_changes.append(_msg("Add explicit governing law and a clear dispute forum (court/arbitration seat and rules).", "أضف قانونًا واجب التطبيق بشكل صريح وحدد جهة فصل النزاع بوضوح (المحكمة/مقر التحكيم والقواعد).", response_language))
     if ambiguous_clauses:
-        required_changes.append("Clarify ambiguous provisions with objective triggers, dates, and measurable obligations.")
+        required_changes.append(_msg("Clarify ambiguous provisions with objective triggers, dates, and measurable obligations.", "وضّح البنود المبهمة عبر معايير موضوعية وتواريخ واضحة والتزامات قابلة للقياس.", response_language))
 
     approved = health_score >= 70 and not any(flag["severity"] == "high" for flag in red_flags)
 
@@ -288,11 +336,10 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str]) -> Dict[str, 
         "health_score": health_score,
         "risk_level": risk_level,
         "reasoning": (
-            f"Detected contract type: {contract_type.replace('_', ' ')}. "
-            f"Health score {health_score}/100 using 5 legal dimensions with type-specific mandatory clause checks."
+            _msg(f"Detected contract type: {contract_type.replace('_', ' ')}. Health score {health_score}/100 using 5 legal dimensions with type-specific mandatory clause checks.", f"تم تحديد نوع العقد: {contract_type.replace('_', ' ' )}. درجة صحة العقد {health_score}/100 وفق 5 أبعاد قانونية مع تحقق من البنود الإلزامية الخاصة بنوع العقد.", response_language)
         ),
-        "missing_critical_clauses": sorted(set(missing_required)),
-        "missing_recommended_clauses": sorted(set(missing_recommended)),
+        "missing_critical_clauses": [_pretty_clause_name(x, response_language) for x in sorted(set(missing_required))],
+        "missing_recommended_clauses": [_pretty_clause_name(x, response_language) for x in sorted(set(missing_recommended))],
         "ambiguous_clauses": ambiguous_clauses,
         "issues": issues,
         "required_changes": required_changes,
