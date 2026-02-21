@@ -74,6 +74,7 @@ def _offline_fixture_checks() -> list[dict]:
 
     extracted = extract_key_clauses(contract_text)
     qa = answer_contract_question(contract_text, "What is the governing law?")
+    qa_out_of_scope = answer_contract_question(contract_text, "i dont feel like going to work tomorrow what can i do?")
     health = evaluate_contract_health_from_clauses({
         "Governing Law": extracted["clauses"].get("governing_law", {}).get("value", ""),
         "Payment Terms Clause": extracted["clauses"].get("payment_terms", {}).get("value", ""),
@@ -94,6 +95,11 @@ def _offline_fixture_checks() -> list[dict]:
             "name": "Offline Q&A is grounded with evidence",
             "success": bool(qa.get("evidence")) and "answer" in qa,
             "message": f"confidence={qa.get('confidence')}",
+        },
+        {
+            "name": "Out-of-scope chat intent is safely rejected",
+            "success": qa_out_of_scope.get("intent") == "out_of_scope" and qa_out_of_scope.get("confidence") == 0.0,
+            "message": f"intent={qa_out_of_scope.get('intent')}",
         },
         {
             "name": "Contract health score generated",

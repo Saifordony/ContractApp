@@ -35,6 +35,8 @@ CLAUSE_WEIGHTS: Dict[str, float] = {
     "misc": 0.4,
 }
 
+BENCHMARK_STORE_PATH = os.getenv("BENCHMARK_STORE_PATH", "").strip()
+
 
 class BenchmarkCitation(BaseModel):
     benchmark_clause_id: str
@@ -85,14 +87,36 @@ class UserClause:
 
 
 class InMemoryVectorStore:
-    def __init__(self):
+    def __init__(self, store_path: str = ""):
         self._clauses: List[BenchmarkClause] = []
+        self._store_path = store_path
+        if self._store_path:
+            self._load()
+
+    def _load(self) -> None:
+        path = Path(self._store_path)
+        if not path.exists():
+            return
+        try:
+            items = json.loads(path.read_text())
+            self._clauses = [BenchmarkClause(**item) for item in items if isinstance(item, dict)]
+        except Exception:
+            self._clauses = []
+
+    def _persist(self) -> None:
+        if not self._store_path:
+            return
+        path = Path(self._store_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([asdict(c) for c in self._clauses]))
 
     def clear(self) -> None:
         self._clauses.clear()
+        self._persist()
 
     def add(self, clause: BenchmarkClause) -> None:
         self._clauses.append(clause)
+        self._persist()
 
     def all(self) -> List[BenchmarkClause]:
         return list(self._clauses)
@@ -118,7 +142,7 @@ class InMemoryVectorStore:
         return scored[:top_k]
 
 
-GLOBAL_VECTOR_STORE = InMemoryVectorStore()
+GLOBAL_VECTOR_STORE = InMemoryVectorStore(BENCHMARK_STORE_PATH)
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:

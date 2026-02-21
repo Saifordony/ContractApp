@@ -3,6 +3,7 @@ from backend.services.contract_intelligence import (
     chunk_contract_text,
     extract_key_clauses,
     retrieve_relevant_chunks,
+    classify_question_intent,
 )
 
 
@@ -65,3 +66,13 @@ def test_personal_nonlegal_question_returns_contract_scope_message():
     assert "contract-related" in result["answer"].lower()
     assert result["not_found"]
     assert result["confidence"] == 0.0
+
+
+def test_intent_classifier_detects_leave_policy():
+    intent = classify_question_intent("how many sick leave days do i have?")
+    assert intent == "leave_policy"
+
+
+def test_answer_includes_intent_for_grounded_response():
+    result = answer_contract_question(SAMPLE_CONTRACT, "Which law governs this agreement?")
+    assert result.get("intent") in {"governing_law", "general_contract"}

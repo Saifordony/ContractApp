@@ -505,6 +505,23 @@ async def get_metrics(current_user: dict = Depends(get_current_user)):
     }
 
 
+
+
+@app.get("/metrics/chat-quality")
+async def get_chat_quality_metrics(current_user: dict = Depends(get_current_user)):
+    user_filter = {"user": current_user["username"], "action": "contract_chat", "status": "success"}
+    total = await db.logs.count_documents(user_filter)
+    low_confidence = await db.logs.count_documents({**user_filter, "confidence": {"$lt": 0.35}})
+    out_of_scope = await db.logs.count_documents({**user_filter, "intent": "out_of_scope"})
+    no_evidence = await db.logs.count_documents({**user_filter, "evidence_count": 0})
+
+    return {
+        "total_chat_requests": total,
+        "low_confidence_rate": (low_confidence / total * 100) if total else 0,
+        "out_of_scope_rate": (out_of_scope / total * 100) if total else 0,
+        "no_evidence_rate": (no_evidence / total * 100) if total else 0,
+    }
+
 @app.get("/healthz")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow()}
@@ -908,6 +925,9 @@ async def chat_with_contract(
                 "retrieved_chunk_ids": structured_answer.get("retrieved_chunk_ids", []),
                 "retrieval_scores": structured_answer.get("retrieval_scores", []),
                 "evidence_count": len(structured_answer.get("evidence", [])),
+                "confidence": structured_answer.get("confidence", 0.0),
+                "intent": structured_answer.get("intent", "unknown"),
+                "not_found_count": len(structured_answer.get("not_found", [])),
                 "prompt_preview": request.question[:200],
                 "output_preview": structured_answer.get("answer", "")[:240],
             }

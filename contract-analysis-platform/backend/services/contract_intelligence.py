@@ -39,6 +39,16 @@ PERSONAL_NONLEGAL_HINTS = {
 }
 
 
+INTENT_KEYWORDS: Dict[str, set[str]] = {
+    "leave_policy": {"leave", "vacation", "sick", "absence", "day off", "time off"},
+    "working_hours": {"hours", "schedule", "shift", "overtime", "week"},
+    "compensation": {"salary", "payment", "invoice", "bonus", "compensation", "pay"},
+    "termination": {"terminate", "termination", "resign", "notice", "end"},
+    "confidentiality": {"confidential", "nda", "non-disclosure", "disclose"},
+    "governing_law": {"law", "jurisdiction", "court", "arbitration", "dispute"},
+    "obligations": {"must", "obligation", "required", "responsibility", "deliverable"},
+}
+
 @dataclass
 class RetrievalHit:
     score: float
@@ -313,6 +323,54 @@ def _is_out_of_scope_personal_question(question: str) -> bool:
     return has_personal_signal and not has_legal_signal
 
 
+
+
+def classify_question_intent(question: str) -> str:
+    q_tokens = set(_tokenize(question))
+    scored: List[Tuple[int, str]] = []
+    for intent, keywords in INTENT_KEYWORDS.items():
+        score = len(q_tokens & {tok for kw in keywords for tok in _tokenize(kw)})
+        scored.append((score, intent))
+    scored.sort(reverse=True)
+    return scored[0][1] if scored and scored[0][0] > 0 else "general_contract"
+
+
+def follow_ups_for_intent(intent: str) -> List[str]:
+    mapping = {
+        "leave_policy": [
+            "Do you want the exact leave entitlement and approval steps from your contract?",
+            "Should I summarize sick leave vs annual leave separately?",
+        ],
+        "working_hours": [
+            "Should I extract standard hours and overtime compensation terms?",
+            "Do you want a plain-language summary of attendance obligations?",
+        ],
+        "compensation": [
+            "Do you want payment timing, method, and late-payment terms extracted exactly?",
+            "Should I summarize salary/fees and any deductions in simple terms?",
+        ],
+        "termination": [
+            "Should I list notice periods and who can terminate under what conditions?",
+            "Do you want a risk summary of one-sided termination clauses?",
+        ],
+        "confidentiality": [
+            "Should I summarize what information is protected and for how long?",
+            "Do you want exceptions and breach consequences extracted?",
+        ],
+        "governing_law": [
+            "Should I extract governing law, jurisdiction, and dispute forum clauses?",
+            "Do you want a plain-language explanation of arbitration vs court language?",
+        ],
+    }
+    return mapping.get(
+        intent,
+        [
+            "Do you want me to summarize only the obligations that apply to you?",
+            "Should I extract the exact clause text and provide a plain-language interpretation?",
+        ],
+    )
+
+
 def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any]:
     if _is_out_of_scope_personal_question(question):
         return {
@@ -327,8 +385,10 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
             "risk_flags": _build_risk_flags(contract_text, []),
             "retrieved_chunk_ids": [],
             "retrieval_scores": [],
+            "intent": "out_of_scope",
         }
 
+    intent = classify_question_intent(question)
     chunks = chunk_contract_text(contract_text)
     scored_chunks = retrieve_relevant_chunks_with_scores(question, chunks)
 
@@ -342,6 +402,7 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
             "risk_flags": [],
             "retrieved_chunk_ids": [],
             "retrieval_scores": [],
+            "intent": intent,
         }
 
     top_score = scored_chunks[0][0]
@@ -360,6 +421,7 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
             "risk_flags": _build_risk_flags(contract_text, []),
             "retrieved_chunk_ids": [chunk.chunk_id for _, chunk in scored_chunks],
             "retrieval_scores": [score for score, _ in scored_chunks],
+            "intent": intent,
         }
 
     evidence: List[Dict[str, str]] = []
@@ -384,10 +446,7 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
         confidence = min(0.97, max(0.25, top_score))
         not_found = []
 
-    follow_ups = [
-        "Do you want me to summarize only the obligations that apply to you?",
-        "Should I extract the exact clause text and provide a plain-language interpretation?",
-    ]
+    follow_ups = follow_ups_for_intent(intent)
 
     risk_flags = _build_risk_flags(contract_text, evidence)
 
@@ -400,4 +459,5 @@ def answer_contract_question(contract_text: str, question: str) -> Dict[str, Any
         "risk_flags": risk_flags,
         "retrieved_chunk_ids": [chunk.chunk_id for _, chunk in scored_chunks],
         "retrieval_scores": [score for score, _ in scored_chunks],
+        "intent": intent,
     }

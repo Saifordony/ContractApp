@@ -970,6 +970,7 @@ def contract_analysis_page():
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
+        st.caption("Contract assistant only — not legal advice. Answers are grounded in detected contract evidence.")
         chat_key = f"contract_chat_history_{contract_id}"
         if chat_key not in st.session_state:
             st.session_state[chat_key] = []
@@ -1003,9 +1004,30 @@ def contract_analysis_page():
                     )
 
                     if chat_response and chat_response.status_code == 200:
-                        answer = chat_response.json().get("answer", "No answer returned")
+                        payload = chat_response.json()
+                        answer = payload.get("answer", "No answer returned")
+                        confidence = payload.get("confidence", 0)
+                        intent = payload.get("intent", "general_contract")
+                        evidence = payload.get("evidence", [])
+                        follow_ups = payload.get("follow_up_questions", [])
+
+                        lines = [
+                            answer,
+                            "",
+                            f"Confidence: {confidence}",
+                            f"Intent: {str(intent).replace('_', ' ')}",
+                        ]
+                        if evidence:
+                            lines.append("Evidence:")
+                            for ev in evidence[:2]:
+                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
+                        if follow_ups:
+                            lines.append("Suggested next questions:")
+                            for q in follow_ups[:2]:
+                                lines.append(f"- {q}")
+
                         st.session_state[chat_key].append(
-                            {"role": "assistant", "content": answer}
+                            {"role": "assistant", "content": "\n".join(lines)}
                         )
                     else:
                         error_msg = "Failed to get AI answer"
@@ -1413,6 +1435,18 @@ def admin_dashboard():
 
             with col4:
                 st.metric("Success Rate", f"{metrics['success_rate']:.1f}%")
+
+            chat_quality_response = make_api_request("/metrics/chat-quality")
+            if chat_quality_response and chat_quality_response.status_code == 200:
+                cq = chat_quality_response.json()
+                st.markdown("#### Chat Quality")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Low Confidence Rate", f"{cq.get('low_confidence_rate', 0):.1f}%")
+                with c2:
+                    st.metric("Out-of-Scope Rate", f"{cq.get('out_of_scope_rate', 0):.1f}%")
+                with c3:
+                    st.metric("No Evidence Rate", f"{cq.get('no_evidence_rate', 0):.1f}%")
 
         # Health checks
         st.subheader("Health Checks")
