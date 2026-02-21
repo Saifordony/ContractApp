@@ -163,6 +163,40 @@ def parse_object_id(value: str, field_name: str) -> ObjectId:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}") from exc
 
 
+
+
+def build_report_context_from_results(results: Dict[str, Any]) -> str:
+    """Build concise textual context from saved analysis results for report-aware chat."""
+    if not isinstance(results, dict) or not results:
+        return ""
+
+    health = results.get("health_evaluation", results)
+    lines = ["ANALYSIS REPORT SUMMARY:"]
+
+    if isinstance(health, dict):
+        lines.append(f"approved: {health.get('approved')}")
+        if health.get("health_score") is not None:
+            lines.append(f"health_score: {health.get('health_score')}/100")
+        if health.get("risk_level"):
+            lines.append(f"risk_level: {health.get('risk_level')}")
+        if health.get("contract_type"):
+            lines.append(f"contract_type: {health.get('contract_type')}")
+
+        missing = health.get("missing_critical_clauses", [])
+        if isinstance(missing, list) and missing:
+            lines.append("missing_critical_clauses: " + ", ".join(str(x) for x in missing[:8]))
+
+        changes = health.get("required_changes", [])
+        if isinstance(changes, list) and changes:
+            lines.append("required_changes: " + " | ".join(str(x) for x in changes[:5]))
+
+    clauses = results.get("clauses", {})
+    if isinstance(clauses, dict) and clauses:
+        lines.append("extracted_clause_titles: " + ", ".join(list(clauses.keys())[:20]))
+
+    return "\n".join(lines)
+
+
 def ensure_benchmark_enabled() -> None:
     if not BENCHMARK_ENABLED:
         raise HTTPException(status_code=404, detail="Benchmark feature is disabled")
@@ -899,12 +933,21 @@ async def chat_with_contract(
         )
 
     try:
+        latest_analysis = await db.contract_analyses.find_one(
+            {"contract_id": contract_id},
+            sort=[("created_at", -1)],
+        )
+        report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
+        chat_context_text = contract["content"]
+        if report_context:
+            chat_context_text = f"{chat_context_text}\n\n{report_context}"
+
         llm_answer = await contract_chat(
-            contract_text=contract["content"],
+            contract_text=chat_context_text,
             question=request.question,
             response_language=request.response_language,
         )
-        structured_answer = answer_contract_question(contract["content"], request.question)
+        structured_answer = answer_contract_question(chat_context_text, request.question)
 
         # Keep chat strictly grounded: never replace structured evidence-based answer with free-form LLM text.
         # Preserve LLM phrasing as optional alternative only when structured grounding succeeded.

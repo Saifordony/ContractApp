@@ -9,6 +9,7 @@ from typing import Any, Dict
 import pandas as pd
 import fitz  # PyMuPDF
 from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
 # Configuration
@@ -493,53 +494,98 @@ def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
-    y = height - 40
+    margin_x = 42
+    y = height - 48
 
-    def write_line(text: str, size: int = 10, indent: int = 0):
+    def ensure_space(min_height: int = 28):
         nonlocal y
+        if y < min_height:
+            c.showPage()
+            y = height - 48
+
+    def write_wrapped(text: str, size: int = 10, indent: int = 0, line_gap: int = 14):
+        nonlocal y
+        ensure_space(60)
         c.setFont("Helvetica", size)
-        max_chars = 105 - int(indent / 3)
+        max_chars = max(38, 106 - int(indent / 3))
         chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
         for chunk in chunks:
-            if y < 50:
-                c.showPage()
-                y = height - 40
-                c.setFont("Helvetica", size)
-            c.drawString(40 + indent, y, chunk)
-            y -= 14
+            ensure_space(56)
+            c.drawString(margin_x + indent, y, chunk)
+            y -= line_gap
+
+    def section_header(title: str):
+        nonlocal y
+        ensure_space(80)
+        c.setFillColor(colors.HexColor("#1f2f57"))
+        c.roundRect(margin_x, y - 16, width - (margin_x * 2), 22, 5, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin_x + 10, y - 2, title)
+        c.setFillColor(colors.black)
+        y -= 28
 
     health = report_payload.get("health_evaluation", report_payload)
     clauses = report_payload.get("clauses", {})
+    clause_explanations = report_payload.get("clause_explanations", {})
 
-    write_line("Contract Analysis Final Report", size=14)
-    write_line(f"Contract: {contract_title}")
-    write_line(f"Generated: {datetime.utcnow().isoformat()} UTC")
-    write_line("")
-    write_line(f"Detected Type: {str(health.get('contract_type', 'unknown')).replace('_', ' ')}")
-    write_line(f"Health Score: {health.get('health_score', 'N/A')}/100")
-    write_line(f"Risk Level: {health.get('risk_level', 'N/A')}")
-    write_line(f"Approved: {health.get('approved', False)}")
-    write_line("")
+    # Header
+    c.setFillColor(colors.HexColor("#223868"))
+    c.roundRect(margin_x, y - 30, width - (margin_x * 2), 36, 8, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin_x + 12, y - 8, "Contract Analysis Final Report")
+    c.setFillColor(colors.black)
+    y -= 44
 
-    write_line("Missing Mandatory Clauses:")
-    for item in health.get("missing_critical_clauses", []):
-        write_line(f"- {item}", indent=10)
+    write_wrapped(f"Contract: {contract_title}", size=10)
+    write_wrapped(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC", size=10)
+    y -= 6
 
-    write_line("Required Fixes:")
-    for item in health.get("required_changes", []):
-        write_line(f"- {item}", indent=10)
+    section_header("Health Analysis")
+    write_wrapped(f"Detected Contract Type: {str(health.get('contract_type', 'unknown')).replace('_', ' ').title()}")
+    write_wrapped(f"Health Score: {health.get('health_score', 'N/A')}/100")
+    write_wrapped(f"Risk Level: {str(health.get('risk_level', 'N/A')).title()}")
+    write_wrapped(f"Approved: {health.get('approved', False)}")
+
+    missing = health.get("missing_critical_clauses", [])
+    if missing:
+        write_wrapped("Missing Mandatory Clauses:", size=10)
+        for item in missing[:10]:
+            write_wrapped(f"• {item}", indent=12)
+
+    changes = health.get("required_changes", [])
+    if changes:
+        write_wrapped("Required Fixes:", size=10)
+        for item in changes[:8]:
+            write_wrapped(f"• {item}", indent=12)
 
     ambiguous = health.get("ambiguous_clauses", [])
     if ambiguous:
-        write_line("Ambiguous Clauses:")
-        for item in ambiguous:
-            write_line(f"- {item.get('clause', 'unknown')}: {item.get('reason', 'Needs clarification')}", indent=10)
+        write_wrapped("Ambiguous Clauses:", size=10)
+        for item in ambiguous[:6]:
+            write_wrapped(
+                f"• {item.get('clause', 'unknown')}: {item.get('reason', 'Needs clarification')}",
+                indent=12,
+            )
 
-    write_line("")
-    write_line("Clause-by-Clause Extract:")
-    for clause_type, text in clauses.items():
-        write_line(f"{clause_type}:", indent=5)
-        write_line(text[:380], indent=15)
+    y -= 4
+    section_header("Contract Analysis (Clause-by-Clause)")
+    if not clauses:
+        write_wrapped("No extracted clauses were available in this report payload.")
+    else:
+        for clause_type, text in list(clauses.items())[:18]:
+            ensure_space(86)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin_x + 2, y, f"{clause_type}")
+            y -= 14
+            write_wrapped(text[:420], indent=10, line_gap=13)
+            explanation = clause_explanations.get(clause_type)
+            if explanation:
+                c.setFillColor(colors.HexColor("#4b4b4b"))
+                write_wrapped("In simple terms: " + str(explanation)[:260], indent=10, line_gap=13)
+                c.setFillColor(colors.black)
+            y -= 4
 
     c.save()
     buffer.seek(0)

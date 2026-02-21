@@ -63,3 +63,25 @@ def test_parse_object_id_valid_and_invalid(backend_main):
 
     assert exc.value.status_code == 400
     assert "Invalid contract ID" in exc.value.detail
+
+
+def test_build_report_context_from_results_contains_health_and_clauses(backend_main):
+    payload = {
+        "health_evaluation": {
+            "approved": False,
+            "health_score": 52,
+            "risk_level": "high",
+            "contract_type": "employment",
+            "missing_critical_clauses": ["governing_law"],
+            "required_changes": ["Add governing law clause."],
+        },
+        "clauses": {
+            "Payment Terms Clause": "Net 30 days",
+            "Termination Clause": "30 days notice",
+        },
+    }
+    context = backend_main.build_report_context_from_results(payload)
+    assert "ANALYSIS REPORT SUMMARY" in context
+    assert "health_score: 52/100" in context
+    assert "contract_type: employment" in context
+    assert "Payment Terms Clause" in context
