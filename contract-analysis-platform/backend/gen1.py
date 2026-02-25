@@ -1,21 +1,22 @@
-from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 import openai
 from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
 from typing import Dict, Any
+from io import BytesIO
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from langchain.chains import SimpleSequentialChain
 import os
 import fitz  # PyMuPDF
+from PIL import Image
+import pytesseract
 
 executor = ThreadPoolExecutor()
 
 
 OPENAI_API_KEY = os.getenv(
     "OPENAI_API_KEY",
-    "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",
+    "",
 )
 if not OPENAI_API_KEY:
     print(
@@ -43,6 +44,8 @@ You are given this contract text:
 {contract_text}
 
 ---
+
+Response language requirement: {response_language}.
 
 Your task is to read the contract text carefully, analyze it, and extract the key legal clauses to return a structured JSON object containing the clause types and their contents.
 
@@ -242,8 +245,6 @@ Output:
 
 prompt1 = PromptTemplate.from_template(analysis_system_prompt)
 
-analyzing_chain = LLMChain(llm=llm_model, prompt=prompt1)
-
 
 evaluation_system_prompt = """ 
 You are a professional and intelligent contract health assessor, well known for your ability to assess the health of contracts precisely and efficiently, and for providing the correct reasoning behind the assessment.
@@ -255,7 +256,11 @@ Your responsibilities include:
 4. Providing clear, professional, and precise reasoning behind your assessment.
 5. Returning a structured JSON object with:
 - `approved`: A boolean indicating whether the contract overall should be approved (true if healthy, false if there are critical issues).
-- `reasoning`: A concise, professional explanation of why the contract is approved or not, mentioning key strengths and weaknesses (e.g., missing critical clauses, vague language, unfair terms).
+- `reasoning`: A concise, professional explanation of why the contract is approved or not, mentioning key strengths and weaknesses.
+- `missing_critical_clauses`: Array of missing critical clause names.
+- `issues`: Array of precise contract-specific problems.
+- `required_changes`: Array of actionable, contract-specific changes needed for approval.
+- `risk_level`: One of `low`, `medium`, `high`.
 
 ---
 
@@ -264,6 +269,8 @@ You are given the following key legal contract clauses (in JSON format):
 {contract_json}
 
 ---
+
+Response language requirement: {response_language}.
 
 Your task is to read the clauses carefully, analyze them and assess the overall health of the contract along with a precise and professional reasoning behind your assessment to return a structured JSON object containing the approval state and the reasoning behind it.
 
@@ -352,9 +359,13 @@ Avoid assumptions about content not explicitly present in the provided JSON.
 
 
 ##Step 5: Output
-Output the result as valid JSON with two fields:
+Output the result as valid JSON with these fields:
 - `approved`: true if the contract is healthy, false if it is not.
 - `reasoning`: a clear and professional string summarizing your evaluation.
+- `missing_critical_clauses`: list of exactly which critical clauses are missing.
+- `issues`: list of exact issues in present clauses (ambiguity, imbalance, missing safeguards).
+- `required_changes`: list of specific edits/additions required before approval.
+- `risk_level`: `low`, `medium`, or `high`.
 
 ###Return only a valid JSON object. Do not include intermediate steps, headings, or explanations. Output must contain only valid JSON, no markdown or text around it.
 ###Do not infer or assume clauses that are not explicitly present in the input JSON. Only reference clauses that exist in the input.
@@ -362,7 +373,11 @@ Output the result as valid JSON with two fields:
 ###The JSON should look like this:
 {{
   "approved": true or false,
-  "reasoning": "Your professional explanation here."
+  "reasoning": "Your professional explanation here.",
+  "missing_critical_clauses": ["Clause A", "Clause B"],
+  "issues": ["Specific issue 1", "Specific issue 2"],
+  "required_changes": ["Specific fix 1", "Specific fix 2"],
+  "risk_level": "low|medium|high"
 }}
 
 ---
@@ -404,7 +419,11 @@ contract JSON:
 Output:
 {{
   "approved": true,
-  "reasoning": "The contract is approved because it contains all critical clauses necessary to protect both parties, including Definitions, Scope of Work, Payment Terms, Confidentiality, Termination, Force Majeure, Dispute Resolution, Governing Law, Limitation of Liability, Entire Agreement, Indemnification, Notices, Amendment, Assignment, Severability, and Non-Waiver. All clauses are written clearly, with complete, fair, and balanced terms that effectively mitigate legal, financial, and operational risks. Additional helpful clauses, such as Transition Assistance, Data Security, Subcontracting, and Publicity restrictions, further strengthen risk management and operational clarity. No critical clauses are missing, and the contract presents no unreasonable risk to either party."
+  "reasoning": "The contract is approved because it includes the critical protections and has no major gaps.",
+  "missing_critical_clauses": [],
+  "issues": [],
+  "required_changes": ["No mandatory changes required. Optional: tighten SLA remedies and notice windows."],
+  "risk_level": "low"
 }}
 
 
@@ -412,15 +431,181 @@ Output:
 
 prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
-evaluation_chain = LLMChain(llm=llm_model, prompt=prompt2)
 
-full_pipeline_chain = SimpleSequentialChain(
-    chains=[analyzing_chain, evaluation_chain], verbose=True
+layman_clause_explainer_prompt = PromptTemplate.from_template(
+    """
+You are a legal explainer for non-lawyers.
+
+Given contract clauses in JSON, return JSON with the EXACT SAME KEYS where each value is:
+- a short, plain-English (or requested language) explanation of what that clause means in practice
+- max 2 short sentences
+- avoid legal jargon as much as possible
+- do not invent details beyond the clause text
+
+Response language requirement: {response_language}.
+
+Clauses JSON:
+{clauses_json}
+
+Return valid JSON only.
+"""
+)
+
+contract_chat_prompt = PromptTemplate.from_template(
+    """
+You are a contract assistant that helps users understand a specific contract.
+
+Rules:
+- Answer using ONLY the provided contract text.
+- If the answer is not in the contract, clearly say you cannot find it in the provided contract.
+- Keep the answer natural, human, practical, and easy to understand.
+- Adapt your tone and writing style to the user's style guide below without copying slang excessively.
+- Use short paragraphs and bullets when useful.
+- Response language requirement: {response_language}.
+
+User style guide:
+{user_style_guide}
+
+Contract text:
+{contract_text}
+
+User question:
+{question}
+"""
 )
 
 
+
+def infer_user_style_guide(question: str, response_language: str) -> str:
+    question_text = (question or "").strip()
+    lang = normalize_response_language(response_language)
+
+    if not question_text:
+        return (
+            "استخدم نبرة واضحة ومهنية مع شرح مبسط." if lang == "Arabic" else
+            "Use a clear, professional tone with simple explanations."
+        )
+
+    lower_question = question_text.lower()
+
+    if any(token in lower_question for token in ["simple", "explain like", "easy", "beginner", "بسيط", "شرح", "افهم"]):
+        return (
+            "استخدم أسلوبًا مبسطًا جدًا ولغة غير قانونية قدر الإمكان، مع مثال قصير إن أمكن."
+            if lang == "Arabic"
+            else "Use plain non-legal language, keep it beginner-friendly, and include one short example if helpful."
+        )
+
+    if "?" in question_text and len(question_text.split()) <= 10:
+        return (
+            "المستخدم يسأل بشكل مباشر وسريع؛ أجب بإيجاز شديد ثم أضف نقطة توضيح واحدة مهمة."
+            if lang == "Arabic"
+            else "The user asks directly; answer briefly first, then add one key clarification."
+        )
+
+    if len(question_text.split()) > 35:
+        return (
+            "المستخدم مفصل؛ قدّم إجابة منظمة مع نقاط واضحة وخطوات عملية."
+            if lang == "Arabic"
+            else "The user is detailed; provide a structured response with clear bullets and practical next steps."
+        )
+
+    return (
+        "حافظ على نبرة ودودة ومهنية، وقدم إجابة واضحة مع نقاط عملية قصيرة."
+        if lang == "Arabic"
+        else "Keep a friendly professional tone and provide a clear answer with short practical points."
+    )
+
+# Backward-compatible sentinel; pipeline is handled manually in sync helper.
+full_pipeline_chain = None
+
+
+
+
+def _coerce_llm_content(raw_content: Any) -> str:
+    """Normalize LangChain/OpenAI response content into plain text."""
+    if raw_content is None:
+        return ""
+    if isinstance(raw_content, str):
+        return raw_content
+    if isinstance(raw_content, list):
+        parts = []
+        for item in raw_content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                if isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+                elif item.get("type") == "text" and isinstance(item.get("content"), str):
+                    parts.append(item["content"])
+                else:
+                    parts.append(str(item))
+            else:
+                parts.append(str(item))
+        return "\n".join([p for p in parts if p]).strip()
+    return str(raw_content)
+
+
+def _extract_json_payload(raw_content: Any) -> Any:
+    """Extract JSON from model output even when wrapped in markdown/code fences."""
+    text = _coerce_llm_content(raw_content).strip()
+    if not text:
+        raise ValueError("Model returned an empty response")
+
+    # direct JSON first
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # fenced block extraction
+    if "```" in text:
+        for block in text.split("```"):
+            candidate = block.strip()
+            if not candidate:
+                continue
+            if candidate.lower().startswith("json"):
+                candidate = candidate[4:].strip()
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+
+    # first JSON object / array region fallback
+    start_obj = text.find("{")
+    end_obj = text.rfind("}")
+    start_arr = text.find("[")
+    end_arr = text.rfind("]")
+
+    candidates = []
+    if start_obj != -1 and end_obj > start_obj:
+        candidates.append(text[start_obj : end_obj + 1])
+    if start_arr != -1 and end_arr > start_arr:
+        candidates.append(text[start_arr : end_arr + 1])
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+
+    raise ValueError("Model output is not valid JSON")
+
+def normalize_response_language(response_language: str) -> str:
+    lang = (response_language or "english").strip().lower()
+    if lang in {"ar", "ara", "arabic", "العربية"}:
+        return "Arabic"
+    return "English"
+
+
+def get_ocr_languages(response_language: str) -> str:
+    if normalize_response_language(response_language) == "Arabic":
+        return "ara+eng"
+    return "eng+ara"
+
+
 def analyze_contract_sync(
-    contract_text: str, chain: LLMChain = analyzing_chain
+    contract_text: str,
+    response_language: str = "english",
 ) -> Dict[str, str]:
     """
     Uses a GenAI model to extract and classify legal clauses from contract text.
@@ -442,22 +627,65 @@ def analyze_contract_sync(
     if not contract_text.strip():
         raise ValueError("contract_text cannot be empty or whitespace")
     try:
-        result = chain.run(contract_text=contract_text)
-        clauses = json.loads(result)
+        prompt_text = prompt1.format(
+            contract_text=contract_text,
+            response_language=normalize_response_language(response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        clauses = _extract_json_payload(result)
 
         if not clauses:
             raise ValueError("The model returned an empty clause dictionary.")
-        print(clauses)
         return clauses
 
     except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
         raise ValueError(f"Model output is not valid JSON: {str(e)}")
     except Exception as e:
         raise RuntimeError(f"Failed to extract clauses: {str(e)}")
 
 
+
+
+def explain_clauses_for_layman_sync(
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
+) -> Dict[str, str]:
+    if not isinstance(contract_clauses, dict) or not contract_clauses:
+        raise ValueError("contract_clauses must be a non-empty dictionary")
+
+    for key, value in contract_clauses.items():
+        if not isinstance(value, str):
+            raise ValueError(f"Clause content for '{key}' must be a string")
+
+    try:
+        prompt_text = layman_clause_explainer_prompt.format(
+            clauses_json=json.dumps(contract_clauses),
+            response_language=normalize_response_language(response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        explanations = _extract_json_payload(result)
+
+        if not isinstance(explanations, dict):
+            raise ValueError("Model output for explanations is not a JSON object")
+
+        normalized_explanations: Dict[str, str] = {}
+        for key in contract_clauses.keys():
+            text = explanations.get(key, "")
+            normalized_explanations[key] = str(text).strip() if text else "No simple explanation generated."
+
+        return normalized_explanations
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to explain clauses in layman terms: {str(e)}")
+
 def evaluate_contract_sync(
-    contract_clauses: Dict[str, str], chain: LLMChain = evaluation_chain
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     """
     Uses a GenAI model to assess the health of a contract based on its key legal clauses.
@@ -484,31 +712,53 @@ def evaluate_contract_sync(
 
     try:
         contract_json_str = json.dumps(contract_clauses)
-        result = chain.run(contract_json=contract_json_str)
-        assessment = json.loads(result)
+        prompt_text = prompt2.format(
+            contract_json=contract_json_str,
+            response_language=normalize_response_language(response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        assessment = _extract_json_payload(result)
 
         if "approved" not in assessment or "reasoning" not in assessment:
             raise ValueError(
                 "The model response does not contain required fields 'approved' and 'reasoning'."
             )
 
+        # Normalize optional structured diagnostics to improve frontend rendering.
+        assessment.setdefault("missing_critical_clauses", [])
+        assessment.setdefault("issues", [])
+        assessment.setdefault("required_changes", [])
+        assessment.setdefault("risk_level", "medium")
+
+        for key in ["missing_critical_clauses", "issues", "required_changes"]:
+            if not isinstance(assessment.get(key), list):
+                assessment[key] = [str(assessment[key])]
+            assessment[key] = [str(item) for item in assessment[key]]
+
+        if assessment.get("risk_level") not in {"low", "medium", "high"}:
+            assessment["risk_level"] = "medium"
+
         return assessment
 
     except json.JSONDecodeError as e:
+        raise ValueError(f"Model output is not valid JSON: {str(e)}")
+    except ValueError as e:
         raise ValueError(f"Model output is not valid JSON: {str(e)}")
     except Exception as e:
         raise RuntimeError(f"Failed to assess contract health: {str(e)}")
 
 
 def analyze_and_evaluate_contract_sync(
-    contract_text: str, pipeline_chain: SimpleSequentialChain = full_pipeline_chain
+    contract_text: str,
+    pipeline_chain: Any = full_pipeline_chain,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     """
     Runs the full contract analysis + evaluation pipeline in one step.
 
     Args:
         contract_text (str): The full text of the contract.
-        pipeline_chain (SimpleSequentialChain): The pre-built sequential chain to run.
+        pipeline_chain (Any): Backward-compatible placeholder; pipeline is run manually.
 
     Returns:
         Dict[str, Any]: The final evaluation result from the pipeline.
@@ -524,19 +774,14 @@ def analyze_and_evaluate_contract_sync(
         raise ValueError("contract_text cannot be empty or whitespace")
 
     try:
-        result = pipeline_chain.run(contract_text)
-
-        final_output = json.loads(result)
-
-        if not isinstance(final_output, dict):
-            raise ValueError("Pipeline output is not a valid JSON object.")
-
-        if "approved" not in final_output or "reasoning" not in final_output:
-            raise ValueError(
-                "Pipeline output missing 'approved' or 'reasoning' fields."
-            )
-
-        return final_output
+        clauses = analyze_contract_sync(
+            contract_text,
+            response_language=response_language,
+        )
+        return evaluate_contract_sync(
+            clauses,
+            response_language=response_language,
+        )
 
     except json.JSONDecodeError as e:
         raise ValueError(f"Pipeline output is not valid JSON: {str(e)}")
@@ -545,27 +790,88 @@ def analyze_and_evaluate_contract_sync(
 
 
 async def evaluate_contract(
-    contract_clauses: Dict[str, str], chain: LLMChain = evaluation_chain
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, evaluate_contract_sync, contract_clauses, chain
+        executor, evaluate_contract_sync, contract_clauses, response_language
     )
 
 
-async def analyze_contract(contract_text: str, chain: LLMChain = analyzing_chain) -> Dict[str, str]:
+async def analyze_contract(
+    contract_text: str,
+    response_language: str = "english",
+) -> Dict[str, str]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, analyze_contract_sync, contract_text, chain
+        executor, analyze_contract_sync, contract_text, response_language
     )
 
+
+
+
+async def explain_clauses_for_layman(
+    contract_clauses: Dict[str, str],
+    response_language: str = "english",
+) -> Dict[str, str]:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor, explain_clauses_for_layman_sync, contract_clauses, response_language
+    )
 
 async def analyze_and_evaluate_contract(
-    contract_text: str, pipeline_chain: Any
+    contract_text: str,
+    pipeline_chain: Any = None,
+    response_language: str = "english",
 ) -> Dict[str, Any]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
-        executor, analyze_and_evaluate_contract_sync, contract_text, pipeline_chain
+        executor,
+        analyze_and_evaluate_contract_sync,
+        contract_text,
+        pipeline_chain,
+        response_language,
+    )
+
+
+def contract_chat_sync(
+    contract_text: str,
+    question: str,
+    response_language: str = "english",
+) -> str:
+    if not isinstance(contract_text, str) or not contract_text.strip():
+        raise ValueError("contract_text must be a non-empty string")
+    if not isinstance(question, str) or not question.strip():
+        raise ValueError("question must be a non-empty string")
+
+    try:
+        prompt_text = contract_chat_prompt.format(
+            contract_text=contract_text,
+            question=question,
+            response_language=normalize_response_language(response_language),
+            user_style_guide=infer_user_style_guide(question, response_language),
+        )
+        result = llm_model.invoke(prompt_text).content
+        if not isinstance(result, str) or not result.strip():
+            raise ValueError("Model returned an empty answer")
+        return result.strip()
+    except Exception as e:
+        raise RuntimeError(f"Failed to answer contract question: {str(e)}")
+
+
+async def contract_chat(
+    contract_text: str,
+    question: str,
+    response_language: str = "english",
+) -> str:
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        executor,
+        contract_chat_sync,
+        contract_text,
+        question,
+        response_language,
     )
 
 
@@ -619,7 +925,21 @@ def extract_text_from_pdf(file_path: str) -> str:
         raise RuntimeError(f"Unexpected error during PDF extraction: {str(e)}")
 
 
-def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
+def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> str:
+    text = ""
+    with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+        for page in pdf_doc:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+            image = Image.open(BytesIO(pix.tobytes("png")))
+            text += pytesseract.image_to_string(image, lang=ocr_languages) + "\n"
+    return text
+
+
+def extract_text_from_pdf_bytes(
+    pdf_bytes: bytes,
+    use_ocr: bool = True,
+    response_language: str = "english",
+) -> str:
     """
     Extracts text from PDF bytes.
 
@@ -636,18 +956,24 @@ def extract_text_from_pdf_bytes(pdf_bytes: bytes) -> str:
     """
     try:
         text = ""
-        pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        for page in pdf_doc:
-            text += page.get_text()
-        pdf_doc.close()
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+            for page in pdf_doc:
+                text += page.get_text()
 
-        if not text.strip():
-            raise ValueError("No text could be extracted from the PDF.")
+        if text.strip():
+            return text
 
-        return text
+        if use_ocr:
+            ocr_text = _ocr_text_from_pdf_bytes(
+                pdf_bytes, ocr_languages=get_ocr_languages(response_language)
+            )
+            if ocr_text.strip():
+                return ocr_text
 
-    except fitz.FileDataError:
-        raise CorruptPDFError("The provided bytes are not a valid PDF or are corrupted")
+        raise ValueError("No text could be extracted from the PDF.")
+
+    except fitz.FileDataError as exc:
+        raise CorruptPDFError("The provided bytes are not a valid PDF or are corrupted") from exc
     except RuntimeError as e:
         raise RuntimeError(f"PyMuPDF processing failed: {str(e)}")
     except Exception as e:

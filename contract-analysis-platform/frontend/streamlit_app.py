@@ -1,17 +1,373 @@
 import streamlit as st
 import requests
 import os
-from typing import Dict
+import html
+import io
+import json
+from datetime import datetime
+from typing import Any, Dict
 import pandas as pd
+import fitz  # PyMuPDF
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
 
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
 # Initialize session state
 if "token" not in st.session_state:
     st.session_state.token = None
 if "username" not in st.session_state:
     st.session_state.username = None
+
+
+def apply_modern_theme(sidebar_compact: bool = False):
+    sidebar_width = "5.2rem" if sidebar_compact else "19.5rem"
+    sidebar_text_display = "none" if sidebar_compact else "block"
+
+    st.markdown(
+        f"""
+        <style>
+        /* ==================== Design System ==================== */
+        .stApp {{
+            background: radial-gradient(circle at 12% 20%, rgba(125, 95, 255, 0.14), transparent 42%),
+                        radial-gradient(circle at 82% 12%, rgba(51, 96, 255, 0.14), transparent 42%),
+                        linear-gradient(140deg, #eef3f8 0%, #e8eef6 46%, #eaf2f6 100%);
+            font-family: Inter, "SF Pro Text", "Segoe UI", sans-serif;
+            animation: pageFadeIn 0.45s ease-out;
+        }}
+        .stApp::before {{
+            content: "";
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(130deg, rgba(98, 86, 255, 0.06), rgba(67, 116, 255, 0.05), rgba(88, 168, 255, 0.05));
+            background-size: 190% 190%;
+            animation: gradientShift 14s ease-in-out infinite;
+            pointer-events: none;
+            z-index: 0;
+        }}
+        .block-container {{
+            position: relative;
+            z-index: 1;
+            padding-top: 1.1rem;
+            padding-bottom: 2.2rem;
+            animation: fadeInUp 0.35s ease-out;
+        }}
+        @keyframes gradientShift {{
+            0% {{ background-position: 0% 50%; }}
+            50% {{ background-position: 100% 50%; }}
+            100% {{ background-position: 0% 50%; }}
+        }}
+        @keyframes pageFadeIn {{
+            from {{ opacity: 0; }}
+            to {{ opacity: 1; }}
+        }}
+        @keyframes fadeInUp {{
+            from {{ opacity: 0; transform: translateY(6px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+
+        /* ==================== Typography & Layout ==================== */
+        h1, h2, h3 {{
+            color: #1d2438;
+            letter-spacing: -0.02em;
+            font-weight: 760;
+        }}
+        .page-transition {{
+            animation: fadeInUp 0.28s ease-in-out;
+        }}
+
+        /* ==================== Sidebar ==================== */
+        section[data-testid="stSidebar"] {{
+            background: linear-gradient(180deg, #121b36 0%, #1b2342 45%, #1f2748 100%);
+            border-right: 1px solid rgba(156, 173, 211, 0.25);
+            box-shadow: 10px 0 40px rgba(12, 18, 35, 0.28);
+            min-width: {sidebar_width} !important;
+            max-width: {sidebar_width} !important;
+            transition: all 0.28s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] * {{
+            color: #e9f0ff !important;
+            transition: all 0.25s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] [data-testid="stSidebarNav"] {{ display: none; }}
+        section[data-testid="stSidebar"] .stCaption,
+        section[data-testid="stSidebar"] h1,
+        section[data-testid="stSidebar"] h2,
+        section[data-testid="stSidebar"] h3,
+        section[data-testid="stSidebar"] p {{
+            display: {sidebar_text_display};
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label {{
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(173, 196, 255, 0.25);
+            border-radius: 12px;
+            margin-bottom: 0.45rem;
+            padding: 0.45rem 0.5rem;
+            transition: all 0.25s ease-in-out;
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
+            transform: translateX(2px);
+            background: rgba(111, 135, 255, 0.22);
+            border-color: rgba(178, 197, 255, 0.55);
+            box-shadow: 0 8px 22px rgba(28, 43, 87, 0.35);
+        }}
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {{
+            background: linear-gradient(90deg, rgba(74, 105, 255, 0.35), rgba(137, 94, 255, 0.35));
+            border-color: rgba(198, 210, 255, 0.72);
+            box-shadow: 0 8px 22px rgba(53, 73, 132, 0.34);
+        }}
+
+        /* ==================== Components ==================== */
+        div[data-testid="stTabs"] button {{
+            border-radius: 12px 12px 0 0;
+            background: transparent;
+            color: #2b3552;
+            font-weight: 700;
+            border: none;
+            transition: all 0.22s ease-in-out;
+        }}
+        div[data-testid="stTabs"] button[aria-selected="true"] {{
+            background: linear-gradient(90deg, #233155 0%, #2f3f67 100%) !important;
+            color: #ffffff !important;
+        }}
+        div[data-testid="stForm"], div[data-testid="stExpander"] {{
+            background: rgba(255, 255, 255, 0.55);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(205, 221, 247, 0.75);
+            border-radius: 16px;
+            padding: 0.65rem;
+            box-shadow: 0 14px 36px rgba(33, 45, 77, 0.09);
+            transition: all 0.3s ease;
+        }}
+        div[data-testid="stTextInputRootElement"],
+        div[data-testid="stTextAreaRootElement"],
+        div[data-baseweb="select"] > div {{
+            border-radius: 12px !important;
+            transition: all 0.24s ease-in-out !important;
+        }}
+        div[data-testid="stTextInputRootElement"]:focus-within,
+        div[data-testid="stTextAreaRootElement"]:focus-within {{
+            box-shadow: 0 0 0 3px rgba(92, 122, 255, 0.22) !important;
+            border-color: rgba(92, 122, 255, 0.6) !important;
+        }}
+        .stButton > button,
+        .stForm [data-testid="stFormSubmitButton"] button {{
+            border-radius: 12px;
+            border: 1px solid #364976;
+            background: linear-gradient(100deg, #24335e 0%, #3a4f89 100%);
+            color: white;
+            font-weight: 700;
+            box-shadow: 0 9px 24px rgba(26, 39, 70, 0.28);
+            transition: all 0.28s ease-in-out;
+        }}
+        .stButton > button:hover,
+        .stForm [data-testid="stFormSubmitButton"] button:hover {{
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 14px 30px rgba(33, 48, 87, 0.35);
+            filter: brightness(1.03);
+        }}
+
+        /* ==================== Reusable Cards ==================== */
+        .metric-card {{
+            background: rgba(255, 255, 255, 0.56);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(201, 216, 244, 0.8);
+            border-radius: 16px;
+            padding: 0.95rem 1rem;
+            box-shadow: 0 14px 35px rgba(30, 43, 74, 0.10);
+            transition: all 0.28s ease-in-out;
+        }}
+        .metric-card:hover {{
+            transform: translateY(-3px);
+            box-shadow: 0 18px 36px rgba(30, 43, 74, 0.16);
+            border-color: rgba(134, 159, 255, 0.65);
+        }}
+        .metric-label {{
+            font-size: 0.81rem;
+            color: #667291;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.3rem;
+        }}
+        .metric-value {{
+            font-size: 1.45rem;
+            color: #1f2b49;
+            font-weight: 760;
+            line-height: 1.1;
+        }}
+        .metric-sub {{
+            color: #667291;
+            font-size: 0.82rem;
+            margin-top: 0.2rem;
+        }}
+
+        .topbar {{
+            background: rgba(255, 255, 255, 0.5);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(201, 216, 244, 0.8);
+            border-radius: 16px;
+            padding: 0.88rem 1rem;
+            margin-bottom: 0.85rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 14px 34px rgba(30, 43, 74, 0.1);
+        }}
+        .topbar-title {{
+            font-weight: 800;
+            color: #1f2a45;
+            letter-spacing: 0.02em;
+        }}
+        .topbar-sub {{
+            color: #5d6883;
+            font-size: 0.9rem;
+        }}
+
+        .login-wrap {{
+            width: 100%;
+            display: block;
+            animation: fadeInUp 0.35s ease-out;
+        }}
+        .login-card {{
+            width: min(760px, 96vw);
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.56);
+            backdrop-filter: blur(14px);
+            border: 1px solid rgba(191, 209, 241, 0.75);
+            border-radius: 18px;
+            padding: 1.25rem 1.25rem 0.55rem;
+            box-shadow: 0 20px 45px rgba(25, 38, 70, 0.16);
+        }}
+
+        .chat-shell {{
+            background: rgba(255, 255, 255, 0.55);
+            border: 1px solid #d8e1e8;
+            border-radius: 16px;
+            padding: 1rem;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.7);
+        }}
+        .chat-scroll {{
+            max-height: 360px;
+            overflow-y: auto;
+            padding-right: 0.25rem;
+            margin-bottom: 0.5rem;
+        }}
+        .chat-row {{ display: flex; margin: 0.5rem 0; }}
+        .chat-row.user {{ justify-content: flex-end; }}
+        .chat-bubble {{
+            max-width: 86%;
+            padding: 0.7rem 0.9rem;
+            border-radius: 14px;
+            border: 1px solid #dce4ec;
+            line-height: 1.45;
+            font-size: 0.98rem;
+            transition: all 0.22s ease;
+        }}
+        .chat-bubble.assistant {{
+            background: #ffffff;
+            color: #222b3c;
+            border-top-left-radius: 6px;
+            box-shadow: 0 2px 10px rgba(30, 44, 75, 0.08);
+        }}
+        .chat-bubble.user {{
+            background: linear-gradient(140deg, #25304f 0%, #37476f 100%);
+            color: #ffffff;
+            border-color: #293558;
+            border-top-right-radius: 6px;
+            box-shadow: 0 4px 14px rgba(31, 41, 68, 0.24);
+        }}
+
+        .fab-chip {{
+            position: fixed;
+            right: 1.4rem;
+            bottom: 1.3rem;
+            background: linear-gradient(120deg, #2b3f79 0%, #5b48b8 100%);
+            color: #fff;
+            border-radius: 999px;
+            padding: 0.62rem 0.9rem;
+            box-shadow: 0 16px 26px rgba(35, 43, 93, 0.35);
+            border: 1px solid rgba(213, 226, 255, 0.24);
+            font-size: 0.82rem;
+            font-weight: 600;
+            z-index: 1000;
+            pointer-events: none;
+            opacity: 0.95;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def get_dashboard_stats() -> Dict:
+    """Fetch real dashboard stats from backend APIs."""
+    stats = {
+        "total_requests": "—",
+        "success_rate": "—",
+        "clients": "—",
+        "contracts": "—",
+    }
+
+    metrics_response = make_api_request("/metrics")
+    if metrics_response and metrics_response.status_code == 200:
+        metrics = metrics_response.json()
+        stats["total_requests"] = metrics.get("total_requests", "—")
+        success_rate = metrics.get("success_rate")
+        stats["success_rate"] = (
+            f"{success_rate:.1f}%" if isinstance(success_rate, (int, float)) else "—"
+        )
+
+    clients_response = make_api_request("/clients")
+    if clients_response and clients_response.status_code == 200:
+        stats["clients"] = len(clients_response.json().get("clients", []))
+
+    contracts_response = make_api_request("/contracts")
+    if contracts_response and contracts_response.status_code == 200:
+        stats["contracts"] = len(contracts_response.json().get("contracts", []))
+
+    return stats
+
+
+def render_metric_card(title: str, value: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div class='metric-card'>
+            <div class='metric-label'>{title}</div>
+            <div class='metric-value'>{value}</div>
+            <div class='metric-sub'>{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_chrome_header(username: str):
+    stats = get_dashboard_stats()
+    st.markdown(
+        f"""
+        <div class='topbar'>
+            <div>
+                <div class='topbar-title'>📊 CONTRACT INTELLIGENCE DASHBOARD</div>
+                <div class='topbar-sub'>Welcome, {username} — bilingual OCR + AI analysis workspace</div>
+            </div>
+            <div class='topbar-sub'>EN | AR • Secure Session</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        render_metric_card("Total Requests", str(stats['total_requests']), "All tracked API calls")
+    with c2:
+        render_metric_card("Success Rate", str(stats['success_rate']), "Healthy backend responses")
+    with c3:
+        render_metric_card("Clients", str(stats['clients']), "Managed organizations")
+    with c4:
+        render_metric_card("Contracts", str(stats['contracts']), "Contracts in your workspace")
 
 
 def make_api_request(
@@ -59,18 +415,217 @@ def make_api_request(
         return None
 
 
+def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
+    """Extract text from uploaded PDF bytes for contract persistence."""
+    text = ""
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+            for page in pdf_doc:
+                text += page.get_text()
+    except Exception as e:
+        raise ValueError(f"Failed to read PDF: {str(e)}") from e
+
+    if not text.strip():
+        raise ValueError(
+            "Could not extract text from this PDF. If it is scanned/image-only, please use OCR-enabled analysis first."
+        )
+
+    return text
+
+
+def render_contract_evaluation(evaluation: Dict):
+    approved = evaluation.get("approved", False)
+    if approved:
+        st.success("Contract Approved")
+    else:
+        st.error("Contract Not Approved")
+
+    contract_type = evaluation.get("contract_type")
+    if contract_type:
+        confidence = evaluation.get("contract_type_confidence")
+        confidence_text = f" (confidence: {confidence})" if confidence is not None else ""
+        st.write(f"**Detected Contract Type:** {str(contract_type).replace('_', ' ').title()}{confidence_text}")
+
+    score = int(evaluation.get("health_score", 0))
+    st.write(f"**Health Score:** {score}/100")
+    st.progress(max(0, min(100, score)) / 100)
+
+    risk_level = str(evaluation.get("risk_level", "medium")).lower()
+    st.write(f"**Risk Level:** {risk_level.title()}")
+
+    st.write("**Reasoning:**")
+    st.write(evaluation.get("reasoning", "No reasoning provided"))
+
+    missing = evaluation.get("missing_critical_clauses", [])
+    recommended = evaluation.get("missing_recommended_clauses", [])
+    ambiguous = evaluation.get("ambiguous_clauses", [])
+    issues = evaluation.get("issues", [])
+    changes = evaluation.get("required_changes", [])
+
+    if missing:
+        st.markdown("#### Missing Mandatory Clauses")
+        for item in missing:
+            st.write(f"- {item}")
+
+    if recommended:
+        st.markdown("#### Missing Recommended Clauses")
+        for item in recommended:
+            st.write(f"- {item}")
+
+    if ambiguous:
+        st.markdown("#### Ambiguous Clauses To Fix")
+        for item in ambiguous:
+            clause_name = item.get("clause", "unknown")
+            reason = item.get("reason", "Needs clarification")
+            st.write(f"- **{clause_name}**: {reason}")
+
+    if issues:
+        st.markdown("#### Specific Issues Found")
+        for item in issues:
+            st.write(f"- {item}")
+
+    if changes:
+        st.markdown("#### What This Contract Needs")
+        for item in changes:
+            st.write(f"- {item}")
+
+
+def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any]) -> bytes:
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    margin_x = 42
+    y = height - 48
+
+    def ensure_space(min_height: int = 28):
+        nonlocal y
+        if y < min_height:
+            c.showPage()
+            y = height - 48
+
+    def write_wrapped(text: str, size: int = 10, indent: int = 0, line_gap: int = 14):
+        nonlocal y
+        ensure_space(60)
+        c.setFont("Helvetica", size)
+        max_chars = max(38, 106 - int(indent / 3))
+        chunks = [text[i:i + max_chars] for i in range(0, len(text), max_chars)] or [""]
+        for chunk in chunks:
+            ensure_space(56)
+            c.drawString(margin_x + indent, y, chunk)
+            y -= line_gap
+
+    def section_header(title: str):
+        nonlocal y
+        ensure_space(80)
+        c.setFillColor(colors.HexColor("#1f2f57"))
+        c.roundRect(margin_x, y - 16, width - (margin_x * 2), 22, 5, stroke=0, fill=1)
+        c.setFillColor(colors.white)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin_x + 10, y - 2, title)
+        c.setFillColor(colors.black)
+        y -= 28
+
+    health = report_payload.get("health_evaluation", report_payload)
+    clauses = report_payload.get("clauses", {})
+    clause_explanations = report_payload.get("clause_explanations", {})
+
+    # Header
+    c.setFillColor(colors.HexColor("#223868"))
+    c.roundRect(margin_x, y - 30, width - (margin_x * 2), 36, 8, stroke=0, fill=1)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin_x + 12, y - 8, "Contract Analysis Final Report")
+    c.setFillColor(colors.black)
+    y -= 44
+
+    write_wrapped(f"Contract: {contract_title}", size=10)
+    write_wrapped(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC", size=10)
+    y -= 6
+
+    section_header("Health Analysis")
+    write_wrapped(f"Detected Contract Type: {str(health.get('contract_type', 'unknown')).replace('_', ' ').title()}")
+    write_wrapped(f"Health Score: {health.get('health_score', 'N/A')}/100")
+    write_wrapped(f"Risk Level: {str(health.get('risk_level', 'N/A')).title()}")
+    write_wrapped(f"Approved: {health.get('approved', False)}")
+
+    missing = health.get("missing_critical_clauses", [])
+    if missing:
+        write_wrapped("Missing Mandatory Clauses:", size=10)
+        for item in missing[:10]:
+            write_wrapped(f"• {item}", indent=12)
+
+    changes = health.get("required_changes", [])
+    if changes:
+        write_wrapped("Required Fixes:", size=10)
+        for item in changes[:8]:
+            write_wrapped(f"• {item}", indent=12)
+
+    ambiguous = health.get("ambiguous_clauses", [])
+    if ambiguous:
+        write_wrapped("Ambiguous Clauses:", size=10)
+        for item in ambiguous[:6]:
+            write_wrapped(
+                f"• {item.get('clause', 'unknown')}: {item.get('reason', 'Needs clarification')}",
+                indent=12,
+            )
+
+    y -= 4
+    section_header("Contract Analysis (Clause-by-Clause)")
+    if not clauses:
+        write_wrapped("No extracted clauses were available in this report payload.")
+    else:
+        for clause_type, text in list(clauses.items())[:18]:
+            ensure_space(86)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(margin_x + 2, y, f"{clause_type}")
+            y -= 14
+            write_wrapped(text[:420], indent=10, line_gap=13)
+            explanation = clause_explanations.get(clause_type)
+            if explanation:
+                c.setFillColor(colors.HexColor("#4b4b4b"))
+                write_wrapped("In simple terms: " + str(explanation)[:260], indent=10, line_gap=13)
+                c.setFillColor(colors.black)
+            y -= 4
+
+    c.save()
+    buffer.seek(0)
+    return buffer.read()
+
+
+def render_chat_history(chat_messages):
+    if not chat_messages:
+        return
+
+    st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
+    for msg in chat_messages:
+        role = msg.get("role", "assistant")
+        role_class = "user" if role == "user" else "assistant"
+        escaped_text = html.escape(msg.get("content", ""))
+        escaped_text = escaped_text.replace("\n", "<br>")
+        st.markdown(
+            f"""
+            <div class='chat-row {role_class}'>
+                <div class='chat-bubble {role_class}'>{escaped_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div></div>", unsafe_allow_html=True)
+
+
 def login_page():
     """Login and Registration page"""
+    st.markdown("<div class='login-wrap'><div class='login-card'>", unsafe_allow_html=True)
     st.title("Contract Analysis Platform")
+    st.caption("Use Sign In or Sign Up below.")
 
-    tab1, tab2 = st.tabs(["Login", "Register"])
+    tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
 
     with tab1:
-        st.header("Login")
         with st.form("login_form"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Login")
+            submit = st.form_submit_button("Sign In")
 
             if submit:
                 response = make_api_request(
@@ -90,13 +645,12 @@ def login_page():
                     st.error("Login failed. Please check your credentials.")
 
     with tab2:
-        st.header("Register")
         with st.form("register_form"):
             username = st.text_input("Username")
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
-            submit = st.form_submit_button("Register")
+            submit = st.form_submit_button("Sign Up")
 
             if submit:
                 if password != confirm_password:
@@ -110,11 +664,13 @@ def login_page():
                     )
 
                     if response and response.status_code == 200:
-                        st.success("Registration successful! Please login.")
+                        st.success("Registration successful! Please sign in.")
                     else:
                         st.error(
                             "Registration failed. Username or email might already exist."
                         )
+
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def get_clients_list():
@@ -237,10 +793,23 @@ def contract_analysis_page():
             if contracts:
                 st.subheader("Existing Contracts")
                 for contract in contracts:
-                    with st.expander(f"Contract: {contract.get('title', 'Untitled')}"):
-                        st.write(f"**ID:** {contract.get('_id', 'N/A')}")
+                    contract_id = contract.get('_id', 'N/A')
+                    contract_title = contract.get('title', 'Untitled')
+                    with st.expander(f"Contract: {contract_title}"):
+                        st.write(f"**ID:** {contract_id}")
                         st.write(f"**Status:** {contract.get('status', 'N/A')}")
                         st.write(f"**Created:** {contract.get('created_at', 'N/A')}")
+
+                        if st.button("Use This Contract for AI Analysis", key=f"use_contract_{contract_id}"):
+                            st.session_state.current_contract_id = contract_id
+                            st.session_state.current_contract_title = contract_title
+                            st.session_state.current_contract_content = contract.get("content", "")
+                            if "current_pdf_bytes" in st.session_state:
+                                del st.session_state.current_pdf_bytes
+                            if "current_clauses" in st.session_state:
+                                del st.session_state.current_clauses
+                            st.success(f"Loaded contract '{contract_title}' for AI analysis")
+                            st.rerun()
 
         # Create new contract
         st.subheader("Create New Contract")
@@ -258,8 +827,7 @@ def contract_analysis_page():
                 # First, extract text from PDF
                 try:
                     pdf_bytes = uploaded_file.read()
-                    # We'll store the file content as text for now
-                    contract_content = f"PDF file uploaded: {uploaded_file.name}"
+                    contract_content = extract_text_from_uploaded_pdf(pdf_bytes)
 
                     # Create contract
                     response = make_api_request(
@@ -281,6 +849,7 @@ def contract_analysis_page():
                         # Store for analysis
                         st.session_state.current_contract_id = contract_id
                         st.session_state.current_pdf_bytes = pdf_bytes
+                        st.session_state.current_contract_content = contract_content
                         st.session_state.current_contract_title = contract_title
                         st.rerun()
                     else:
@@ -312,33 +881,54 @@ def contract_analysis_page():
                     del st.session_state.selected_client_name
                 st.rerun()
 
-    if (
-        "current_contract_id" in st.session_state
-        and "current_pdf_bytes" in st.session_state
-    ):
+    if "current_contract_id" in st.session_state:
         st.header("AI Contract Analysis")
 
         contract_id = st.session_state.current_contract_id
-        pdf_bytes = st.session_state.current_pdf_bytes
+        pdf_bytes = st.session_state.get("current_pdf_bytes")
+        contract_content = st.session_state.get("current_contract_content", "")
         contract_title = st.session_state.get("current_contract_title", "Unknown")
         
         # Show contract being analyzed
         st.info(f"Analyzing contract: **{contract_title}** (ID: {contract_id})")
+        if not pdf_bytes:
+            st.info("Using saved contract content from database (no re-upload needed).")
+
+        response_language = st.selectbox(
+            "Response Language / لغة الاستجابة",
+            options=["english", "arabic"],
+            format_func=lambda x: "English" if x == "english" else "العربية",
+            key="response_language_selector",
+        )
+        use_ocr = st.toggle("Enable OCR for scanned PDFs (English + Arabic)", value=True)
 
         col1, col2 = st.columns(2)
 
         with col1:
             if st.button("Analyze Contract Clauses"):
                 with st.spinner("Analyzing contract clauses..."):
-                    # Create a temporary file-like object for the API
-                    files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
-                    response = make_api_request(
-                        "/genai/analyze-contract", "POST", files=files
-                    )
+                    if pdf_bytes:
+                        files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
+                        response = make_api_request(
+                            "/genai/analyze-contract",
+                            "POST",
+                            data={"response_language": response_language, "use_ocr": use_ocr},
+                            files=files,
+                        )
+                    elif contract_content:
+                        response = make_api_request(
+                            "/genai/analyze-contract-text",
+                            "POST",
+                            {"contract_text": contract_content, "response_language": response_language},
+                        )
+                    else:
+                        response = None
+                        st.error("This contract has no stored content to analyze.")
 
                     if response and response.status_code == 200:
                         data = response.json()
                         clauses = data["clauses"]
+                        clause_explanations = data.get("clause_explanations", {})
 
                         st.success("Contract analyzed successfully!")
                         st.subheader("Extracted Clauses")
@@ -346,17 +936,20 @@ def contract_analysis_page():
                         for clause_type, content in clauses.items():
                             with st.expander(f"{clause_type}"):
                                 st.write(content)
+                                explanation = clause_explanations.get(clause_type)
+                                if explanation:
+                                    st.markdown("**In simple terms:**")
+                                    st.write(explanation)
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
-                    else:
+                    elif response is not None:
                         st.error("Failed to analyze contract")
-                        if response:
-                            try:
-                                error_data = response.json()
-                                st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
-                            except:
-                                pass
+                        try:
+                            error_data = response.json()
+                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                        except Exception:
+                            pass
 
         with col2:
             if "current_clauses" in st.session_state:
@@ -364,19 +957,14 @@ def contract_analysis_page():
                     with st.spinner("Evaluating contract health..."):
                         clauses = st.session_state.current_clauses
                         eval_response = make_api_request(
-                            "/genai/evaluate-contract", "POST", clauses
+                            "/genai/evaluate-contract",
+                            "POST",
+                            {"clauses": clauses, "response_language": response_language},
                         )
 
                         if eval_response and eval_response.status_code == 200:
                             evaluation = eval_response.json()
-
-                            if evaluation["approved"]:
-                                st.success("Contract Approved")
-                            else:
-                                st.error("Contract Not Approved")
-
-                            st.write("**Reasoning:**")
-                            st.write(evaluation["reasoning"])
+                            render_contract_evaluation(evaluation)
                         else:
                             st.error("Failed to evaluate contract")
             else:
@@ -387,38 +975,121 @@ def contract_analysis_page():
             with st.spinner("Running complete analysis pipeline..."):
                 # Trigger the backend analysis pipeline
                 pipeline_response = make_api_request(
-                    f"/contracts/{contract_id}/init-genai", "POST"
+                    f"/contracts/{contract_id}/init-genai?response_language={response_language}",
+                    "POST",
                 )
 
                 if pipeline_response and pipeline_response.status_code == 200:
                     st.success("Analysis pipeline completed successfully!")
-                    
+
                     # Display the analysis results
                     results = pipeline_response.json().get("results", {})
                     if results:
                         st.markdown("### Analysis Results")
-                        
-                        # Display approval status
-                        approved = results.get("approved", False)
-                        if approved:
-                            st.success("Contract Approved")
-                        else:
-                            st.error("Contract Not Approved")
-                        
-                        # Display reasoning
-                        reasoning = results.get("reasoning", "No reasoning provided")
-                        st.markdown("#### Reasoning")
-                        st.write(reasoning)
-                        
+                        health_result = results.get("health_evaluation", results)
+                        render_contract_evaluation(health_result)
+
+                        if results.get("clauses"):
+                            st.markdown("#### Clause-by-Clause Summary")
+                            for clause_name in results.get("clauses", {}).keys():
+                                st.write(f"- {clause_name}")
+
+                        report_pdf = build_pipeline_report_pdf(contract_title, results)
+                        st.download_button(
+                            "Download Final Report (PDF)",
+                            data=report_pdf,
+                            file_name=f"contract_report_{contract_id}.pdf",
+                            mime="application/pdf",
+                            key=f"download_report_{contract_id}",
+                        )
+
                         # Store results in session state for later reference
                         st.session_state[f"analysis_results_{contract_id}"] = results
                 else:
                     st.error("Failed to run analysis pipeline")
+                    if pipeline_response:
+                        try:
+                            error_data = pipeline_response.json()
+                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                        except Exception:
+                            pass
+
+        st.markdown("---")
+        st.subheader("Ask AI About This Contract")
+        st.caption("Contract assistant only — not legal advice. Answers are grounded in detected contract evidence.")
+        chat_key = f"contract_chat_history_{contract_id}"
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+
+        render_chat_history(st.session_state[chat_key])
+
+        with st.form(f"contract_chat_form_{contract_id}", clear_on_submit=True):
+            q_col, send_col = st.columns([8, 1])
+            with q_col:
+                user_question = st.text_input(
+                    "Ask a question about this contract...",
+                    placeholder="Ask a question about this contract...",
+                    label_visibility="collapsed",
+                    key=f"chat_input_{contract_id}",
+                )
+            with send_col:
+                send_clicked = st.form_submit_button("Send")
+
+        if send_clicked:
+            if not user_question or not user_question.strip():
+                st.warning("Please enter a question first.")
+            else:
+                question = user_question.strip()
+                st.session_state[chat_key].append({"role": "user", "content": question})
+
+                with st.spinner("Thinking..."):
+                    chat_response = make_api_request(
+                        f"/contracts/{contract_id}/chat",
+                        "POST",
+                        {"question": question, "response_language": response_language},
+                    )
+
+                    if chat_response and chat_response.status_code == 200:
+                        payload = chat_response.json()
+                        answer = payload.get("answer", "No answer returned")
+                        confidence = payload.get("confidence", 0)
+                        intent = payload.get("intent", "general_contract")
+                        evidence = payload.get("evidence", [])
+                        follow_ups = payload.get("follow_up_questions", [])
+
+                        lines = [
+                            answer,
+                            "",
+                            f"Confidence: {confidence}",
+                            f"Intent: {str(intent).replace('_', ' ')}",
+                        ]
+                        if evidence:
+                            lines.append("Evidence:")
+                            for ev in evidence[:2]:
+                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
+                        if follow_ups:
+                            lines.append("Suggested next questions:")
+                            for q in follow_ups[:2]:
+                                lines.append(f"- {q}")
+
+                        st.session_state[chat_key].append(
+                            {"role": "assistant", "content": "\n".join(lines)}
+                        )
+                    else:
+                        error_msg = "Failed to get AI answer"
+                        if chat_response:
+                            try:
+                                error_data = chat_response.json()
+                                error_msg = error_data.get("detail", error_msg)
+                            except Exception:
+                                pass
+                        st.error(error_msg)
+                st.rerun()
         
         # Add option to clear current contract and start over
         st.markdown("---")
         if st.button("Clear Contract and Start Over"):
-            keys_to_remove = ["current_contract_id", "current_pdf_bytes", "current_contract_title", "current_clauses"]
+            keys_to_remove = ["current_contract_id", "current_pdf_bytes", "current_contract_content", "current_contract_title", "current_clauses"]
             for key in keys_to_remove:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -607,7 +1278,10 @@ def clients_contracts_page():
                         if contract.get('status') != 'analyzed':
                             if st.button("Analyze", key=f"analyze_contract_{contract_id}"):
                                 with st.spinner("Running AI analysis..."):
-                                    response = make_api_request(f"/contracts/{contract_id}/init-genai", "POST")
+                                    response = make_api_request(
+                                        f"/contracts/{contract_id}/init-genai?response_language={st.session_state.get('response_language_selector', 'english')}",
+                                        "POST",
+                                    )
                                     if response and response.status_code == 200:
                                         st.success("Analysis completed!")
                                         
@@ -615,22 +1289,17 @@ def clients_contracts_page():
                                         results = response.json().get("results", {})
                                         if results:
                                             st.markdown("#### Analysis Results")
-                                            
-                                            # Display approval status
-                                            approved = results.get("approved", False)
-                                            if approved:
-                                                st.success("Contract Approved")
-                                            else:
-                                                st.error("Contract Not Approved")
-                                            
-                                            # Display reasoning
-                                            reasoning = results.get("reasoning", "No reasoning provided")
-                                            st.markdown("**Reasoning:**")
-                                            st.write(reasoning)
+                                            render_contract_evaluation(results.get("health_evaluation", results))
                                         
                                         st.rerun()
                                     else:
                                         st.error("Analysis failed")
+                                        if response:
+                                            try:
+                                                error_data = response.json()
+                                                st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                                            except Exception:
+                                                pass
                     
                     # Edit form (shown when edit button is clicked)
                     if st.session_state.get(f"editing_contract_{contract_id}"):
@@ -700,6 +1369,91 @@ def clients_contracts_page():
         st.markdown("**Note:** To create new contracts with AI analysis, use the 'Contract Analysis' tab.")
 
 
+
+def benchmark_page():
+    """Benchmark Comparison page (additive feature)."""
+    st.title("Benchmark Comparison")
+    st.caption("Clause-level benchmarking only. Not legal advice.")
+
+    with st.form("benchmark_form"):
+        uploaded_file = st.file_uploader("Upload contract (.pdf, .docx, .txt)", type=["pdf", "docx", "txt"])
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            contract_type = st.selectbox(
+                "Contract Type",
+                ["employment", "msa", "vendor", "nda", "other"],
+            )
+        with col2:
+            jurisdiction = st.selectbox(
+                "Jurisdiction",
+                ["jordan", "usa", "uk", "eu", "other"],
+            )
+        with col3:
+            industry = st.text_input("Industry (optional)")
+
+        opt_in = st.checkbox("Opt-in: store embedding + minimal metadata for future benchmarks", value=False)
+        submitted = st.form_submit_button("Run Benchmark")
+
+    if submitted:
+        if not uploaded_file:
+            st.error("Please upload a contract file.")
+            return
+
+        with st.spinner("Running clause-level benchmark analysis..."):
+            files = {"file": (uploaded_file.name, uploaded_file.read(), "application/octet-stream")}
+            data = {
+                "contract_type": contract_type,
+                "jurisdiction": jurisdiction,
+                "industry": industry,
+                "opt_in_store_user_data": opt_in,
+            }
+            response = make_api_request("/benchmark/analyze", "POST", data=data, files=files)
+
+        if response and response.status_code == 200:
+            payload = response.json()
+            clause_results = payload.get("clause_results", [])
+            st.metric("Overall Alignment Score", payload.get("overall_score", "N/A"))
+            st.caption(f"Compared {len(clause_results)} clause(s) from this contract.")
+
+            fallbacks = payload.get("meta", {}).get("fallbacks_used", [])
+            if fallbacks:
+                st.info(f"Fallbacks used: {', '.join(fallbacks)}")
+
+            if not clause_results:
+                st.warning("No clauses detected from this file.")
+
+            for clause in clause_results:
+                label = clause.get("alignment_label", "yellow")
+                badge = "🟢" if label == "green" else "🟡" if label == "yellow" else "🔴"
+                score = clause.get("clause_score", "N/A")
+                conf = clause.get("confidence", 0)
+                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} — {score}/100"):
+                    st.write(f"Confidence: {conf}")
+                    st.write(f"Peers (N): {clause.get('benchmark_stats', {}).get('N', 0)}")
+
+                    patterns = clause.get('typical_patterns', [])
+                    if patterns:
+                        st.write("Typical patterns:")
+                        for pattern in patterns[:2]:
+                            st.write(f"- {pattern}")
+
+                    if clause.get("suggested_revision"):
+                        st.write(f"Suggested revision: {clause['suggested_revision']}")
+
+                    citations = clause.get("citations", [])
+                    if citations:
+                        st.write("References:")
+                        for cit in citations[:2]:
+                            st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
+        else:
+            st.error("Benchmark analysis failed")
+            if response:
+                try:
+                    st.error(response.json().get("detail", "Unknown error"))
+                except Exception:
+                    pass
+
+
 def admin_dashboard():
     """Admin dashboard with metrics and logs"""
     st.title("Admin Dashboard")
@@ -727,6 +1481,18 @@ def admin_dashboard():
 
             with col4:
                 st.metric("Success Rate", f"{metrics['success_rate']:.1f}%")
+
+            chat_quality_response = make_api_request("/metrics/chat-quality")
+            if chat_quality_response and chat_quality_response.status_code == 200:
+                cq = chat_quality_response.json()
+                st.markdown("#### Chat Quality")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.metric("Low Confidence Rate", f"{cq.get('low_confidence_rate', 0):.1f}%")
+                with c2:
+                    st.metric("Out-of-Scope Rate", f"{cq.get('out_of_scope_rate', 0):.1f}%")
+                with c3:
+                    st.metric("No Evidence Rate", f"{cq.get('no_evidence_rate', 0):.1f}%")
 
         # Health checks
         st.subheader("Health Checks")
@@ -794,14 +1560,28 @@ def main():
         page_title="Contract Analysis Platform", page_icon="📄", layout="wide"
     )
 
+    if "sidebar_compact" not in st.session_state:
+        st.session_state.sidebar_compact = False
+
+    apply_modern_theme(st.session_state.sidebar_compact)
+
     # Check if user is logged in
     if not st.session_state.token:
         login_page()
         return
     
 
-    # Top navigation
-    st.sidebar.title(f"Welcome, {st.session_state.username}")
+    # Sidebar navigation (functional)
+    st.sidebar.title("⚡ CAP")
+    st.sidebar.caption(f"Welcome, {st.session_state.username}")
+    st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
+    st.sidebar.toggle("Compact sidebar", key="sidebar_compact")
+    st.sidebar.markdown("---")
+    navigation = st.sidebar.radio(
+        "Navigate",
+        (["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard", "📚 Benchmark"] if BENCHMARK_ENABLED else ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"]),
+        label_visibility="collapsed",
+    )
 
     if st.sidebar.button("Logout"):
         # Clear all session state
@@ -809,17 +1589,28 @@ def main():
             del st.session_state[key]
         st.rerun()
 
-    # Main content with tabs
-    tab1, tab2, tab3 = st.tabs(["Contract Analysis", "Data Management", "Admin Dashboard"])
+    render_chrome_header(st.session_state.username)
 
-    with tab1:
+    st.markdown("<div class='page-transition'>", unsafe_allow_html=True)
+
+    # Main content
+    if navigation == "🏠 Contract Analysis":
         contract_analysis_page()
-    
-    with tab2:
+        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
+
+    elif navigation == "🗂️ Data Management":
         clients_contracts_page()
-    
-    with tab3:
+        st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
+
+    elif navigation == "📊 Admin Dashboard":
         admin_dashboard()
+        st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
+
+    elif navigation == "📚 Benchmark":
+        benchmark_page()
+        st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":

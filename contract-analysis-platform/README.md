@@ -7,6 +7,9 @@ This project is a GenAI-powered platform that analyzes legal contracts, extracts
 - **User Authentication**: JWT-based authentication system
 - **Contract Analysis**: GenAI-powered PDF contract analysis with clause extraction
 - **Contract Evaluation**: GenAI-powered contract health assessment
+- **Detailed Approval Diagnostics**: Risk level, missing critical clauses, specific issues, and required changes
+- **Bilingual AI Responses**: English and Arabic output support
+- **OCR for Scanned Contracts**: English/Arabic OCR fallback for image-based PDFs
 - **Client Management**: CRUD operations for clients and contracts
 - **Admin Dashboard**: System metrics and logs monitoring
 - **Real-time Processing**: Async processing with background tasks
@@ -49,6 +52,7 @@ OPENAI_API_KEY=your-openai-api-key-here
 MONGODB_URL=mongodb://admin:admin123@mongodb:27017/contract_analysis?authSource=admin
 API_HOST=0.0.0.0
 API_PORT=8000
+CORS_ORIGINS=http://localhost:8501
 ```
 
 ### 3. Docker Deployment (Recommended)
@@ -101,8 +105,8 @@ streamlit run frontend/streamlit_app.py --server.port 8501
 - `POST /auth/login` - User login (returns JWT token)
 
 ### Contract Analysis
-- `POST /genai/analyze-contract` - Upload PDF and extract clauses
-- `POST /genai/evaluate-contract` - Evaluate contract health
+- `POST /genai/analyze-contract` - Upload PDF, extract text (native or OCR), and extract clauses
+- `POST /genai/evaluate-contract` - Evaluate contract health (English/Arabic response)
 
 ### Client & Contract Management
 - `POST /clients` - Create new client
@@ -112,6 +116,7 @@ streamlit run frontend/streamlit_app.py --server.port 8501
 - `PUT /contracts/{id}` - Update contract
 - `DELETE /contracts/{id}` - Delete contract
 - `POST /contracts/{id}/init-genai` - Trigger AI analysis
+- `POST /contracts/{id}/chat` - Ask AI questions about a specific contract
 
 ### System Monitoring
 - `GET /logs` - Get system logs (with filters)
@@ -136,9 +141,12 @@ All endpoints except `/auth/*`, `/healthz`, and `/readyz` require JWT authentica
 - Navigate to "Contract Analysis" tab
 - Create a new client or select an existing one
 - Upload a PDF contract file
+- Select response language (English/Arabic) and OCR preference
 - Click "Analyze Contract Clauses" to extract clauses using AI
 - Click "Evaluate Contract Health" to get AI assessment
+- Review structured diagnostics (risk level, missing clauses, specific issues, required changes)
 - Use "Run Complete Analysis Pipeline" for full automated analysis
+- Use "Ask AI About This Contract" to ask natural-language questions about the currently selected contract
 
 ### 3. Manage Data
 - Use "Data Management" tab to view existing clients and contracts
@@ -163,8 +171,9 @@ Key environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SECRET_KEY` | JWT secret key | `your-secret-key-here` |
-| `OPENAI_API_KEY` | OpenAI API key | Required |
+| `SECRET_KEY` | JWT secret key (required) | No default |
+| `OPENAI_API_KEY` | OpenAI API key | Required for GenAI endpoints |
+| `CORS_ORIGINS` | Comma-separated allowed frontend origins | `http://localhost:8501` |
 | `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT token expiration | `30` |
 
