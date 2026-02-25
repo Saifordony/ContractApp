@@ -44,6 +44,24 @@ This script will:
 
 Use the scripts above to avoid these mistakes.
 
+
+### Container name conflict fix
+
+If you see an error like:
+`The container name "/contract_analysis_backend" is already in use`
+
+run:
+
+```cmd
+docker rm -f contract_analysis_backend contract_analysis_mongo
+```
+
+Then run again:
+
+```cmd
+scripts\run_docker_windows.cmd
+```
+
 ---
 
 ## Manual setup (if you prefer commands)

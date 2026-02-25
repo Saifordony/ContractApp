@@ -25,7 +25,13 @@ if not exist ".env" (
   copy ".env.example" ".env" >nul
 )
 
+
+REM Clean up legacy fixed-name containers from older compose versions
+for %%C in (contract_analysis_backend contract_analysis_mongo) do (
+  docker rm -f %%C >nul 2>nul
+)
+
 echo [INFO] Starting services with docker compose...
-docker compose up --build
+docker compose up --build --remove-orphans
 
 endlocal
