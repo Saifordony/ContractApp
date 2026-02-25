@@ -37,7 +37,9 @@ You can also try:
 
 ### 4) Configure environment variables
 
-#### macOS / Linux
+> Important on Windows: use commands that match your shell.
+
+#### macOS / Linux (bash/zsh)
 
 ```bash
 export OLLAMA_BASE_URL=http://localhost:11434
@@ -51,17 +53,27 @@ $env:OLLAMA_BASE_URL="http://localhost:11434"
 $env:OLLAMA_MODEL="llama3.1:8b"
 ```
 
+#### Windows Command Prompt (cmd.exe)
+
+```cmd
+set OLLAMA_BASE_URL=http://localhost:11434
+set OLLAMA_MODEL=llama3.1:8b
+```
+
 If backend runs in Docker but Ollama runs on your host machine, use:
 
-```bash
-export OLLAMA_BASE_URL=http://host.docker.internal:11434
-```
-
-Windows PowerShell equivalent:
-
-```powershell
-$env:OLLAMA_BASE_URL="http://host.docker.internal:11434"
-```
+- bash/zsh:
+  ```bash
+  export OLLAMA_BASE_URL=http://host.docker.internal:11434
+  ```
+- PowerShell:
+  ```powershell
+  $env:OLLAMA_BASE_URL="http://host.docker.internal:11434"
+  ```
+- cmd.exe:
+  ```cmd
+  set OLLAMA_BASE_URL=http://host.docker.internal:11434
+  ```
 
 ### 5) Install Python dependencies
 
@@ -85,24 +97,26 @@ Start the backend exactly as you normally do.
 curl http://localhost:11434/api/tags
 ```
 
-If you get JSON with models, Ollama is ready.
+Interpret the result:
+- JSON returned with models = Ollama is ready.
+- `{"models":[]}` = Ollama is running but no models are pulled yet; run `ollama pull llama3.1:8b`.
 
 ### Windows troubleshooting (port 11434)
 
 If you want to confirm what is using the port:
 
-```powershell
+```cmd
 netstat -ano | findstr :11434
 ```
 
 If needed, stop the process (replace `<PID>`):
 
-```powershell
+```cmd
 taskkill /PID <PID> /F
 ```
 
 Then start Ollama again:
 
-```powershell
+```cmd
 ollama serve
 ```
