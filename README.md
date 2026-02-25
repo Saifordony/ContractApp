@@ -1,32 +1,70 @@
 # ContractApp
 
-## GenAI provider configuration
+## Open-source LLM setup (Ollama only)
 
-This branch now supports two providers selected by `GENAI_PROVIDER`:
+This branch uses **Ollama only** for GenAI features.
 
-- `ollama` (default)
-- `openai`
+### 1) Install Ollama
 
-### Option 1: Run with Ollama (open-source LLM)
+- Official install page: https://ollama.com/download
+- Linux quick install command:
+  ```bash
+  curl -fsSL https://ollama.com/install.sh | sh
+  ```
 
-1. Install Ollama and start it.
-2. Pull a model (recommended default):
-   - `ollama pull llama3.1:8b`
-3. Set environment variables:
-   - `GENAI_PROVIDER=ollama`
-   - `OLLAMA_BASE_URL=http://localhost:11434`
-   - `OLLAMA_MODEL=llama3.1:8b`
-4. Install dependencies (must include `langchain-ollama`).
-5. Start the backend.
+### 2) Start Ollama
 
-If the backend runs inside Docker and Ollama runs on your host machine, set:
+Run:
+```bash
+ollama serve
+```
 
-- `OLLAMA_BASE_URL=http://host.docker.internal:11434`
+### 3) Download a model
 
-### OpenAI fallback
+Recommended default model:
+```bash
+ollama pull llama3.1:8b
+```
 
-To use OpenAI instead:
+You can also try:
+- `qwen2.5:7b`
+- `mistral:7b`
 
-- `GENAI_PROVIDER=openai`
-- `OPENAI_API_KEY=...`
-- `OPENAI_MODEL=gpt-4` (or another OpenAI model)
+### 4) Configure environment variables
+
+Set these before starting the backend:
+
+```bash
+export OLLAMA_BASE_URL=http://localhost:11434
+export OLLAMA_MODEL=llama3.1:8b
+```
+
+If backend runs in Docker but Ollama runs on your host machine, use:
+
+```bash
+export OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+### 5) Install Python dependencies
+
+Make sure this package is installed:
+
+```bash
+pip install langchain-ollama
+```
+
+### 6) Start your backend
+
+Start the backend exactly as you normally do.
+
+---
+
+## Quick verification
+
+Test Ollama is reachable:
+
+```bash
+curl http://localhost:11434/api/tags
+```
+
+If you get a JSON response with models, Ollama is ready.

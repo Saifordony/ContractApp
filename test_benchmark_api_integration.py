@@ -25,11 +25,10 @@ python-dotenv==1.0.0
 pydantic
 typing-extensions
 
-# LangChain Dependencies (OpenAI path only)
+# LangChain Dependencies (Ollama path)
 langchain==0.3.24
 langchain-community==0.3.23
 langchain-core==0.3.56
-langchain-openai==0.3.14
 langchain-ollama==0.3.2
 langchain-text-splitters==0.3.8
 langsmith==0.3.30

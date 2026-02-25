@@ -37,20 +37,17 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-GENAI_PROVIDER = os.getenv("GENAI_PROVIDER", "ollama").strip().lower()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
+
 def is_genai_configured() -> bool:
-    if GENAI_PROVIDER == "ollama":
-        return bool(OLLAMA_MODEL)
-    if GENAI_PROVIDER == "openai":
-        return bool(OPENAI_API_KEY)
-    return False
+    return bool(OLLAMA_MODEL.strip()) and bool(OLLAMA_BASE_URL.strip())
+
 
 if not is_genai_configured():
     print(
-        "WARNING: GenAI provider is not fully configured. Set GENAI_PROVIDER and provider-specific environment variables."
+        "WARNING: GenAI service is not configured. Set OLLAMA_MODEL and OLLAMA_BASE_URL."
     )
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
@@ -316,7 +313,7 @@ async def analyze_contract_endpoint(
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: provider not configured",
+            detail="GenAI service unavailable: Ollama is not configured",
         )
 
     try:
@@ -373,7 +370,7 @@ async def analyze_contract_text_endpoint(
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: provider not configured",
+            detail="GenAI service unavailable: Ollama is not configured",
         )
 
     contract_text = (payload.contract_text or "").strip()
@@ -429,7 +426,7 @@ async def evaluate_contract_endpoint(
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: provider not configured",
+            detail="GenAI service unavailable: Ollama is not configured",
         )
 
     try:
@@ -856,7 +853,7 @@ async def init_genai_analysis(
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: provider not configured",
+            detail="GenAI service unavailable: Ollama is not configured",
         )
 
     try:
@@ -939,7 +936,7 @@ async def chat_with_contract(
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: provider not configured",
+            detail="GenAI service unavailable: Ollama is not configured",
         )
 
     try:

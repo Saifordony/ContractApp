@@ -1,9 +1,7 @@
-from langchain_openai import ChatOpenAI
 try:
     from langchain_ollama import ChatOllama
 except Exception:
     ChatOllama = None
-import openai
 from langchain.prompts import PromptTemplate
 from typing import Dict, Any
 from io import BytesIO
@@ -18,41 +16,22 @@ import pytesseract
 executor = ThreadPoolExecutor()
 
 
-GENAI_PROVIDER = os.getenv("GENAI_PROVIDER", "ollama").strip().lower()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
-if OPENAI_API_KEY:
-    openai.api_key = OPENAI_API_KEY
-
 
 def _build_llm_model() -> Any:
-    if GENAI_PROVIDER == "ollama":
-        if ChatOllama is None:
-            print(
-                "WARNING: langchain_ollama is not installed. Install it to use Ollama provider."
-            )
-            return None
-        return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.2)
-
-    if GENAI_PROVIDER == "openai":
-        if not OPENAI_API_KEY:
-            print(
-                "WARNING: OPENAI_API_KEY environment variable is not set. GenAI features will be disabled."
-            )
-            return None
-        return ChatOpenAI(
-            model_name=OPENAI_MODEL,
-            temperature=0.2,
-            openai_api_key=OPENAI_API_KEY,
+    if ChatOllama is None:
+        print(
+            "WARNING: langchain-ollama is not installed. Install it to enable GenAI features."
         )
+        return None
 
-    print(
-        f"WARNING: Unsupported GENAI_PROVIDER '{GENAI_PROVIDER}'. Supported providers: ollama, openai."
-    )
-    return None
+    if not OLLAMA_MODEL.strip():
+        print("WARNING: OLLAMA_MODEL is not set. GenAI features will be disabled.")
+        return None
+
+    return ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE_URL, temperature=0.2)
 
 
 llm_model = _build_llm_model()
@@ -551,7 +530,7 @@ full_pipeline_chain = None
 
 
 def _coerce_llm_content(raw_content: Any) -> str:
-    """Normalize LangChain/OpenAI response content into plain text."""
+    """Normalize model response content into plain text."""
     if raw_content is None:
         return ""
     if isinstance(raw_content, str):
@@ -641,7 +620,7 @@ def analyze_contract_sync(
 
     Args:
         contract_text (str): The full text of the contract.
-        llm_model (Any): The LLM model instance to use (e.g. OpenAI, Anthropic, etc.).
+        llm_model (Any): The LLM model instance to use.
 
     Returns:
         Dict[str, str]: A dictionary where keys are clause types and values are clause contents.
@@ -656,7 +635,7 @@ def analyze_contract_sync(
     if not contract_text.strip():
         raise ValueError("contract_text cannot be empty or whitespace")
     if llm_model is None:
-        raise RuntimeError("No GenAI model configured. Set GENAI_PROVIDER and related environment variables.")
+        raise RuntimeError("No GenAI model configured. Set OLLAMA_MODEL and ensure Ollama is reachable.")
     try:
         prompt_text = prompt1.format(
             contract_text=contract_text,
@@ -690,7 +669,7 @@ def explain_clauses_for_layman_sync(
         if not isinstance(value, str):
             raise ValueError(f"Clause content for '{key}' must be a string")
     if llm_model is None:
-        raise RuntimeError("No GenAI model configured. Set GENAI_PROVIDER and related environment variables.")
+        raise RuntimeError("No GenAI model configured. Set OLLAMA_MODEL and ensure Ollama is reachable.")
 
     try:
         prompt_text = layman_clause_explainer_prompt.format(
@@ -743,7 +722,7 @@ def evaluate_contract_sync(
         if not isinstance(value, str):
             raise ValueError(f"Clause content for '{key}' must be a string")
     if llm_model is None:
-        raise RuntimeError("No GenAI model configured. Set GENAI_PROVIDER and related environment variables.")
+        raise RuntimeError("No GenAI model configured. Set OLLAMA_MODEL and ensure Ollama is reachable.")
 
     try:
         contract_json_str = json.dumps(contract_clauses)
@@ -880,7 +859,7 @@ def contract_chat_sync(
     if not isinstance(question, str) or not question.strip():
         raise ValueError("question must be a non-empty string")
     if llm_model is None:
-        raise RuntimeError("No GenAI model configured. Set GENAI_PROVIDER and related environment variables.")
+        raise RuntimeError("No GenAI model configured. Set OLLAMA_MODEL and ensure Ollama is reachable.")
 
     try:
         prompt_text = contract_chat_prompt.format(
