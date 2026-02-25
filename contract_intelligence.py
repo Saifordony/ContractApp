@@ -34,7 +34,7 @@ from backend.services.benchmark_service import (
 load_dotenv()
 
 # Configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -53,8 +53,8 @@ MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
-if not SECRET_KEY:
-    raise RuntimeError("SECRET_KEY environment variable must be set")
+if SECRET_KEY == "dev-secret-key-change-me":
+    print("WARNING: Using default development SECRET_KEY. Set SECRET_KEY in production.")
 
 # Global variables
 db_client = None
@@ -130,7 +130,7 @@ class PipelineAnalysisRequest(BaseModel):
 async def lifespan(app: FastAPI):
     # Startup
     global db_client, db
-    db_client = AsyncIOMotorClient(MONGODB_URL)
+    db_client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=3000, connectTimeoutMS=3000)
     db = db_client.contract_analysis
 
     # Test connections

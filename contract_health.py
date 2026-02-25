@@ -9,9 +9,6 @@ import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import os
-import fitz  # PyMuPDF
-from PIL import Image
-import pytesseract
 
 executor = ThreadPoolExecutor()
 
@@ -919,6 +916,8 @@ def extract_text_from_pdf(file_path: str) -> str:
     if os.path.isdir(file_path):
         raise IsADirectoryError(f"Expected a file but got a directory: {file_path}")
 
+    import fitz  # PyMuPDF
+
     try:
         text = ""
         pdf_doc = fitz.open(file_path)
@@ -942,6 +941,10 @@ def extract_text_from_pdf(file_path: str) -> str:
 
 
 def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> str:
+    import fitz  # PyMuPDF
+    from PIL import Image
+    import pytesseract
+
     text = ""
     with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
         for page in pdf_doc:
@@ -970,6 +973,8 @@ def extract_text_from_pdf_bytes(
         ValueError: If no text could be extracted.
         RuntimeError: For unexpected failures in PDF processing.
     """
+    import fitz  # PyMuPDF
+
     try:
         text = ""
         with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
