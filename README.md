@@ -19,6 +19,11 @@ Run:
 ollama serve
 ```
 
+> If you are on **Windows** and you get:
+> `Error: listen tcp 127.0.0.1:11434: bind ... Only one usage of each socket address ...`
+>
+> it means Ollama is **already running** (port 11434 is already in use). You do **not** need to run `ollama serve` again.
+
 ### 3) Download a model
 
 Recommended default model:
@@ -32,17 +37,30 @@ You can also try:
 
 ### 4) Configure environment variables
 
-Set these before starting the backend:
+#### macOS / Linux
 
 ```bash
 export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_MODEL=llama3.1:8b
 ```
 
+#### Windows PowerShell
+
+```powershell
+$env:OLLAMA_BASE_URL="http://localhost:11434"
+$env:OLLAMA_MODEL="llama3.1:8b"
+```
+
 If backend runs in Docker but Ollama runs on your host machine, use:
 
 ```bash
 export OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+$env:OLLAMA_BASE_URL="http://host.docker.internal:11434"
 ```
 
 ### 5) Install Python dependencies
@@ -61,10 +79,30 @@ Start the backend exactly as you normally do.
 
 ## Quick verification
 
-Test Ollama is reachable:
+### Check Ollama is running
 
 ```bash
 curl http://localhost:11434/api/tags
 ```
 
-If you get a JSON response with models, Ollama is ready.
+If you get JSON with models, Ollama is ready.
+
+### Windows troubleshooting (port 11434)
+
+If you want to confirm what is using the port:
+
+```powershell
+netstat -ano | findstr :11434
+```
+
+If needed, stop the process (replace `<PID>`):
+
+```powershell
+taskkill /PID <PID> /F
+```
+
+Then start Ollama again:
+
+```powershell
+ollama serve
+```
