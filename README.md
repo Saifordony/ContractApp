@@ -2,96 +2,100 @@
 
 This repo now runs with **Ollama only** (no OpenAI).
 
-## 0) Prerequisites
+## Windows quick start (recommended)
 
-1. Install Ollama: https://ollama.com/download
-2. Install Docker Desktop (if you want Docker run)
-3. Install Git
+After downloading and extracting the repo, use one of these scripts from Command Prompt:
+
+### Option A: Local Python run (no Docker)
+
+```cmd
+scripts\run_local_windows.cmd
+```
+
+This script will:
+- switch to the repo folder automatically
+- check Ollama
+- pull `llama3.1:8b`
+- install Python dependencies
+- start backend on `http://localhost:8000`
+
+### Option B: Docker run
+
+```cmd
+scripts\run_docker_windows.cmd
+```
+
+This script will:
+- switch to repo folder automatically
+- verify Docker Desktop is installed and running
+- create `.env` from `.env.example` if missing
+- run `docker compose up --build`
 
 ---
 
-## 1) First-time setup (required once)
+## Why your screenshot failed
 
-### Start Ollama
+1. `python: can't open file ... contract_intelligence.py`
+   - You ran python **outside** the repo folder.
+2. `'docker-compuse' is not recognized`
+   - Typo: correct command is `docker compose`.
+3. `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`
+   - Docker Desktop engine is not running.
+
+Use the scripts above to avoid these mistakes.
+
+---
+
+## Manual setup (if you prefer commands)
+
+### 1) Install Ollama
+
+- https://ollama.com/download
+
+### 2) Start Ollama
 
 ```cmd
 ollama serve
 ```
 
-If you see `bind ... 11434 ... only one usage ...`, Ollama is already running (that is OK).
+If you see port `11434` already in use, Ollama is already running.
 
-### Pull a model
+### 3) Pull model
 
 ```cmd
 ollama pull llama3.1:8b
 ```
 
-### Verify Ollama
+### 4) Verify Ollama
 
 ```cmd
 curl http://localhost:11434/api/tags
 ```
 
-If you get JSON output, Ollama is available.
-
----
-
-## 2) Fastest way to run (Docker)
-
-### Step A: clone and enter repo
-
-```cmd
-git clone <your-repo-url>
-cd ContractApp
-```
-
-### Step B: create env file
-
-```cmd
-copy .env.example .env
-```
-
-Edit `.env` if needed (defaults usually work on Windows Docker Desktop).
-
-### Step C: run containers
-
-```cmd
-docker compose up --build
-```
-
-### Step D: test backend health
-
-```cmd
-curl http://localhost:8000/healthz
-```
-
-Expected: JSON with `"status":"healthy"`.
-
----
-
-## 3) Run without Docker (local Python)
-
-### Step A: install deps
+### 5) Local Python run
 
 ```cmd
 pip install -r requirements.txt
-```
-
-### Step B: set env vars in same cmd window
-
-```cmd
-set SECRET_KEY=change-me
+set SECRET_KEY=change-me-local
 set OLLAMA_BASE_URL=http://localhost:11434
 set OLLAMA_MODEL=llama3.1:8b
-```
-
-### Step C: run backend
-
-```cmd
 python contract_intelligence.py
 ```
 
-### Step D: test health
+Health check:
+
+```cmd
+curl http://localhost:8000/healthz
+```
+
+### 6) Docker run
+
+```cmd
+copy .env.example .env
+docker compose up --build
+```
+
+Health check:
 
 ```cmd
 curl http://localhost:8000/healthz
@@ -99,33 +103,22 @@ curl http://localhost:8000/healthz
 
 ---
 
-## 4) Test GenAI endpoint quickly
+## API smoke test
 
-1) Register user:
+Register:
 
 ```cmd
 curl -X POST http://localhost:8000/auth/register -H "Content-Type: application/json" -d "{\"username\":\"test1\",\"email\":\"test1@example.com\",\"password\":\"pass1234\"}"
 ```
 
-2) Login (copy `access_token`):
+Login:
 
 ```cmd
 curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/json" -d "{\"username\":\"test1\",\"password\":\"pass1234\"}"
 ```
 
-3) Call analyze endpoint:
+Analyze:
 
 ```cmd
 curl -X POST http://localhost:8000/genai/analyze-contract-text -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" -d "{\"contract_text\":\"This agreement includes payment terms, confidentiality, and termination clauses.\",\"response_language\":\"english\"}"
 ```
-
----
-
-## Notes
-
-- Docker backend is configured to reach host Ollama at:
-  - `http://host.docker.internal:11434`
-- Config file examples:
-  - `docker-compose.yml`
-  - `.env.example`
-- Legacy reference compose-like sample is in `sample_contract.txt`.
