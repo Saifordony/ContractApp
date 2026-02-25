@@ -31,6 +31,7 @@ This script will:
 - create `.env` from `.env.example` if missing
 - run `docker compose up --build`
 - start backend on `http://localhost:8000` and frontend on `http://localhost:8501`
+- show public backend URL as `http://localhost:8000` (not `backend:8000`)
 
 ---
 
@@ -40,6 +41,11 @@ This script will:
 
 Your previous compose setup did not include a frontend service, so nothing was listening on port 8501.
 This is now fixed by adding a `frontend` container to `docker-compose.yml` and a `Dockerfile.frontend`.
+
+### Why opening `backend:8000` in browser fails
+
+`backend:8000` is an **internal Docker hostname** (works only between containers).
+From your Windows browser, use `http://localhost:8000` instead.
 
 1. `python: can't open file ... contract_intelligence.py`
    - You ran python **outside** the repo folder.
