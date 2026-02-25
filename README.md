@@ -30,10 +30,16 @@ This script will:
 - verify Docker Desktop is installed and running
 - create `.env` from `.env.example` if missing
 - run `docker compose up --build`
+- start backend on `http://localhost:8000` and frontend on `http://localhost:8501`
 
 ---
 
 ## Why your screenshot failed
+
+### Why localhost:8501 was refusing connection
+
+Your previous compose setup did not include a frontend service, so nothing was listening on port 8501.
+This is now fixed by adding a `frontend` container to `docker-compose.yml` and a `Dockerfile.frontend`.
 
 1. `python: can't open file ... contract_intelligence.py`
    - You ran python **outside** the repo folder.
@@ -100,10 +106,16 @@ set OLLAMA_MODEL=llama3.1:8b
 python contract_intelligence.py
 ```
 
-Health check:
+Health checks:
 
 ```cmd
 curl http://localhost:8000/healthz
+```
+
+Open frontend in browser:
+
+```cmd
+start http://localhost:8501
 ```
 
 ### 6) Docker run
@@ -113,10 +125,16 @@ copy .env.example .env
 docker compose up --build
 ```
 
-Health check:
+Health checks:
 
 ```cmd
 curl http://localhost:8000/healthz
+```
+
+Open frontend in browser:
+
+```cmd
+start http://localhost:8501
 ```
 
 ---

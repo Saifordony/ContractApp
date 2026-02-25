@@ -34,4 +34,7 @@ for %%C in (contract_analysis_backend contract_analysis_mongo) do (
 echo [INFO] Starting services with docker compose...
 docker compose up --build --remove-orphans
 
+echo [INFO] Frontend should be available at: http://localhost:8501
+echo [INFO] Backend should be available at:  http://localhost:8000/healthz
+
 endlocal
