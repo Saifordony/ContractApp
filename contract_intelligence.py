@@ -37,10 +37,20 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+GENAI_PROVIDER = os.getenv("GENAI_PROVIDER", "ollama").strip().lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-if not OPENAI_API_KEY:
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+
+def is_genai_configured() -> bool:
+    if GENAI_PROVIDER == "ollama":
+        return bool(OLLAMA_MODEL)
+    if GENAI_PROVIDER == "openai":
+        return bool(OPENAI_API_KEY)
+    return False
+
+if not is_genai_configured():
     print(
-        "WARNING: OPENAI_API_KEY environment variable is not set. GenAI features will be disabled."
+        "WARNING: GenAI provider is not fully configured. Set GENAI_PROVIDER and provider-specific environment variables."
     )
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
@@ -303,10 +313,10 @@ async def analyze_contract_endpoint(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: provider not configured",
         )
 
     try:
@@ -360,10 +370,10 @@ async def analyze_contract_text_endpoint(
     payload: ContractTextAnalysisRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: provider not configured",
         )
 
     contract_text = (payload.contract_text or "").strip()
@@ -416,10 +426,10 @@ async def analyze_contract_text_endpoint(
 async def evaluate_contract_endpoint(
     payload: Dict[str, Any], current_user: dict = Depends(get_current_user)
 ):
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: provider not configured",
         )
 
     try:
@@ -843,10 +853,10 @@ async def init_genai_analysis(
             status_code=400, detail="Contract has no content to analyze"
         )
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: provider not configured",
         )
 
     try:
@@ -926,10 +936,10 @@ async def chat_with_contract(
     if not contract.get("content"):
         raise HTTPException(status_code=400, detail="Contract has no content to chat about")
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: provider not configured",
         )
 
     try:
