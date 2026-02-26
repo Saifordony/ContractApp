@@ -4,6 +4,8 @@ from typing import Dict, Any
 from io import BytesIO
 import json
 import asyncio
+import ast
+import re
 from concurrent.futures import ThreadPoolExecutor
 import os
 import fitz  # PyMuPDF
@@ -544,17 +546,42 @@ def _coerce_llm_content(raw_content: Any) -> str:
 
 def _extract_json_payload(raw_content: Any) -> Any:
     """Extract JSON from model output even when wrapped in markdown/code fences."""
+    def _parse_json_loose(candidate: str) -> Any:
+        payload = (candidate or "").strip()
+        if not payload:
+            raise ValueError("empty candidate")
+
+        try:
+            return json.loads(payload)
+        except Exception:
+            pass
+
+        compact = re.sub(r",\s*([}\]])", r"\1", payload)
+        try:
+            return json.loads(compact)
+        except Exception:
+            pass
+
+        # Python-like dict/list fallback (single quotes, True/False/None)
+        for candidate_text in (payload, compact):
+            try:
+                parsed = ast.literal_eval(candidate_text)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except Exception:
+                continue
+
+        raise ValueError("not parseable as JSON")
+
     text = _coerce_llm_content(raw_content).strip()
     if not text:
         raise ValueError("Model returned an empty response")
 
-    # direct JSON first
     try:
-        return json.loads(text)
-    except json.JSONDecodeError:
+        return _parse_json_loose(text)
+    except ValueError:
         pass
 
-    # fenced block extraction
     if "```" in text:
         for block in text.split("```"):
             candidate = block.strip()
@@ -563,11 +590,10 @@ def _extract_json_payload(raw_content: Any) -> Any:
             if candidate.lower().startswith("json"):
                 candidate = candidate[4:].strip()
             try:
-                return json.loads(candidate)
-            except json.JSONDecodeError:
+                return _parse_json_loose(candidate)
+            except ValueError:
                 continue
 
-    # first JSON object / array region fallback
     start_obj = text.find("{")
     end_obj = text.rfind("}")
     start_arr = text.find("[")
@@ -581,11 +607,60 @@ def _extract_json_payload(raw_content: Any) -> Any:
 
     for candidate in candidates:
         try:
-            return json.loads(candidate)
-        except json.JSONDecodeError:
+            return _parse_json_loose(candidate)
+        except ValueError:
             continue
 
     raise ValueError("Model output is not valid JSON")
+
+
+def _normalize_clause_dict(model_output: Any) -> Dict[str, str]:
+    if isinstance(model_output, dict) and isinstance(model_output.get("clauses"), dict):
+        model_output = model_output["clauses"]
+
+    if not isinstance(model_output, dict):
+        raise ValueError("Clause payload must be a JSON object")
+
+    normalized: Dict[str, str] = {}
+    for key, value in model_output.items():
+        if isinstance(value, dict):
+            text = value.get("value") or value.get("text") or ""
+        else:
+            text = value
+
+        text_str = str(text).strip()
+        if text_str and text_str.lower() != "not found":
+            normalized[str(key).strip()] = text_str
+
+    if not normalized:
+        raise ValueError("No usable clauses found in model output")
+    return normalized
+
+
+def _fallback_clause_extraction(contract_text: str) -> Dict[str, str]:
+    from backend.services.contract_intelligence import extract_key_clauses
+
+    extracted = extract_key_clauses(contract_text)
+    clauses = extracted.get("clauses", {}) if isinstance(extracted, dict) else {}
+    fallback: Dict[str, str] = {}
+    for key, details in clauses.items():
+        value = details.get("value") if isinstance(details, dict) else details
+        text = str(value).strip() if value is not None else ""
+        if text and text.lower() != "not found":
+            fallback[str(key)] = text
+
+    if not fallback:
+        fallback["summary"] = (contract_text or "")[:500].strip()
+
+    return fallback
+
+
+def _fallback_layman_explanations(contract_clauses: Dict[str, str]) -> Dict[str, str]:
+    explanations: Dict[str, str] = {}
+    for key, value in contract_clauses.items():
+        short = " ".join(str(value).split())[:220]
+        explanations[str(key)] = f"This clause means: {short}" if short else "No simple explanation generated."
+    return explanations
 
 def normalize_response_language(response_language: str) -> str:
     lang = (response_language or "english").strip().lower()
@@ -629,18 +704,12 @@ def analyze_contract_sync(
             response_language=normalize_response_language(response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        clauses = _extract_json_payload(result)
+        clauses_raw = _extract_json_payload(result)
+        return _normalize_clause_dict(clauses_raw)
 
-        if not clauses:
-            raise ValueError("The model returned an empty clause dictionary.")
-        return clauses
-
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except ValueError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to extract clauses: {str(e)}")
+    except Exception:
+        # Open-source models may return near-JSON; recover with deterministic fallback.
+        return _fallback_clause_extraction(contract_text)
 
 
 
@@ -673,12 +742,8 @@ def explain_clauses_for_layman_sync(
             normalized_explanations[key] = str(text).strip() if text else "No simple explanation generated."
 
         return normalized_explanations
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except ValueError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to explain clauses in layman terms: {str(e)}")
+    except Exception:
+        return _fallback_layman_explanations(contract_clauses)
 
 def evaluate_contract_sync(
     contract_clauses: Dict[str, str],
@@ -737,12 +802,13 @@ def evaluate_contract_sync(
 
         return assessment
 
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except ValueError as e:
-        raise ValueError(f"Model output is not valid JSON: {str(e)}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to assess contract health: {str(e)}")
+    except Exception:
+        from backend.services.contract_health import evaluate_contract_health_from_clauses
+
+        return evaluate_contract_health_from_clauses(
+            contract_clauses,
+            response_language=response_language,
+        )
 
 
 def analyze_and_evaluate_contract_sync(
