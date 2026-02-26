@@ -20,6 +20,12 @@ This repository matches the **explain-repository** branch structure and behavior
    - Frontend: http://localhost:8501
    - Backend docs: http://localhost:8000/docs
 
+4. (Optional but recommended) set a real app secret in `.env`:
+   ```env
+   SECRET_KEY=your-very-strong-random-secret
+   ```
+   If you skip this, Docker uses a safe development default so `docker compose down` / `up` still works out of the box.
+
 ## Local Development
 ```bash
 pip install -r requirements.txt
