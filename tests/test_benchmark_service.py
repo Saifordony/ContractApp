@@ -37,8 +37,3 @@ def test_unknown_contract_type_falls_back_to_general_commercial():
     result = run_benchmark({}, "unknown_type")
     assert result["contract_type"] == "general_commercial"
 
-
-def test_employment_includes_market_comparison_when_salary_present():
-    result = run_benchmark({"compensation": "Base salary is 5000 JOD per month with annual review and benefits package."}, "employment")
-    assert "benchmark_comparisons" in result
-    assert result["benchmark_comparisons"]

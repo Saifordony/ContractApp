@@ -447,7 +447,7 @@ def render_contract_evaluation(evaluation: Dict):
     if approved:
         st.success("Ready for Legal Review")
     else:
-        styled_error_banner("Requires Review Before Approval")
+
 
     contract_type = evaluation.get("contract_type")
     if contract_type:
@@ -469,10 +469,7 @@ def render_contract_evaluation(evaluation: Dict):
     risk_level = str(evaluation.get("risk_level", "medium")).lower()
     badge_color = {"low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(risk_level, "#475569")
     st.markdown(
-        f"<div style='display:inline-block;background:{badge_color};color:white;padding:0.25rem 0.55rem;border-radius:999px;font-weight:700'>{'High Risk / Needs Legal Attention' if risk_level=='high' else ('Moderate Risk / Review Recommended' if risk_level=='medium' else 'Lower Risk / Standard Review')}</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption("AI-assisted review only — not legal advice.")
+
 
     st.write("**Reasoning:**")
     st.write(evaluation.get("reasoning", "No reasoning provided"))
@@ -1094,7 +1091,7 @@ def contract_analysis_page():
                             pass
 
         st.markdown("---")
-        with st.expander("📊 Benchmark Comparison", expanded=True):
+
             bench_get = make_api_request(f"/contracts/{contract_id}/benchmark")
             benchmark_payload = bench_get.json() if bench_get and bench_get.status_code == 200 else None
             if st.button("Run Benchmark Analysis", key=f"run_bench_{contract_id}"):
@@ -1104,30 +1101,7 @@ def contract_analysis_page():
                 else:
                     styled_error_banner("Benchmark run failed.")
             if benchmark_payload:
-                context = benchmark_payload.get("benchmark_context", {})
-                overall = benchmark_payload.get("overall_position", {})
-                st.markdown(f"### Benchmark Alignment Score: {overall.get('score', benchmark_payload.get('score', 0))}/100")
-                st.write(f"**Position:** {overall.get('label', 'N/A')}")
-                st.write(f"**Benchmark Basis:** {context.get('benchmark_basis', 'Rule-based benchmark standard')}")
-                st.write(f"**Confidence:** {context.get('confidence_label', 'Medium')}")
-                rows = []
-                for item in benchmark_payload.get("clause_comparison", []):
-                    sev = str(item.get("severity", "")).lower()
-                    color = "🟢" if sev == "low" else "🟠" if sev in {"medium", "high"} else "🔴"
-                    st.write(f"{color} {item.get('review_area')}: {item.get('your_contract')}")
-                    rows.append(item)
-                if rows:
-                    st.markdown("#### Your Contract vs Benchmark")
-                    st.table(rows)
-                comparisons = benchmark_payload.get("market_terms_comparison", [])
-                if comparisons:
-                    st.markdown("#### Market Terms Comparison")
-                    st.table(comparisons)
-                st.markdown("#### Priority 1 — Must Fix Before Approval")
-                for rec in benchmark_payload.get("priority_recommendations", {}).get("priority_1_must_fix", []):
-                    st.write(f"- {rec}")
-                st.markdown("#### Priority 2 — Recommended Enhancements")
-                for rec in benchmark_payload.get("priority_recommendations", {}).get("priority_2_recommended", []):
+
                     st.write(f"- {rec}")
             else:
                 st.info("No benchmark result yet. Run benchmark analysis.")
@@ -1193,19 +1167,7 @@ def contract_analysis_page():
                     else:
                         error_msg = "Failed to get AI answer"
                         if chat_response:
-                            status_code = chat_response.status_code
-                            if status_code == 401:
-                                error_msg = "Unauthorized. Please sign in again."
-                            elif status_code == 404:
-                                error_msg = "Contract or chat endpoint not found."
-                            elif status_code == 500:
-                                error_msg = "Backend error while generating answer."
-                            else:
-                                try:
-                                    error_data = chat_response.json()
-                                    error_msg = error_data.get("detail", error_msg)
-                                except Exception:
-                                    pass
+
                         styled_error_banner(error_msg)
                 st.rerun()
         if st.button("Clear chat history", key=f"clear_chat_{contract_id}"):

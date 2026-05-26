@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-import re
+
 
 REGIONAL_BASELINES = {
     "employment": {
@@ -27,22 +27,7 @@ REGIONAL_BASELINES = {
     "general_commercial": {"region": "MENA", "description": "General MENA commercial contracting standards", "clauses": {"scope": {"weight": 16, "expected_detail_level": "high", "notes": "Scope and obligations."}, "payment_terms": {"weight": 14, "expected_detail_level": "high", "notes": "Payment and invoicing."}, "term_and_termination": {"weight": 14, "expected_detail_level": "high", "notes": "Duration and exit rights."}, "confidentiality": {"weight": 10, "expected_detail_level": "medium", "notes": "Confidentiality protections."}, "liability": {"weight": 12, "expected_detail_level": "medium", "notes": "Liability limits."}, "indemnity": {"weight": 10, "expected_detail_level": "medium", "notes": "Indemnity obligations."}, "force_majeure": {"weight": 8, "expected_detail_level": "low", "notes": "Force majeure handling."}, "governing_law": {"weight": 8, "expected_detail_level": "low", "notes": "Choice of law."}, "dispute_resolution": {"weight": 8, "expected_detail_level": "low", "notes": "Dispute mechanism."}}},
 }
 
-CLAUSE_LABELS = {
-    "working_hours": "Working Hours",
-    "leave_policy": "Leave Policy",
-    "non_compete": "Non-Compete",
-    "governing_law": "Governing Law",
-    "dispute_resolution": "Dispute Resolution",
-    "term_and_termination": "Term & Termination",
-}
 
-EMPLOYMENT_BENCHMARK_REFERENCE = {
-    "salary_monthly_jod_avg": 3500,
-    "working_hours_weekly_avg": 48,
-    "annual_leave_days_avg": 21,
-    "probation_months_avg": 3,
-    "notice_days_avg": 30,
-}
 
 def _grade(score: float) -> str:
     if score >= 85:
@@ -87,83 +72,3 @@ def run_benchmark(extracted_clauses: dict[str, Any], contract_type: str) -> dict
             gaps.append(clause)
             recommendations.append(f"Add {clause} clause. {meta['notes']}")
         score += earned
-        clause_breakdown.append(
-            {
-                "clause": clause,
-                "clause_label": CLAUSE_LABELS.get(clause, clause.replace("_", " ").title()),
-                "weight": weight,
-                "earned": round(earned, 2),
-                "status": status,
-                "note": note,
-            }
-        )
-
-    rounded = int(round(score))
-    comparisons: list[dict[str, Any]] = []
-    if normalized_type == "employment":
-        joined = " ".join(str(v) for v in clauses.values())
-        amounts = [int(x) for x in re.findall(r"\b(\d{3,6})\b", joined)]
-        salary = next((a for a in amounts if 1000 <= a <= 20000), None)
-        if salary:
-            avg = EMPLOYMENT_BENCHMARK_REFERENCE["salary_monthly_jod_avg"]
-            diff_pct = round(((salary - avg) / avg) * 100, 1)
-            comparisons.append(
-                {
-                    "metric": "Base Salary (monthly)",
-                    "contract_value": f"{salary} JOD",
-                    "benchmark_value": f"{avg} JOD",
-                    "benchmark_range": "2800–4200 JOD",
-                    "difference_percent": f"{diff_pct}%",
-                    "insight": "Above regional average" if salary >= avg else "Below regional average",
-                }
-            )
-    clause_comparison = [
-        {
-            "review_area": item["clause_label"],
-            "your_contract": "Found" if item["status"] == "present" else "Partially found" if item["status"] == "partial" else "Not found",
-            "benchmark_expectation": item["note"],
-            "result": "Aligned" if item["status"] == "present" else "Below benchmark",
-            "severity": "Low" if item["status"] == "present" else "High" if item["status"] == "partial" else "Critical",
-        }
-        for item in clause_breakdown
-    ]
-    market_terms = [
-        {
-            "term": c.get("metric"),
-            "your_value": c.get("contract_value", "Not found — comparison unavailable."),
-            "benchmark_average": c.get("benchmark_value", "Not available"),
-            "benchmark_range": c.get("benchmark_range", "Not available"),
-            "difference": c.get("difference_percent", "N/A"),
-            "interpretation": c.get("insight", "Comparison unavailable"),
-            "limitations": "Indicative only because seniority and jurisdiction were not fully validated.",
-        }
-        for c in comparisons
-    ]
-    return {
-        "benchmark_context": {
-            "contract_type": normalized_type.replace("_", " ").title(),
-            "region": baseline["region"],
-            "jurisdiction": "Not clearly detected",
-            "benchmark_basis": f"Rule-based {normalized_type.replace('_', ' ')} contract standard",
-            "sample_size": None,
-            "confidence_label": "Medium",
-        },
-        "overall_position": {
-            "score": rounded,
-            "label": "Aligned with expected standard" if rounded >= 70 else "Below expected standard" if rounded >= 40 else "Significantly Below Expected Standard",
-            "summary": "Benchmark based on internal standard, not live market dataset.",
-        },
-        "clause_comparison": clause_comparison,
-        "market_terms_comparison": market_terms,
-        "priority_recommendations": {
-            "priority_1_must_fix": recommendations[:3],
-            "priority_2_recommended": recommendations[3:6],
-        },
-        "score": rounded,
-        "grade": _grade(rounded),
-        "contract_type": normalized_type,
-        "region": baseline["region"],
-        "clause_breakdown": clause_breakdown,
-        "benchmark_comparisons": comparisons,
-        "recommendations": recommendations[:6],
-    }

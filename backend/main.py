@@ -23,7 +23,7 @@ from backend.gen1 import (
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
-from backend.services.contract_extraction_service import extract_clauses_with_validation
+
 from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
 from backend.services.benchmark_service import (
@@ -32,7 +32,7 @@ from backend.services.benchmark_service import (
     run_benchmark_analysis,
 )
 import requests
-import fitz
+
 
 # Load environment variables
 load_dotenv()
