@@ -12,6 +12,8 @@ import fitz  # PyMuPDF
 from PIL import Image
 import pytesseract
 
+from backend.services.contract_intelligence import answer_contract_question
+
 executor = ThreadPoolExecutor()
 
 
@@ -916,11 +918,35 @@ def contract_chat_sync(
             user_style_guide=infer_user_style_guide(question, response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        if not isinstance(result, str) or not result.strip():
-            raise ValueError("Model returned an empty answer")
-        return result.strip()
-    except Exception as e:
-        raise RuntimeError(f"Failed to answer contract question: {str(e)}")
+        response_text = _coerce_llm_content(result).strip()
+        if response_text:
+            return response_text
+    except Exception:
+        pass
+
+    fallback = answer_contract_question(
+        contract_text=contract_text,
+        question=question,
+        response_language=response_language,
+    )
+
+    if isinstance(fallback, dict):
+        answer = str(fallback.get("answer", "")).strip()
+        evidence = fallback.get("evidence", [])
+        if answer:
+            if isinstance(evidence, list) and evidence:
+                quotes = []
+                for item in evidence[:2]:
+                    if isinstance(item, dict):
+                        q = str(item.get("quote", "")).strip()
+                        if q:
+                            quotes.append(q)
+                if quotes:
+                    return answer + "\n\nEvidence:\n- " + "\n- ".join(quotes)
+            return answer
+
+    # Hard fallback for resilience: return a safe, deterministic message instead of raising.
+    return "I couldn't generate a reliable AI response right now. Please ask a contract-specific question and I will answer from the provided contract text."
 
 
 async def contract_chat(
