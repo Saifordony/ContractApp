@@ -23,6 +23,11 @@ if "username" not in st.session_state:
     st.session_state.username = None
 
 
+
+
+def styled_error_banner(message: str):
+    st.markdown(f"""<div style='background:rgba(220,38,38,0.14);border:1px solid #ef4444;color:#7f1d1d;padding:0.75rem 0.9rem;border-radius:12px;font-weight:600;margin:0.45rem 0;'>{html.escape(str(message))}</div>""", unsafe_allow_html=True)
+
 def apply_modern_theme(sidebar_compact: bool = False):
     sidebar_width = "5.2rem" if sidebar_compact else "19.5rem"
     sidebar_text_display = "none" if sidebar_compact else "block"
@@ -406,12 +411,12 @@ def make_api_request(
         if response.status_code == 401:
             st.session_state.token = None
             st.session_state.username = None
-            st.error("Session expired. Please login again.")
+            styled_error_banner("Session expired. Please login again.")
             st.rerun()
 
         return response
     except requests.exceptions.RequestException as e:
-        st.error(f"API request failed: {str(e)}")
+        styled_error_banner(f"Could not reach the server. Check that the backend is running.")
         return None
 
 
@@ -438,7 +443,7 @@ def render_contract_evaluation(evaluation: Dict):
     if approved:
         st.success("Contract Approved")
     else:
-        st.error("Contract Not Approved")
+        styled_error_banner("Contract Not Approved")
 
     contract_type = evaluation.get("contract_type")
     if contract_type:
@@ -451,7 +456,11 @@ def render_contract_evaluation(evaluation: Dict):
     st.progress(max(0, min(100, score)) / 100)
 
     risk_level = str(evaluation.get("risk_level", "medium")).lower()
-    st.write(f"**Risk Level:** {risk_level.title()}")
+    badge_color = {"low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(risk_level, "#475569")
+    st.markdown(
+        f"<div style='display:inline-block;background:{badge_color};color:white;padding:0.25rem 0.55rem;border-radius:999px;font-weight:700'>Risk: {risk_level.title()}</div>",
+        unsafe_allow_html=True,
+    )
 
     st.write("**Reasoning:**")
     st.write(evaluation.get("reasoning", "No reasoning provided"))
@@ -642,7 +651,7 @@ def login_page():
                     st.success("Login successful!")
                     st.rerun()
                 else:
-                    st.error("Login failed. Please check your credentials.")
+                    styled_error_banner("Login failed. Please check your credentials.")
 
     with tab2:
         with st.form("register_form"):
@@ -654,7 +663,7 @@ def login_page():
 
             if submit:
                 if password != confirm_password:
-                    st.error("Passwords do not match")
+                    styled_error_banner("Passwords do not match")
                 else:
                     response = make_api_request(
                         "/auth/register",
@@ -666,7 +675,7 @@ def login_page():
                     if response and response.status_code == 200:
                         st.success("Registration successful! Please sign in.")
                     else:
-                        st.error(
+                        styled_error_banner(
                             "Registration failed. Username or email might already exist."
                         )
 
@@ -741,7 +750,7 @@ def contract_analysis_page():
                             error_msg = error_data.get("detail", error_msg)
                         except:
                             pass
-                    st.error(error_msg)
+                    styled_error_banner(error_msg)
 
     with col2:
         st.subheader("Select Existing Client")
@@ -821,7 +830,7 @@ def contract_analysis_page():
             if submit_contract and contract_title and uploaded_file:
                 # Validate file type
                 if not uploaded_file.name.lower().endswith('.pdf'):
-                    st.error("Please upload a PDF file")
+                    styled_error_banner("Please upload a PDF file")
                     return
                 
                 # First, extract text from PDF
@@ -860,14 +869,14 @@ def contract_analysis_page():
                                 error_msg = error_data.get("detail", error_msg)
                             except:
                                 pass
-                        st.error(error_msg)
+                        styled_error_banner(error_msg)
                 except Exception as e:
-                    st.error(f"Error processing PDF: {str(e)}")
+                    styled_error_banner(f"Error processing PDF: {str(e)}")
             elif submit_contract:
                 if not contract_title:
-                    st.error("Please enter a contract title")
+                    styled_error_banner("Please enter a contract title")
                 if not uploaded_file:
-                    st.error("Please upload a PDF file")
+                    styled_error_banner("Please upload a PDF file")
 
     else:
         st.info("Please create or select a client first to proceed with contract management")
@@ -890,6 +899,7 @@ def contract_analysis_page():
         contract_title = st.session_state.get("current_contract_title", "Unknown")
         
         # Show contract being analyzed
+        st.markdown(f"**Breadcrumb:** Clients > {st.session_state.get('selected_client_name', 'Client')} > {contract_title}")
         st.info(f"Analyzing contract: **{contract_title}** (ID: {contract_id})")
         if not pdf_bytes:
             st.info("Using saved contract content from database (no re-upload needed).")
@@ -907,6 +917,7 @@ def contract_analysis_page():
         with col1:
             if st.button("Analyze Contract Clauses"):
                 with st.spinner("Analyzing contract clauses..."):
+                    st.markdown("Step 1: Extracting text → Step 2: Analyzing clauses → Step 3: Evaluating → Done")
                     if pdf_bytes:
                         files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
                         response = make_api_request(
@@ -923,7 +934,7 @@ def contract_analysis_page():
                         )
                     else:
                         response = None
-                        st.error("This contract has no stored content to analyze.")
+                        styled_error_banner("This contract has no stored content to analyze.")
 
                     if response and response.status_code == 200:
                         data = response.json()
@@ -944,10 +955,10 @@ def contract_analysis_page():
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
                     elif response is not None:
-                        st.error("Failed to analyze contract")
+                        styled_error_banner("Failed to analyze contract")
                         try:
                             error_data = response.json()
-                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                            styled_error_banner(f"Error details: {error_data.get('detail', 'Unknown error')}")
                         except Exception:
                             pass
 
@@ -966,7 +977,7 @@ def contract_analysis_page():
                             evaluation = eval_response.json()
                             render_contract_evaluation(evaluation)
                         else:
-                            st.error("Failed to evaluate contract")
+                            styled_error_banner("Failed to evaluate contract")
             else:
                 st.info("Please analyze the contract first to enable health evaluation")
 
@@ -1006,13 +1017,41 @@ def contract_analysis_page():
                         # Store results in session state for later reference
                         st.session_state[f"analysis_results_{contract_id}"] = results
                 else:
-                    st.error("Failed to run analysis pipeline")
+                    styled_error_banner("Failed to run analysis pipeline")
                     if pipeline_response:
                         try:
                             error_data = pipeline_response.json()
-                            st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                            styled_error_banner(f"Error details: {error_data.get('detail', 'Unknown error')}")
                         except Exception:
                             pass
+
+        st.markdown("---")
+        with st.expander("📊 Benchmark", expanded=True):
+            bench_get = make_api_request(f"/contracts/{contract_id}/benchmark")
+            benchmark_payload = bench_get.json() if bench_get and bench_get.status_code == 200 else None
+            if st.button("Run Benchmark Analysis", key=f"run_bench_{contract_id}"):
+                run_resp = make_api_request(f"/contracts/{contract_id}/benchmark", "POST")
+                if run_resp and run_resp.status_code == 200:
+                    benchmark_payload = run_resp.json()
+                else:
+                    styled_error_banner("Benchmark run failed.")
+            if benchmark_payload:
+                st.markdown(f"### {benchmark_payload.get('score', 0)} / 100 — Grade {benchmark_payload.get('grade', 'N/A')} — {benchmark_payload.get('region', 'MENA')} Region Standard")
+                for item in benchmark_payload.get("clause_breakdown", []):
+                    weight = max(item.get("weight", 1), 1)
+                    pct = item.get("earned", 0) / weight
+                    color = "🟢" if pct >= 1 else "🟠" if pct > 0 else "🔴"
+                    st.write(f"{color} {item.get('clause')}: {item.get('earned')}/{item.get('weight')}")
+                    st.progress(max(0.0, min(1.0, pct)))
+                st.markdown("**Strengths**")
+                st.write("  ".join([f"`✅ {x}`" for x in benchmark_payload.get("strengths", [])]) or "No strengths detected yet.")
+                st.markdown("**Gaps**")
+                st.write("  ".join([f"`❌ {x}`" for x in benchmark_payload.get("gaps", [])]) or "No major gaps.")
+                st.markdown("**Recommendations**")
+                for rec in benchmark_payload.get("recommendations", []):
+                    st.write(f"- {rec}")
+            else:
+                st.info("No benchmark result yet. Run benchmark analysis.")
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
@@ -1083,8 +1122,11 @@ def contract_analysis_page():
                                 error_msg = error_data.get("detail", error_msg)
                             except Exception:
                                 pass
-                        st.error(error_msg)
+                        styled_error_banner(error_msg)
                 st.rerun()
+        if st.button("Clear chat history", key=f"clear_chat_{contract_id}"):
+            st.session_state[chat_key] = []
+            st.rerun()
         
         # Add option to clear current contract and start over
         st.markdown("---")
@@ -1144,9 +1186,9 @@ def clients_contracts_page():
                         st.success(f"Client '{new_name}' created successfully!")
                         st.rerun()
                     else:
-                        st.error("Failed to create client")
+                        styled_error_banner("Failed to create client")
                 else:
-                    st.error("Please fill in all required fields (*)")
+                    styled_error_banner("Please fill in all required fields (*)")
 
         st.divider()
         
@@ -1188,7 +1230,7 @@ def clients_contracts_page():
                                         error_msg = error_data.get("detail", error_msg)
                                     except:
                                         pass
-                                st.error(error_msg)
+                                styled_error_banner(error_msg)
                     
                     # Edit form (shown when edit button is clicked)
                     if st.session_state.get(f"editing_{client_id}"):
@@ -1217,9 +1259,9 @@ def clients_contracts_page():
                                             del st.session_state[f"editing_{client_id}"]
                                             st.rerun()
                                         else:
-                                            st.error("Failed to update client")
+                                            styled_error_banner("Failed to update client")
                                     else:
-                                        st.error("Please fill in all required fields")
+                                        styled_error_banner("Please fill in all required fields")
                             with col2:
                                 if st.form_submit_button("Cancel"):
                                     del st.session_state[f"editing_{client_id}"]
@@ -1235,12 +1277,26 @@ def clients_contracts_page():
         
         if contracts:
             st.subheader("All Contracts")
-            st.write(f"Found {len(contracts)} contracts:")
-            
+            search_client = st.text_input("Filter by client name")
+            status_filter = st.selectbox("Filter by status", ["all", "pending", "analyzed", "evaluated"])
+            filtered = []
             for contract in contracts:
+                if status_filter != "all" and contract.get("status") != status_filter:
+                    continue
+                if search_client and search_client.lower() not in str(contract.get("client_name", contract.get("client_id", ""))).lower():
+                    continue
+                filtered.append(contract)
+            st.write(f"Found {len(filtered)} contracts:")
+
+            left, right = st.columns(2)
+            for idx, contract in enumerate(filtered):
                 contract_id = contract.get('_id') or contract.get('id')
-                
-                with st.expander(f"{contract.get('title', 'Untitled Contract')} - Client ID: {contract.get('client_id', 'N/A')}"):
+                container = left if idx % 2 == 0 else right
+                with container:
+                    badge = {"pending": "⚪", "analyzed": "🔵", "evaluated": "🟢"}.get(contract.get("status"), "⚪")
+                    st.markdown(f"#### {contract.get('title', 'Untitled Contract')}")
+                    st.caption(f"{badge} {contract.get('status', 'pending')} • Client: {contract.get('client_id', 'N/A')} • Date: {contract.get('created_at', 'N/A')}")
+                with st.expander(f"Manage {contract.get('title', 'Untitled Contract')}"):
                     col1, col2 = st.columns([3, 1])
                     
                     with col1:
@@ -1272,7 +1328,7 @@ def clients_contracts_page():
                                         error_msg = error_data.get("detail", error_msg)
                                     except:
                                         pass
-                                st.error(error_msg)
+                                styled_error_banner(error_msg)
                         
                         # Analyze with AI (if not already analyzed)
                         if contract.get('status') != 'analyzed':
@@ -1293,11 +1349,11 @@ def clients_contracts_page():
                                         
                                         st.rerun()
                                     else:
-                                        st.error("Analysis failed")
+                                        styled_error_banner("Analysis failed")
                                         if response:
                                             try:
                                                 error_data = response.json()
-                                                st.error(f"Error details: {error_data.get('detail', 'Unknown error')}")
+                                                styled_error_banner(f"Error details: {error_data.get('detail', 'Unknown error')}")
                                             except Exception:
                                                 pass
                     
@@ -1355,9 +1411,9 @@ def clients_contracts_page():
                                             del st.session_state[f"editing_contract_{contract_id}"]
                                             st.rerun()
                                         else:
-                                            st.error("Failed to update contract")
+                                            styled_error_banner("Failed to update contract")
                                     else:
-                                        st.error("Please fill in all required fields")
+                                        styled_error_banner("Please fill in all required fields")
                             with col2:
                                 if st.form_submit_button("Cancel"):
                                     del st.session_state[f"editing_contract_{contract_id}"]
@@ -1396,7 +1452,7 @@ def benchmark_page():
 
     if submitted:
         if not uploaded_file:
-            st.error("Please upload a contract file.")
+            styled_error_banner("Please upload a contract file.")
             return
 
         with st.spinner("Running clause-level benchmark analysis..."):
@@ -1446,10 +1502,10 @@ def benchmark_page():
                         for cit in citations[:2]:
                             st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
         else:
-            st.error("Benchmark analysis failed")
+            styled_error_banner("Benchmark analysis failed")
             if response:
                 try:
-                    st.error(response.json().get("detail", "Unknown error"))
+                    styled_error_banner(response.json().get("detail", "Unknown error"))
                 except Exception:
                     pass
 
@@ -1503,14 +1559,14 @@ def admin_dashboard():
             if health_response and health_response.status_code == 200:
                 st.success("Health Check: OK")
             else:
-                st.error("Health Check: Failed")
+                styled_error_banner("Health Check: Failed")
 
         with col2:
             ready_response = make_api_request("/readyz", auth=False)
             if ready_response and ready_response.status_code == 200:
                 st.success("Readiness Check: OK")
             else:
-                st.error("Readiness Check: Failed")
+                styled_error_banner("Readiness Check: Failed")
 
     with tab2:
         st.header("System Logs")
@@ -1579,7 +1635,7 @@ def main():
     st.sidebar.markdown("---")
     navigation = st.sidebar.radio(
         "Navigate",
-        (["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard", "📚 Benchmark"] if BENCHMARK_ENABLED else ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"]),
+        ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"],
         label_visibility="collapsed",
     )
 
@@ -1605,10 +1661,6 @@ def main():
     elif navigation == "📊 Admin Dashboard":
         admin_dashboard()
         st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
-
-    elif navigation == "📚 Benchmark":
-        benchmark_page()
-        st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
