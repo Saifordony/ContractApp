@@ -117,4 +117,53 @@ def run_benchmark(extracted_clauses: dict[str, Any], contract_type: str) -> dict
                     "insight": "Above regional average" if salary >= avg else "Below regional average",
                 }
             )
-    return {"contract_type": normalized_type, "region": baseline["region"], "score": rounded, "grade": _grade(rounded), "summary": "This contract meets most regional expectations but is missing key clauses typical for MENA agreements." if rounded >= 55 else "This contract is below common regional standards and needs substantial clause improvements.", "clause_breakdown": clause_breakdown, "strengths": strengths[:5], "gaps": gaps[:5], "recommendations": recommendations[:5], "benchmark_comparisons": comparisons}
+    clause_comparison = [
+        {
+            "review_area": item["clause_label"],
+            "your_contract": "Found" if item["status"] == "present" else "Partially found" if item["status"] == "partial" else "Not found",
+            "benchmark_expectation": item["note"],
+            "result": "Aligned" if item["status"] == "present" else "Below benchmark",
+            "severity": "Low" if item["status"] == "present" else "High" if item["status"] == "partial" else "Critical",
+        }
+        for item in clause_breakdown
+    ]
+    market_terms = [
+        {
+            "term": c.get("metric"),
+            "your_value": c.get("contract_value", "Not found — comparison unavailable."),
+            "benchmark_average": c.get("benchmark_value", "Not available"),
+            "benchmark_range": c.get("benchmark_range", "Not available"),
+            "difference": c.get("difference_percent", "N/A"),
+            "interpretation": c.get("insight", "Comparison unavailable"),
+            "limitations": "Indicative only because seniority and jurisdiction were not fully validated.",
+        }
+        for c in comparisons
+    ]
+    return {
+        "benchmark_context": {
+            "contract_type": normalized_type.replace("_", " ").title(),
+            "region": baseline["region"],
+            "jurisdiction": "Not clearly detected",
+            "benchmark_basis": f"Rule-based {normalized_type.replace('_', ' ')} contract standard",
+            "sample_size": None,
+            "confidence_label": "Medium",
+        },
+        "overall_position": {
+            "score": rounded,
+            "label": "Aligned with expected standard" if rounded >= 70 else "Below expected standard" if rounded >= 40 else "Significantly Below Expected Standard",
+            "summary": "Benchmark based on internal standard, not live market dataset.",
+        },
+        "clause_comparison": clause_comparison,
+        "market_terms_comparison": market_terms,
+        "priority_recommendations": {
+            "priority_1_must_fix": recommendations[:3],
+            "priority_2_recommended": recommendations[3:6],
+        },
+        "score": rounded,
+        "grade": _grade(rounded),
+        "contract_type": normalized_type,
+        "region": baseline["region"],
+        "clause_breakdown": clause_breakdown,
+        "benchmark_comparisons": comparisons,
+        "recommendations": recommendations[:6],
+    }

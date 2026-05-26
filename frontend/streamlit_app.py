@@ -1000,6 +1000,9 @@ def contract_analysis_page():
                                 if explanation:
                                     st.markdown("**In simple terms:**")
                                     st.write(explanation)
+                        if structured.get("warnings"):
+                            for w in structured.get("warnings", []):
+                                styled_error_banner(w)
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
@@ -1086,46 +1089,31 @@ def contract_analysis_page():
                 else:
                     styled_error_banner("Benchmark run failed.")
             if benchmark_payload:
-                score = int(benchmark_payload.get("score", 0))
-                position = "Aligned with expected standard" if score >= 70 else ("Below expected standard" if score >= 40 else "Significantly Below Expected Standard")
-                st.markdown(f"### Benchmark Alignment Score: {score}/100")
-                st.write(f"**Position:** {position}")
-                st.write(f"**Benchmark Basis:** Rule-based benchmark standard ({benchmark_payload.get('region', 'MENA')})")
-                st.write("**Confidence:** Medium")
+                context = benchmark_payload.get("benchmark_context", {})
+                overall = benchmark_payload.get("overall_position", {})
+                st.markdown(f"### Benchmark Alignment Score: {overall.get('score', benchmark_payload.get('score', 0))}/100")
+                st.write(f"**Position:** {overall.get('label', 'N/A')}")
+                st.write(f"**Benchmark Basis:** {context.get('benchmark_basis', 'Rule-based benchmark standard')}")
+                st.write(f"**Confidence:** {context.get('confidence_label', 'Medium')}")
                 rows = []
-                for item in benchmark_payload.get("clause_breakdown", []):
+                for item in benchmark_payload.get("clause_comparison", []):
                     weight = max(item.get("weight", 1), 1)
                     pct = item.get("earned", 0) / weight
                     color = "🟢" if pct >= 1 else "🟠" if pct > 0 else "🔴"
-                    st.write(f"{color} {item.get('clause_label', item.get('clause'))}: {item.get('earned')}/{item.get('weight')}")
-                    st.progress(max(0.0, min(1.0, pct)))
-                    st.caption(item.get("note", ""))
-                    rows.append({
-                        "Review Area": item.get("clause_label", item.get("clause")),
-                        "Your Contract": item.get("status", "unknown").replace("_", " ").title(),
-                        "Benchmark Expectation": item.get("note", ""),
-                        "Result": "Aligned" if pct >= 1 else "Below benchmark",
-                        "Severity": "Low" if pct >= 1 else ("High" if pct > 0 else "Critical"),
-                    })
+                    st.write(f"{color} {item.get('review_area')}: {item.get('your_contract')}")
+                    rows.append(item)
                 if rows:
                     st.markdown("#### Your Contract vs Benchmark")
                     st.table(rows)
-                comparisons = benchmark_payload.get("benchmark_comparisons", [])
+                comparisons = benchmark_payload.get("market_terms_comparison", [])
                 if comparisons:
                     st.markdown("#### Market Terms Comparison")
-                    st.table([{
-                        "Term": cmp.get("metric"),
-                        "Your Contract": cmp.get("contract_value", "Not found — comparison unavailable."),
-                        "Benchmark Average": cmp.get("benchmark_value"),
-                        "Benchmark Range": cmp.get("benchmark_range", "Not available"),
-                        "Difference": cmp.get("difference_percent", "N/A"),
-                        "Interpretation": cmp.get("insight"),
-                    } for cmp in comparisons])
+                    st.table(comparisons)
                 st.markdown("#### Priority 1 — Must Fix Before Approval")
-                for rec in benchmark_payload.get("recommendations", [])[:3]:
+                for rec in benchmark_payload.get("priority_recommendations", {}).get("priority_1_must_fix", []):
                     st.write(f"- {rec}")
                 st.markdown("#### Priority 2 — Recommended Enhancements")
-                for rec in benchmark_payload.get("recommendations", [])[3:]:
+                for rec in benchmark_payload.get("priority_recommendations", {}).get("priority_2_recommended", []):
                     st.write(f"- {rec}")
             else:
                 st.info("No benchmark result yet. Run benchmark analysis.")
@@ -1174,7 +1162,6 @@ def contract_analysis_page():
                         lines = [
                             answer,
                             "",
-                            f"Confidence: {confidence}",
                             f"Confidence: {'High' if confidence >= 0.75 else ('Medium' if confidence >= 0.5 else 'Low')}",
                         ]
                         if evidence:

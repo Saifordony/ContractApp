@@ -23,6 +23,7 @@ from backend.gen1 import (
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
+from backend.services.contract_extraction_service import extract_clauses_with_validation
 from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
 from backend.services.benchmark_service import (
@@ -338,7 +339,7 @@ async def analyze_contract_endpoint(
             contract_text,
             response_language=response_language,
         )
-        structured_clauses = extract_key_clauses(contract_text)
+        structured_clauses = extract_clauses_with_validation(contract_text)
         clause_explanations = await explain_clauses_for_layman(
             clauses,
             response_language=response_language,
@@ -402,7 +403,7 @@ async def analyze_contract_text_endpoint(
             clauses,
             response_language=payload.response_language,
         )
-        structured_clauses = extract_key_clauses(contract_text)
+        structured_clauses = extract_clauses_with_validation(contract_text)
 
         await db.logs.insert_one(
             {
@@ -955,7 +956,7 @@ async def chat_with_contract(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(status_code=400, detail="Please analyze or select a contract before using the contract assistant.")
+        raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
 
     if not is_genai_configured():
         raise HTTPException(
@@ -969,7 +970,15 @@ async def chat_with_contract(
             sort=[("created_at", -1)],
         )
         if not latest_analysis:
-            raise HTTPException(status_code=400, detail="Please analyze or select a contract before using the contract assistant.")
+            raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
+        q = (request.question or "").strip().lower()
+        if q in {"hi", "hello", "hey"}:
+            return {
+                "answer": "Hi. I can help answer questions about the uploaded contract. Try asking about compensation, termination, leave, risks, or missing clauses.",
+                "evidence_snippets": [],
+                "confidence": "High",
+                "limitations": "Greeting response; ask a contract-specific question for grounded evidence.",
+            }
         report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
         chat_context_text = contract["content"]
         if report_context:

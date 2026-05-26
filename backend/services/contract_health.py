@@ -326,9 +326,42 @@ def evaluate_contract_health_from_clauses(clauses: Dict[str, str], response_lang
         *[f"ambiguous:{item['clause']}" for item in ambiguous_clauses],
     ]
 
+    confidence_label = "High" if contract_type_info["confidence"] >= 0.75 else "Medium" if contract_type_info["confidence"] >= 0.5 else "Low"
+    deductions: List[Dict[str, Any]] = []
+    for item in missing_required:
+        deductions.append({"reason": f"{item.replace('_', ' ').title()} clause not found", "points": -10, "severity": "Critical"})
+    for item in sorted(set(missing_recommended)):
+        deductions.append({"reason": f"{item.replace('_', ' ').title()} protection not found", "points": -4, "severity": "Medium"})
+    for item in ambiguous_clauses[:4]:
+        deductions.append({"reason": f"Needs clarification: {item.get('clause', 'clause')}", "points": -3, "severity": "Medium"})
+
     return {
         "module": "contract_health",
         "legal_parameters_version": "strict-v2",
+        "review_title": "Contract Readiness Review",
+        "overall_result": "Ready for Legal Review" if approved else "Requires Review Before Approval",
+        "readiness_score": health_score,
+        "detected_contract_type": contract_type.replace("_", " ").title(),
+        "confidence_label": confidence_label,
+        "executive_summary": _msg(
+            f"This {contract_type.replace('_', ' ')} scored {health_score}/100. Missing required clauses: {len(missing_required)}. Missing recommended protections: {len(sorted(set(missing_recommended)))}.",
+            f"هذا العقد من نوع {contract_type.replace('_', ' ')} حصل على {health_score}/100. البنود الإلزامية المفقودة: {len(missing_required)}. الحمايات الموصى بها المفقودة: {len(sorted(set(missing_recommended)))}.",
+            response_language,
+        ),
+        "score_breakdown": {"base_score": 100, "deductions": deductions, "final_score": health_score},
+        "required_clauses": [_pretty_clause_name(x, response_language) for x in sorted(set(missing_required))],
+        "recommended_clauses": [_pretty_clause_name(x, response_language) for x in sorted(set(missing_recommended))],
+        "key_findings": [
+            {
+                "clause_name": item.get("clause", "Clause"),
+                "status": "Needs Review",
+                "why_it_matters": item.get("reason", "Needs legal clarification."),
+                "recommended_action": "Clarify this clause with objective legal wording and measurable obligations.",
+                "evidence": item.get("evidence", []),
+            }
+            for item in ambiguous_clauses[:8]
+        ],
+        "recommended_next_steps": required_changes,
         "contract_type": contract_type,
         "contract_type_confidence": contract_type_info["confidence"],
         "contract_type_candidates": contract_type_info["candidates"],
