@@ -105,12 +105,16 @@ def run_benchmark(extracted_clauses: dict[str, Any], contract_type: str) -> dict
         amounts = [int(x) for x in re.findall(r"\b(\d{3,6})\b", joined)]
         salary = next((a for a in amounts if 1000 <= a <= 20000), None)
         if salary:
+            avg = EMPLOYMENT_BENCHMARK_REFERENCE["salary_monthly_jod_avg"]
+            diff_pct = round(((salary - avg) / avg) * 100, 1)
             comparisons.append(
                 {
                     "metric": "Base Salary (monthly)",
                     "contract_value": f"{salary} JOD",
-                    "benchmark_value": f"{EMPLOYMENT_BENCHMARK_REFERENCE['salary_monthly_jod_avg']} JOD",
-                    "insight": "Above regional average" if salary >= EMPLOYMENT_BENCHMARK_REFERENCE["salary_monthly_jod_avg"] else "Below regional average",
+                    "benchmark_value": f"{avg} JOD",
+                    "benchmark_range": "2800–4200 JOD",
+                    "difference_percent": f"{diff_pct}%",
+                    "insight": "Above regional average" if salary >= avg else "Below regional average",
                 }
             )
     return {"contract_type": normalized_type, "region": baseline["region"], "score": rounded, "grade": _grade(rounded), "summary": "This contract meets most regional expectations but is missing key clauses typical for MENA agreements." if rounded >= 55 else "This contract is below common regional standards and needs substantial clause improvements.", "clause_breakdown": clause_breakdown, "strengths": strengths[:5], "gaps": gaps[:5], "recommendations": recommendations[:5], "benchmark_comparisons": comparisons}

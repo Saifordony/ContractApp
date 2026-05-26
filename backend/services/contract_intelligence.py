@@ -34,6 +34,10 @@ LEGAL_QUESTION_HINTS = {
     "عقد", "بند", "إجازة", "راتب", "دفع", "إنهاء", "إشعار", "سرية", "تحكيم", "قانون",
 }
 
+CONTAMINATION_KEYWORDS = {
+    "experience", "skills", "agile", "git", "responsibilities",
+    "qualifications", "cv", "resume", "job description", "requirements",
+}
 PERSONAL_NONLEGAL_HINTS = {
     "feel", "tired", "sad", "stressed", "depressed", "anxious", "tomorrow",
     "donot", "dont", "don't", "can i do", "what can i do", "life", "motivation",
@@ -241,6 +245,14 @@ def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
         for chunk in chunks:
             lower = chunk.text.lower()
             if any(keyword in lower for keyword in keywords):
+                if clause_name == "parties":
+                    contamination_hit = any(marker in lower for marker in CONTAMINATION_KEYWORDS)
+                    legal_party_hit = any(
+                        token in lower
+                        for token in ["employer", "employee", "client", "supplier", "party a", "party b", "between", "company", "contractor"]
+                    )
+                    if contamination_hit and not legal_party_hit:
+                        continue
                 matches.append(
                     {
                         "quote": chunk.text[:280],
@@ -251,9 +263,11 @@ def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
 
         if not matches:
             extracted[clause_name] = {
-                "value": "Not Found",
+                "value": None,
                 "evidence": [],
-                "status": "missing",
+                "status": "not_found",
+                "confidence": 0.0,
+                "issue": f"No reliable evidence for {clause_name.replace('_', ' ')} was found in the contract text.",
             }
             continue
 
@@ -261,6 +275,8 @@ def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
             "value": matches[0]["quote"],
             "evidence": matches[:2],
             "status": "found",
+            "confidence": 0.8 if len(matches[0]['quote']) > 90 else 0.55,
+            "issue": None,
         }
 
         unique_quotes = {m["quote"] for m in matches[:3]}
@@ -406,7 +422,7 @@ def follow_ups_for_intent(intent: str, response_language: str = "english") -> Li
 def answer_contract_question(contract_text: str, question: str, response_language: str = "english") -> Dict[str, Any]:
     if _is_out_of_scope_personal_question(question):
         return {
-            "answer": _msg("I can only answer contract-related questions. I can’t give personal life advice.", "يمكنني الإجابة فقط عن الأسئلة المتعلقة بالعقد، ولا أقدّم نصائح شخصية.", response_language),
+            "answer": _msg("I can only answer contract-related questions based on the uploaded contract. Please ask a question related to the contract.", "يمكنني الإجابة فقط بناءً على العقد المرفوع. يرجى طرح سؤال متعلق بالعقد.", response_language),
             "confidence": 0.0,
             "evidence": [],
             "not_found": [question],
@@ -426,7 +442,7 @@ def answer_contract_question(contract_text: str, question: str, response_languag
 
     if not scored_chunks:
         return {
-            "answer": _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language),
+            "answer": _msg("Not Found: I could not find evidence in the contract for this question.", "لم أجد دليلًا في العقد لهذا السؤال.", response_language),
             "confidence": 0.0,
             "evidence": [],
             "not_found": [question],
@@ -442,7 +458,7 @@ def answer_contract_question(contract_text: str, question: str, response_languag
 
     if top_score < 0.28:
         return {
-            "answer": _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language),
+            "answer": _msg("Not Found: I could not find evidence in the contract for this question.", "لم أجد دليلًا في العقد لهذا السؤال.", response_language),
             "confidence": 0.1,
             "evidence": [],
             "not_found": [question],
@@ -470,7 +486,7 @@ def answer_contract_question(contract_text: str, question: str, response_languag
     answer_sentences = list(dict.fromkeys(answer_sentences))
 
     if not answer_sentences:
-        answer = _msg("Not Found in the provided contract text.", "غير موجود في نص العقد المقدم.", response_language)
+        answer = _msg("Not Found: I could not find evidence in the contract for this question.", "لم أجد دليلًا في العقد لهذا السؤال.", response_language)
         confidence = 0.15
         not_found = [question]
     else:

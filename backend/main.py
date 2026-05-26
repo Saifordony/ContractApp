@@ -955,7 +955,7 @@ async def chat_with_contract(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(status_code=400, detail="Contract has no content to chat about")
+        raise HTTPException(status_code=400, detail="Please analyze or select a contract before using the contract assistant.")
 
     if not is_genai_configured():
         raise HTTPException(
@@ -968,6 +968,8 @@ async def chat_with_contract(
             {"contract_id": contract_id},
             sort=[("created_at", -1)],
         )
+        if not latest_analysis:
+            raise HTTPException(status_code=400, detail="Please analyze or select a contract before using the contract assistant.")
         report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
         chat_context_text = contract["content"]
         if report_context:
@@ -1007,7 +1009,13 @@ async def chat_with_contract(
             }
         )
 
-        return structured_answer
+        return {
+            "answer": structured_answer.get("answer"),
+            "evidence_snippets": [item.get("quote", "") for item in structured_answer.get("evidence", [])],
+            "confidence": structured_answer.get("confidence", 0.0),
+            "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            "meta": structured_answer,
+        }
     except Exception as e:
         await db.logs.insert_one(
             {

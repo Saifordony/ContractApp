@@ -442,28 +442,37 @@ def render_contract_evaluation(evaluation: Dict):
     def pretty_label(text: str) -> str:
         return str(text).replace("_", " ").replace("missing required", "Missing required").replace("missing recommended", "Missing recommended").title()
 
+    st.markdown("### Contract Readiness Review")
     approved = evaluation.get("approved", False)
     if approved:
-        st.success("Contract Approved")
+        st.success("Ready for Legal Review")
     else:
-        styled_error_banner("Contract Not Approved")
+        styled_error_banner("Requires Review Before Approval")
 
     contract_type = evaluation.get("contract_type")
     if contract_type:
         confidence = evaluation.get("contract_type_confidence")
-        confidence_text = f" (confidence: {confidence})" if confidence is not None else ""
+        if confidence is None:
+            confidence_text = ""
+        elif confidence >= 0.75:
+            confidence_text = " (High confidence)"
+        elif confidence >= 0.5:
+            confidence_text = " (Medium confidence)"
+        else:
+            confidence_text = " (Low confidence)"
         st.write(f"**Detected Contract Type:** {str(contract_type).replace('_', ' ').title()}{confidence_text}")
 
     score = int(evaluation.get("health_score", 0))
-    st.write(f"**Health Score:** {score}/100")
+    st.write(f"**Readiness Score:** {score}/100")
     st.progress(max(0, min(100, score)) / 100)
 
     risk_level = str(evaluation.get("risk_level", "medium")).lower()
     badge_color = {"low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(risk_level, "#475569")
     st.markdown(
-        f"<div style='display:inline-block;background:{badge_color};color:white;padding:0.25rem 0.55rem;border-radius:999px;font-weight:700'>Risk: {risk_level.title()}</div>",
+        f"<div style='display:inline-block;background:{badge_color};color:white;padding:0.25rem 0.55rem;border-radius:999px;font-weight:700'>{'High Risk / Needs Legal Attention' if risk_level=='high' else ('Moderate Risk / Review Recommended' if risk_level=='medium' else 'Lower Risk / Standard Review')}</div>",
         unsafe_allow_html=True,
     )
+    st.caption("AI-assisted review only — not legal advice.")
 
     st.write("**Reasoning:**")
     st.write(evaluation.get("reasoning", "No reasoning provided"))
@@ -475,12 +484,12 @@ def render_contract_evaluation(evaluation: Dict):
     changes = evaluation.get("required_changes", [])
 
     if missing:
-        st.markdown("#### Missing Mandatory Clauses")
+        st.markdown("#### Required Clauses Not Found")
         for item in missing:
             st.write(f"- {pretty_label(item)}")
 
     if recommended:
-        st.markdown("#### Missing Recommended Clauses")
+        st.markdown("#### Recommended Protections Not Found")
         for item in recommended:
             st.write(f"- {pretty_label(item)}")
 
@@ -492,12 +501,12 @@ def render_contract_evaluation(evaluation: Dict):
             st.write(f"- **{clause_name}**: {reason}")
 
     if issues:
-        st.markdown("#### Specific Issues Found")
+        st.markdown("#### Key Review Findings")
         for item in issues:
             st.write(f"- {pretty_label(item)}")
 
     if changes:
-        st.markdown("#### What This Contract Needs")
+        st.markdown("#### Recommended Next Steps")
         for item in changes:
             st.write(f"- {item.replace('_', ' ')}")
 
@@ -1067,7 +1076,7 @@ def contract_analysis_page():
                             pass
 
         st.markdown("---")
-        with st.expander("📊 Benchmark", expanded=True):
+        with st.expander("📊 Benchmark Comparison", expanded=True):
             bench_get = make_api_request(f"/contracts/{contract_id}/benchmark")
             benchmark_payload = bench_get.json() if bench_get and bench_get.status_code == 200 else None
             if st.button("Run Benchmark Analysis", key=f"run_bench_{contract_id}"):
@@ -1077,7 +1086,13 @@ def contract_analysis_page():
                 else:
                     styled_error_banner("Benchmark run failed.")
             if benchmark_payload:
-                st.markdown(f"### {benchmark_payload.get('score', 0)} / 100 — Grade {benchmark_payload.get('grade', 'N/A')} — {benchmark_payload.get('region', 'MENA')} Region Standard")
+                score = int(benchmark_payload.get("score", 0))
+                position = "Aligned with expected standard" if score >= 70 else ("Below expected standard" if score >= 40 else "Significantly Below Expected Standard")
+                st.markdown(f"### Benchmark Alignment Score: {score}/100")
+                st.write(f"**Position:** {position}")
+                st.write(f"**Benchmark Basis:** Rule-based benchmark standard ({benchmark_payload.get('region', 'MENA')})")
+                st.write("**Confidence:** Medium")
+                rows = []
                 for item in benchmark_payload.get("clause_breakdown", []):
                     weight = max(item.get("weight", 1), 1)
                     pct = item.get("earned", 0) / weight
@@ -1085,17 +1100,32 @@ def contract_analysis_page():
                     st.write(f"{color} {item.get('clause_label', item.get('clause'))}: {item.get('earned')}/{item.get('weight')}")
                     st.progress(max(0.0, min(1.0, pct)))
                     st.caption(item.get("note", ""))
+                    rows.append({
+                        "Review Area": item.get("clause_label", item.get("clause")),
+                        "Your Contract": item.get("status", "unknown").replace("_", " ").title(),
+                        "Benchmark Expectation": item.get("note", ""),
+                        "Result": "Aligned" if pct >= 1 else "Below benchmark",
+                        "Severity": "Low" if pct >= 1 else ("High" if pct > 0 else "Critical"),
+                    })
+                if rows:
+                    st.markdown("#### Your Contract vs Benchmark")
+                    st.table(rows)
                 comparisons = benchmark_payload.get("benchmark_comparisons", [])
                 if comparisons:
-                    st.markdown("**Market Comparison (Contract vs Regional Average)**")
-                    for cmp in comparisons:
-                        st.write(f"- **{cmp.get('metric')}**: Contract {cmp.get('contract_value')} vs Average {cmp.get('benchmark_value')} → {cmp.get('insight')}")
-                st.markdown("**Strengths**")
-                st.write("  ".join([f"`✅ {str(x).replace('_', ' ').title()}`" for x in benchmark_payload.get("strengths", [])]) or "No strengths detected yet.")
-                st.markdown("**Gaps**")
-                st.write("  ".join([f"`❌ {str(x).replace('_', ' ').title()}`" for x in benchmark_payload.get("gaps", [])]) or "No major gaps.")
-                st.markdown("**Recommendations**")
-                for rec in benchmark_payload.get("recommendations", []):
+                    st.markdown("#### Market Terms Comparison")
+                    st.table([{
+                        "Term": cmp.get("metric"),
+                        "Your Contract": cmp.get("contract_value", "Not found — comparison unavailable."),
+                        "Benchmark Average": cmp.get("benchmark_value"),
+                        "Benchmark Range": cmp.get("benchmark_range", "Not available"),
+                        "Difference": cmp.get("difference_percent", "N/A"),
+                        "Interpretation": cmp.get("insight"),
+                    } for cmp in comparisons])
+                st.markdown("#### Priority 1 — Must Fix Before Approval")
+                for rec in benchmark_payload.get("recommendations", [])[:3]:
+                    st.write(f"- {rec}")
+                st.markdown("#### Priority 2 — Recommended Enhancements")
+                for rec in benchmark_payload.get("recommendations", [])[3:]:
                     st.write(f"- {rec}")
             else:
                 st.info("No benchmark result yet. Run benchmark analysis.")
@@ -1139,24 +1169,18 @@ def contract_analysis_page():
                         payload = chat_response.json()
                         answer = payload.get("answer", "No answer returned")
                         confidence = payload.get("confidence", 0)
-                        intent = payload.get("intent", "general_contract")
-                        evidence = payload.get("evidence", [])
-                        follow_ups = payload.get("follow_up_questions", [])
+                        evidence = payload.get("evidence_snippets", [])
 
                         lines = [
                             answer,
                             "",
                             f"Confidence: {confidence}",
-                            f"Intent: {str(intent).replace('_', ' ')}",
+                            f"Confidence: {'High' if confidence >= 0.75 else ('Medium' if confidence >= 0.5 else 'Low')}",
                         ]
                         if evidence:
                             lines.append("Evidence:")
                             for ev in evidence[:2]:
-                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
-                        if follow_ups:
-                            lines.append("Suggested next questions:")
-                            for q in follow_ups[:2]:
-                                lines.append(f"- {q}")
+                                lines.append(f'- "{ev}"')
 
                         st.session_state[chat_key].append(
                             {"role": "assistant", "content": "\n".join(lines)}
@@ -1164,11 +1188,19 @@ def contract_analysis_page():
                     else:
                         error_msg = "Failed to get AI answer"
                         if chat_response:
-                            try:
-                                error_data = chat_response.json()
-                                error_msg = error_data.get("detail", error_msg)
-                            except Exception:
-                                pass
+                            status_code = chat_response.status_code
+                            if status_code == 401:
+                                error_msg = "Unauthorized. Please sign in again."
+                            elif status_code == 404:
+                                error_msg = "Contract or chat endpoint not found."
+                            elif status_code == 500:
+                                error_msg = "Backend error while generating answer."
+                            else:
+                                try:
+                                    error_data = chat_response.json()
+                                    error_msg = error_data.get("detail", error_msg)
+                                except Exception:
+                                    pass
                         styled_error_banner(error_msg)
                 st.rerun()
         if st.button("Clear chat history", key=f"clear_chat_{contract_id}"):
