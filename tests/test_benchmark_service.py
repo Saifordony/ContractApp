@@ -36,3 +36,4 @@ def test_partial_credit_for_thin_clause():
 def test_unknown_contract_type_falls_back_to_general_commercial():
     result = run_benchmark({}, "unknown_type")
     assert result["contract_type"] == "general_commercial"
+

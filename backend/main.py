@@ -23,6 +23,7 @@ from backend.gen1 import (
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
+
 from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
 from backend.services.benchmark_service import (
@@ -31,6 +32,7 @@ from backend.services.benchmark_service import (
     run_benchmark_analysis,
 )
 import requests
+
 
 # Load environment variables
 load_dotenv()
@@ -334,10 +336,26 @@ async def analyze_contract_endpoint(
             use_ocr=use_ocr,
             response_language=response_language,
         )
+        pages_processed = 0
+        try:
+            with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+                pages_processed = len(pdf_doc)
+        except Exception:
+            pages_processed = 0
+        extraction_metadata = {
+            "raw_text_length": len((contract_text or "").strip()),
+            "pages_processed": pages_processed,
+            "ocr_used": bool(use_ocr),
+            "extraction_method": "pymupdf+ocr" if use_ocr else "pymupdf",
+            "warnings": [],
+        }
+        if extraction_metadata["raw_text_length"] < 500:
+            extraction_metadata["warnings"].append("The document text extraction appears incomplete. Try OCR mode or upload a clearer PDF.")
         clauses = await analyze_contract(
             contract_text,
             response_language=response_language,
         )
+        structured_clauses = extract_clauses_with_validation(contract_text, extraction_metadata=extraction_metadata)
         clause_explanations = await explain_clauses_for_layman(
             clauses,
             response_language=response_language,
@@ -354,7 +372,13 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"clauses": clauses, "clause_explanations": clause_explanations}
+        return {
+            "clauses": clauses,
+            "clause_explanations": clause_explanations,
+            "structured_clauses": structured_clauses,
+            "extraction_metadata": extraction_metadata,
+            "raw_text_preview": contract_text[:4000],
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -397,7 +421,16 @@ async def analyze_contract_text_endpoint(
             clauses,
             response_language=payload.response_language,
         )
-        structured_clauses = extract_key_clauses(contract_text)
+        extraction_metadata = {
+            "raw_text_length": len(contract_text),
+            "pages_processed": None,
+            "ocr_used": False,
+            "extraction_method": "text_input",
+            "warnings": [],
+        }
+        if extraction_metadata["raw_text_length"] < 500:
+            extraction_metadata["warnings"].append("The document text extraction appears incomplete. Try OCR mode or upload a clearer PDF.")
+        structured_clauses = extract_clauses_with_validation(contract_text, extraction_metadata=extraction_metadata)
 
         await db.logs.insert_one(
             {
@@ -414,6 +447,8 @@ async def analyze_contract_text_endpoint(
             "clauses": clauses,
             "clause_explanations": clause_explanations,
             "structured_clauses": structured_clauses,
+            "extraction_metadata": extraction_metadata,
+            "raw_text_preview": contract_text[:4000],
         }
     except HTTPException:
         raise
@@ -950,7 +985,7 @@ async def chat_with_contract(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(status_code=400, detail="Contract has no content to chat about")
+        raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
 
     if not is_genai_configured():
         raise HTTPException(
@@ -963,11 +998,41 @@ async def chat_with_contract(
             {"contract_id": contract_id},
             sort=[("created_at", -1)],
         )
+        if not latest_analysis:
+            raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
         report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
         chat_context_text = contract["content"]
         if report_context:
             chat_context_text = f"{chat_context_text}\n\n{report_context}"
 
+        q = (request.question or "").strip().lower()
+        if q in {"hi", "hello", "hey"}:
+            return {
+                "answer": "Hi. I can help answer questions about the uploaded contract. Try asking about compensation, termination, leave, risks, or missing clauses.",
+                "evidence_snippets": [],
+                "confidence": "High",
+                "limitations": "Greeting response; ask a contract-specific question for grounded evidence.",
+            }
+        if q in {"vacation", "leave", "annual leave", "vacation leave"}:
+            structured = answer_contract_question(
+                chat_context_text,
+                "Does this contract mention vacation or leave?",
+                response_language=request.response_language,
+            )
+            has_evidence = bool(structured.get("evidence"))
+            return {
+                "answer": (
+                    "Are you asking whether the contract includes vacation or leave? "
+                    + (
+                        "I could not find a vacation or leave clause in the extracted contract text."
+                        if not has_evidence
+                        else "I found leave-related language in the contract."
+                    )
+                ),
+                "evidence_snippets": [item.get("quote", "") for item in structured.get("evidence", [])[:2]],
+                "confidence": "Medium" if has_evidence else "Low",
+                "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            }
         llm_answer = await contract_chat(
             contract_text=chat_context_text,
             question=request.question,
@@ -1002,7 +1067,13 @@ async def chat_with_contract(
             }
         )
 
-        return structured_answer
+        return {
+            "answer": structured_answer.get("answer"),
+            "evidence_snippets": [item.get("quote", "") for item in structured_answer.get("evidence", [])],
+            "confidence": structured_answer.get("confidence", 0.0),
+            "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            "meta": structured_answer,
+        }
     except Exception as e:
         await db.logs.insert_one(
             {

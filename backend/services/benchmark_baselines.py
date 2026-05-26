@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 REGIONAL_BASELINES = {
     "employment": {
         "region": "MENA",
@@ -25,6 +26,7 @@ REGIONAL_BASELINES = {
     "lease": {"region": "MENA", "description": "Regional lease standards", "clauses": {"rent": {"weight": 20, "expected_detail_level": "high", "notes": "Rent amount and schedule."}, "term": {"weight": 12, "expected_detail_level": "medium", "notes": "Lease period and renewal."}, "security_deposit": {"weight": 10, "expected_detail_level": "medium", "notes": "Deposit handling."}, "maintenance": {"weight": 12, "expected_detail_level": "medium", "notes": "Repair obligations."}, "utilities": {"weight": 8, "expected_detail_level": "low", "notes": "Utility responsibilities."}, "termination": {"weight": 12, "expected_detail_level": "medium", "notes": "Early termination."}, "use_restrictions": {"weight": 8, "expected_detail_level": "low", "notes": "Permitted use."}, "governing_law": {"weight": 10, "expected_detail_level": "medium", "notes": "Applicable tenancy law."}, "dispute_resolution": {"weight": 8, "expected_detail_level": "low", "notes": "Dispute handling."}}},
     "general_commercial": {"region": "MENA", "description": "General MENA commercial contracting standards", "clauses": {"scope": {"weight": 16, "expected_detail_level": "high", "notes": "Scope and obligations."}, "payment_terms": {"weight": 14, "expected_detail_level": "high", "notes": "Payment and invoicing."}, "term_and_termination": {"weight": 14, "expected_detail_level": "high", "notes": "Duration and exit rights."}, "confidentiality": {"weight": 10, "expected_detail_level": "medium", "notes": "Confidentiality protections."}, "liability": {"weight": 12, "expected_detail_level": "medium", "notes": "Liability limits."}, "indemnity": {"weight": 10, "expected_detail_level": "medium", "notes": "Indemnity obligations."}, "force_majeure": {"weight": 8, "expected_detail_level": "low", "notes": "Force majeure handling."}, "governing_law": {"weight": 8, "expected_detail_level": "low", "notes": "Choice of law."}, "dispute_resolution": {"weight": 8, "expected_detail_level": "low", "notes": "Dispute mechanism."}}},
 }
+
 
 
 def _grade(score: float) -> str:
@@ -70,7 +72,3 @@ def run_benchmark(extracted_clauses: dict[str, Any], contract_type: str) -> dict
             gaps.append(clause)
             recommendations.append(f"Add {clause} clause. {meta['notes']}")
         score += earned
-        clause_breakdown.append({"clause": clause, "weight": weight, "earned": round(earned, 2), "status": status, "note": note})
-
-    rounded = int(round(score))
-    return {"contract_type": normalized_type, "region": baseline["region"], "score": rounded, "grade": _grade(rounded), "summary": "This contract meets most regional expectations but is missing key clauses typical for MENA agreements." if rounded >= 55 else "This contract is below common regional standards and needs substantial clause improvements.", "clause_breakdown": clause_breakdown, "strengths": strengths[:5], "gaps": gaps[:5], "recommendations": recommendations[:5]}

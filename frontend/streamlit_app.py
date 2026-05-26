@@ -439,28 +439,37 @@ def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
 
 
 def render_contract_evaluation(evaluation: Dict):
+    def pretty_label(text: str) -> str:
+        return str(text).replace("_", " ").replace("missing required", "Missing required").replace("missing recommended", "Missing recommended").title()
+
+    st.markdown("### Contract Readiness Review")
     approved = evaluation.get("approved", False)
     if approved:
-        st.success("Contract Approved")
+        st.success("Ready for Legal Review")
     else:
-        styled_error_banner("Contract Not Approved")
+
 
     contract_type = evaluation.get("contract_type")
     if contract_type:
         confidence = evaluation.get("contract_type_confidence")
-        confidence_text = f" (confidence: {confidence})" if confidence is not None else ""
+        if confidence is None:
+            confidence_text = ""
+        elif confidence >= 0.75:
+            confidence_text = " (High confidence)"
+        elif confidence >= 0.5:
+            confidence_text = " (Medium confidence)"
+        else:
+            confidence_text = " (Low confidence)"
         st.write(f"**Detected Contract Type:** {str(contract_type).replace('_', ' ').title()}{confidence_text}")
 
     score = int(evaluation.get("health_score", 0))
-    st.write(f"**Health Score:** {score}/100")
+    st.write(f"**Readiness Score:** {score}/100")
     st.progress(max(0, min(100, score)) / 100)
 
     risk_level = str(evaluation.get("risk_level", "medium")).lower()
     badge_color = {"low": "#16a34a", "medium": "#f59e0b", "high": "#dc2626"}.get(risk_level, "#475569")
     st.markdown(
-        f"<div style='display:inline-block;background:{badge_color};color:white;padding:0.25rem 0.55rem;border-radius:999px;font-weight:700'>Risk: {risk_level.title()}</div>",
-        unsafe_allow_html=True,
-    )
+
 
     st.write("**Reasoning:**")
     st.write(evaluation.get("reasoning", "No reasoning provided"))
@@ -472,14 +481,14 @@ def render_contract_evaluation(evaluation: Dict):
     changes = evaluation.get("required_changes", [])
 
     if missing:
-        st.markdown("#### Missing Mandatory Clauses")
+        st.markdown("#### Required Clauses Not Found")
         for item in missing:
-            st.write(f"- {item}")
+            st.write(f"- {pretty_label(item)}")
 
     if recommended:
-        st.markdown("#### Missing Recommended Clauses")
+        st.markdown("#### Recommended Protections Not Found")
         for item in recommended:
-            st.write(f"- {item}")
+            st.write(f"- {pretty_label(item)}")
 
     if ambiguous:
         st.markdown("#### Ambiguous Clauses To Fix")
@@ -489,14 +498,32 @@ def render_contract_evaluation(evaluation: Dict):
             st.write(f"- **{clause_name}**: {reason}")
 
     if issues:
-        st.markdown("#### Specific Issues Found")
+        st.markdown("#### Key Review Findings")
         for item in issues:
-            st.write(f"- {item}")
+            st.write(f"- {pretty_label(item)}")
 
     if changes:
-        st.markdown("#### What This Contract Needs")
+        st.markdown("#### Recommended Next Steps")
         for item in changes:
-            st.write(f"- {item}")
+            st.write(f"- {item.replace('_', ' ')}")
+
+
+def is_likely_noisy_clause(text: str) -> bool:
+    """Heuristic detector for non-contract/noisy extracted content."""
+    value = (text or "").lower()
+    noise_markers = [
+        "experience with",
+        "problem-solving skills",
+        "agile development",
+        "responsibilities include",
+        "job requirements",
+        "qualifications",
+    ]
+    return any(marker in value for marker in noise_markers)
+
+
+def pretty_clause_name(name: str) -> str:
+    return str(name).replace("_", " ").replace("/", " / ").title()
 
 
 def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any]) -> bytes:
@@ -940,20 +967,58 @@ def contract_analysis_page():
                         data = response.json()
                         clauses = data["clauses"]
                         clause_explanations = data.get("clause_explanations", {})
+                        structured = data.get("structured_clauses", {})
+                        extraction_metadata = data.get("extraction_metadata", {})
+                        raw_text_preview = data.get("raw_text_preview", "")
 
                         st.success("Contract analyzed successfully!")
                         st.subheader("Extracted Clauses")
-
-                        for clause_type, content in clauses.items():
-                            with st.expander(f"{clause_type}"):
-                                st.write(content)
-                                explanation = clause_explanations.get(clause_type)
-                                if explanation:
-                                    st.markdown("**In simple terms:**")
-                                    st.write(explanation)
+                        clause_results = structured.get("clause_results", [])
+                        for item in clause_results:
+                            label = item.get("clause_name", pretty_clause_name(item.get("clause_key", "clause")))
+                            status = item.get("status", "not_found")
+                            confidence = item.get("confidence", 0.0)
+                            badge = "✅ Found" if status == "found" else "🟡 Partially Found" if status == "partially_found" else "⚠️ Needs Review" if status == "needs_review" else "❌ Not Found"
+                            with st.expander(f"{label} — {badge}"):
+                                st.write(f"**Confidence:** {confidence}")
+                                st.write(f"**Summary:** {item.get('plain_english_summary', '')}")
+                                st.write(f"**Why It Matters:** {item.get('why_it_matters', '')}")
+                                if status == "not_found":
+                                    st.info("No reliable evidence found in the contract.")
+                                else:
+                                    st.write("**Extracted Text:**")
+                                    st.write(item.get("extracted_text", ""))
+                                evidence = item.get("evidence_snippets", [])
+                                if evidence:
+                                    st.write("**Evidence Snippets:**")
+                                    for ev in evidence[:3]:
+                                        st.write(f"- \"{ev.get('quote', '')}\"")
+                                st.write(f"**Recommended Action:** {item.get('recommended_action', '')}")
+                                why = item.get("debug", {})
+                                with st.expander("Why did the AI classify this?"):
+                                    st.write(f"Matched heading: {why.get('matched_heading')}")
+                                    st.write(f"Matched keywords: {', '.join(why.get('matched_keywords', []))}")
+                                    st.write(f"Validation result: {why.get('validation_result')}")
+                                    if evidence:
+                                        st.write(f"Evidence quote: {evidence[0].get('quote', '')}")
+                                if item.get("issues"):
+                                    st.write("**Issues:**")
+                                    for issue in item.get("issues", []):
+                                        st.write(f"- {issue}")
+                        if structured.get("warnings"):
+                            for w in structured.get("warnings", []):
+                                styled_error_banner(w)
+                        with st.expander("Debug: Extracted Contract Text"):
+                            st.write("Extraction metadata:")
+                            st.json(extraction_metadata)
+                            st.write("Detected headings:")
+                            st.write(structured.get("detected_headings", []))
+                            st.write("Extracted chunk count:", len(structured.get("chunks", [])))
+                            st.code(raw_text_preview or "No preview available.")
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
+                        st.session_state.current_structured_clauses = structured
                     elif response is not None:
                         styled_error_banner("Failed to analyze contract")
                         try:
@@ -1026,7 +1091,7 @@ def contract_analysis_page():
                             pass
 
         st.markdown("---")
-        with st.expander("📊 Benchmark", expanded=True):
+
             bench_get = make_api_request(f"/contracts/{contract_id}/benchmark")
             benchmark_payload = bench_get.json() if bench_get and bench_get.status_code == 200 else None
             if st.button("Run Benchmark Analysis", key=f"run_bench_{contract_id}"):
@@ -1036,19 +1101,7 @@ def contract_analysis_page():
                 else:
                     styled_error_banner("Benchmark run failed.")
             if benchmark_payload:
-                st.markdown(f"### {benchmark_payload.get('score', 0)} / 100 — Grade {benchmark_payload.get('grade', 'N/A')} — {benchmark_payload.get('region', 'MENA')} Region Standard")
-                for item in benchmark_payload.get("clause_breakdown", []):
-                    weight = max(item.get("weight", 1), 1)
-                    pct = item.get("earned", 0) / weight
-                    color = "🟢" if pct >= 1 else "🟠" if pct > 0 else "🔴"
-                    st.write(f"{color} {item.get('clause')}: {item.get('earned')}/{item.get('weight')}")
-                    st.progress(max(0.0, min(1.0, pct)))
-                st.markdown("**Strengths**")
-                st.write("  ".join([f"`✅ {x}`" for x in benchmark_payload.get("strengths", [])]) or "No strengths detected yet.")
-                st.markdown("**Gaps**")
-                st.write("  ".join([f"`❌ {x}`" for x in benchmark_payload.get("gaps", [])]) or "No major gaps.")
-                st.markdown("**Recommendations**")
-                for rec in benchmark_payload.get("recommendations", []):
+
                     st.write(f"- {rec}")
             else:
                 st.info("No benchmark result yet. Run benchmark analysis.")
@@ -1092,24 +1145,21 @@ def contract_analysis_page():
                         payload = chat_response.json()
                         answer = payload.get("answer", "No answer returned")
                         confidence = payload.get("confidence", 0)
-                        intent = payload.get("intent", "general_contract")
-                        evidence = payload.get("evidence", [])
-                        follow_ups = payload.get("follow_up_questions", [])
+                        if isinstance(confidence, str):
+                            confidence_label = confidence
+                        else:
+                            confidence_label = "High" if confidence >= 0.75 else ("Medium" if confidence >= 0.5 else "Low")
+                        evidence = payload.get("evidence_snippets", [])
 
                         lines = [
                             answer,
                             "",
-                            f"Confidence: {confidence}",
-                            f"Intent: {str(intent).replace('_', ' ')}",
+                            f"Confidence: {confidence_label}",
                         ]
                         if evidence:
                             lines.append("Evidence:")
                             for ev in evidence[:2]:
-                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
-                        if follow_ups:
-                            lines.append("Suggested next questions:")
-                            for q in follow_ups[:2]:
-                                lines.append(f"- {q}")
+                                lines.append(f'- "{ev}"')
 
                         st.session_state[chat_key].append(
                             {"role": "assistant", "content": "\n".join(lines)}
@@ -1117,11 +1167,7 @@ def contract_analysis_page():
                     else:
                         error_msg = "Failed to get AI answer"
                         if chat_response:
-                            try:
-                                error_data = chat_response.json()
-                                error_msg = error_data.get("detail", error_msg)
-                            except Exception:
-                                pass
+
                         styled_error_banner(error_msg)
                 st.rerun()
         if st.button("Clear chat history", key=f"clear_chat_{contract_id}"):
