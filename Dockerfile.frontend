@@ -1,4 +1,4 @@
-# Backend Dockerfile
+# Frontend Dockerfile
 FROM python:3.11-slim
 
 # Set working directory
@@ -16,12 +16,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY backend/main.py ./backend/main.py
-COPY backend/gen1.py ./backend/gen1.py
+COPY frontend/ ./frontend/
 COPY .env* ./
 
 # Expose port
-EXPOSE 8000
+EXPOSE 8501
 
 # Run the application
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["streamlit", "run", "frontend/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]

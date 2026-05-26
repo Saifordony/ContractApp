@@ -23,12 +23,16 @@ from backend.gen1 import (
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
+
+from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
 from backend.services.benchmark_service import (
     ingest_seed_dataset,
     load_seed_from_repo,
     run_benchmark_analysis,
 )
+import requests
+
 
 # Load environment variables
 load_dotenv()
@@ -37,11 +41,25 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-if not OPENAI_API_KEY:
-    print(
-        "WARNING: OPENAI_API_KEY environment variable is not set. GenAI features will be disabled."
-    )
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+
+
+def is_genai_configured() -> bool:
+    return bool(OLLAMA_BASE_URL.strip()) and bool(OLLAMA_MODEL.strip())
+
+
+def is_ollama_reachable() -> bool:
+    """Check whether Ollama endpoint is reachable."""
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        return response.ok
+    except Exception:
+        return False
+
+
+if not is_genai_configured():
+    print("WARNING: OLLAMA_MODEL/OLLAMA_BASE_URL not configured. GenAI features will be disabled.")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
@@ -132,6 +150,8 @@ async def lifespan(app: FastAPI):
         print("Database connections established")
     except Exception as e:
         print(f"Database connection failed: {e}")
+    if not is_ollama_reachable():
+        print(f"WARNING: Ollama not reachable at {OLLAMA_BASE_URL}. GenAI features will be unavailable.")
 
     yield
 
@@ -303,10 +323,10 @@ async def analyze_contract_endpoint(
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: Ollama not configured",
         )
 
     try:
@@ -316,10 +336,26 @@ async def analyze_contract_endpoint(
             use_ocr=use_ocr,
             response_language=response_language,
         )
+        pages_processed = 0
+        try:
+            with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
+                pages_processed = len(pdf_doc)
+        except Exception:
+            pages_processed = 0
+        extraction_metadata = {
+            "raw_text_length": len((contract_text or "").strip()),
+            "pages_processed": pages_processed,
+            "ocr_used": bool(use_ocr),
+            "extraction_method": "pymupdf+ocr" if use_ocr else "pymupdf",
+            "warnings": [],
+        }
+        if extraction_metadata["raw_text_length"] < 500:
+            extraction_metadata["warnings"].append("The document text extraction appears incomplete. Try OCR mode or upload a clearer PDF.")
         clauses = await analyze_contract(
             contract_text,
             response_language=response_language,
         )
+        structured_clauses = extract_clauses_with_validation(contract_text, extraction_metadata=extraction_metadata)
         clause_explanations = await explain_clauses_for_layman(
             clauses,
             response_language=response_language,
@@ -336,7 +372,13 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"clauses": clauses, "clause_explanations": clause_explanations}
+        return {
+            "clauses": clauses,
+            "clause_explanations": clause_explanations,
+            "structured_clauses": structured_clauses,
+            "extraction_metadata": extraction_metadata,
+            "raw_text_preview": contract_text[:4000],
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -350,7 +392,7 @@ async def analyze_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 
@@ -360,15 +402,15 @@ async def analyze_contract_text_endpoint(
     payload: ContractTextAnalysisRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: Ollama not configured",
         )
 
     contract_text = (payload.contract_text or "").strip()
-    if not contract_text:
-        raise HTTPException(status_code=400, detail="contract_text cannot be empty")
+    if len(contract_text) < 100:
+        raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
 
     try:
         clauses = await analyze_contract(
@@ -379,7 +421,16 @@ async def analyze_contract_text_endpoint(
             clauses,
             response_language=payload.response_language,
         )
-        structured_clauses = extract_key_clauses(contract_text)
+        extraction_metadata = {
+            "raw_text_length": len(contract_text),
+            "pages_processed": None,
+            "ocr_used": False,
+            "extraction_method": "text_input",
+            "warnings": [],
+        }
+        if extraction_metadata["raw_text_length"] < 500:
+            extraction_metadata["warnings"].append("The document text extraction appears incomplete. Try OCR mode or upload a clearer PDF.")
+        structured_clauses = extract_clauses_with_validation(contract_text, extraction_metadata=extraction_metadata)
 
         await db.logs.insert_one(
             {
@@ -396,6 +447,8 @@ async def analyze_contract_text_endpoint(
             "clauses": clauses,
             "clause_explanations": clause_explanations,
             "structured_clauses": structured_clauses,
+            "extraction_metadata": extraction_metadata,
+            "raw_text_preview": contract_text[:4000],
         }
     except HTTPException:
         raise
@@ -410,16 +463,16 @@ async def analyze_contract_text_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
     payload: Dict[str, Any], current_user: dict = Depends(get_current_user)
 ):
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: Ollama not configured",
         )
 
     try:
@@ -464,7 +517,7 @@ async def evaluate_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 # Backend Services endpoints
@@ -494,6 +547,7 @@ async def get_logs(
     user: Optional[str] = Query(None),
     endpoint: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    level: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
@@ -505,6 +559,8 @@ async def get_logs(
         filter_dict["endpoint"] = endpoint
     if status:
         filter_dict["status"] = status
+    if level:
+        filter_dict["level"] = level
 
     skip = (page - 1) * limit
     logs = await db.logs.find(filter_dict).skip(skip).limit(limit).to_list(limit)
@@ -558,7 +614,12 @@ async def get_chat_quality_metrics(current_user: dict = Depends(get_current_user
 
 @app.get("/healthz")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    mongo_ok = "connected"
+    try:
+        await db_client.admin.command("ping")
+    except Exception:
+        mongo_ok = "unreachable"
+    return {"status": "ok", "mongodb": mongo_ok, "ollama": "reachable" if is_ollama_reachable() else "unreachable"}
 
 
 @app.get("/readyz")
@@ -843,10 +904,10 @@ async def init_genai_analysis(
             status_code=400, detail="Contract has no content to analyze"
         )
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: Ollama not configured",
         )
 
     try:
@@ -905,7 +966,7 @@ async def init_genai_analysis(
             "results": results
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 @app.post("/contracts/{contract_id}/chat")
@@ -924,12 +985,12 @@ async def chat_with_contract(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(status_code=400, detail="Contract has no content to chat about")
+        raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
 
-    if not OPENAI_API_KEY:
+    if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: OpenAI API key not configured",
+            detail="GenAI service unavailable: Ollama not configured",
         )
 
     try:
@@ -937,11 +998,41 @@ async def chat_with_contract(
             {"contract_id": contract_id},
             sort=[("created_at", -1)],
         )
+        if not latest_analysis:
+            raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
         report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
         chat_context_text = contract["content"]
         if report_context:
             chat_context_text = f"{chat_context_text}\n\n{report_context}"
 
+        q = (request.question or "").strip().lower()
+        if q in {"hi", "hello", "hey"}:
+            return {
+                "answer": "Hi. I can help answer questions about the uploaded contract. Try asking about compensation, termination, leave, risks, or missing clauses.",
+                "evidence_snippets": [],
+                "confidence": "High",
+                "limitations": "Greeting response; ask a contract-specific question for grounded evidence.",
+            }
+        if q in {"vacation", "leave", "annual leave", "vacation leave"}:
+            structured = answer_contract_question(
+                chat_context_text,
+                "Does this contract mention vacation or leave?",
+                response_language=request.response_language,
+            )
+            has_evidence = bool(structured.get("evidence"))
+            return {
+                "answer": (
+                    "Are you asking whether the contract includes vacation or leave? "
+                    + (
+                        "I could not find a vacation or leave clause in the extracted contract text."
+                        if not has_evidence
+                        else "I found leave-related language in the contract."
+                    )
+                ),
+                "evidence_snippets": [item.get("quote", "") for item in structured.get("evidence", [])[:2]],
+                "confidence": "Medium" if has_evidence else "Low",
+                "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            }
         llm_answer = await contract_chat(
             contract_text=chat_context_text,
             question=request.question,
@@ -976,7 +1067,13 @@ async def chat_with_contract(
             }
         )
 
-        return structured_answer
+        return {
+            "answer": structured_answer.get("answer"),
+            "evidence_snippets": [item.get("quote", "") for item in structured_answer.get("evidence", [])],
+            "confidence": structured_answer.get("confidence", 0.0),
+            "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            "meta": structured_answer,
+        }
     except Exception as e:
         await db.logs.insert_one(
             {
@@ -988,7 +1085,35 @@ async def chat_with_contract(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+
+
+@app.post("/contracts/{contract_id}/benchmark")
+async def run_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
+    object_id = parse_object_id(contract_id, "contract ID")
+    contract = await db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    analysis = await db.contract_analyses.find_one({"contract_id": contract_id}, sort=[("created_at", -1)])
+    clauses = ((analysis or {}).get("results") or {}).get("clauses")
+    if not isinstance(clauses, dict):
+        raise HTTPException(status_code=404, detail="No extracted clauses found. Run analysis first.")
+    contract_type = (((analysis or {}).get("results") or {}).get("health_evaluation") or {}).get("contract_type", "general_commercial")
+    result = run_benchmark(clauses, contract_type)
+    await db.contracts.update_one({"_id": object_id}, {"$set": {"benchmark_result": result, "updated_at": datetime.utcnow()}})
+    return result
+
+
+@app.get("/contracts/{contract_id}/benchmark")
+async def get_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
+    object_id = parse_object_id(contract_id, "contract ID")
+    contract = await db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    result = contract.get("benchmark_result")
+    if not result:
+        raise HTTPException(status_code=404, detail="Benchmark has not been run yet.")
+    return result
 
 
 @app.post("/benchmark/ingest")
