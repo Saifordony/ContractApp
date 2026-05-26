@@ -906,6 +906,7 @@ def contract_analysis_page():
 
         with col1:
             if st.button("Analyze Contract Clauses"):
+                st.session_state.pop("current_clauses", None)
                 with st.spinner("Analyzing contract clauses..."):
                     if pdf_bytes:
                         files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
@@ -927,22 +928,37 @@ def contract_analysis_page():
 
                     if response and response.status_code == 200:
                         data = response.json()
-                        clauses = data["clauses"]
-                        clause_explanations = data.get("clause_explanations", {})
+                        structured = data.get("structured_clauses", {})
+                        clauses = structured.get("clauses", {})
 
                         st.success("Contract analyzed successfully!")
-                        st.subheader("Extracted Clauses")
+                        st.subheader("Validated Clause Extraction")
 
-                        for clause_type, content in clauses.items():
+                        for clause_type, payload in clauses.items():
                             with st.expander(f"{clause_type}"):
-                                st.write(content)
-                                explanation = clause_explanations.get(clause_type)
-                                if explanation:
-                                    st.markdown("**In simple terms:**")
-                                    st.write(explanation)
+                                status = payload.get("status", "unknown") if isinstance(payload, dict) else "unknown"
+                                st.write(f"Status: **{status}**")
+                                st.write(f"Confidence: **{payload.get('confidence', 0.0) if isinstance(payload, dict) else 0.0}**")
+                                if isinstance(payload, dict) and payload.get("extracted_text"):
+                                    st.write(payload.get("extracted_text"))
+                                elif clause_type == "parties":
+                                    st.warning("No reliable Parties clause found.")
+                                evid = payload.get("evidence_snippets", []) if isinstance(payload, dict) else []
+                                if evid:
+                                    st.markdown("**Evidence**")
+                                    for ev in evid:
+                                        st.write(f"- {ev.get('quote','')}")
+                                issues = payload.get("issues", []) if isinstance(payload, dict) else []
+                                if issues:
+                                    st.markdown("**Issues**")
+                                    for issue in issues:
+                                        st.write(f"- {issue}")
+                                if isinstance(payload, dict) and payload.get("recommended_action"):
+                                    st.markdown("**Recommended action**")
+                                    st.write(payload.get("recommended_action"))
 
-                        # Store clauses for evaluation
-                        st.session_state.current_clauses = clauses
+                        # Store validated found clauses only for evaluation
+                        st.session_state.current_clauses = {k:v.get("extracted_text") for k,v in clauses.items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
                     elif response is not None:
                         st.error("Failed to analyze contract")
                         try:

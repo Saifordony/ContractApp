@@ -334,14 +334,8 @@ async def analyze_contract_endpoint(
             use_ocr=use_ocr,
             response_language=response_language,
         )
-        clauses = await analyze_contract(
-            contract_text,
-            response_language=response_language,
-        )
-        clause_explanations = await explain_clauses_for_layman(
-            clauses,
-            response_language=response_language,
-        )
+        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
+        structured_clauses = extract_key_clauses(contract_text)
 
         # Log the action
         await db.logs.insert_one(
@@ -354,7 +348,7 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"clauses": clauses, "clause_explanations": clause_explanations}
+        return {"structured_clauses": structured_clauses}
     except HTTPException:
         raise
     except Exception as e:
@@ -389,14 +383,7 @@ async def analyze_contract_text_endpoint(
         raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
 
     try:
-        clauses = await analyze_contract(
-            contract_text,
-            response_language=payload.response_language,
-        )
-        clause_explanations = await explain_clauses_for_layman(
-            clauses,
-            response_language=payload.response_language,
-        )
+        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
         structured_clauses = extract_key_clauses(contract_text)
 
         await db.logs.insert_one(
@@ -411,8 +398,6 @@ async def analyze_contract_text_endpoint(
             }
         )
         return {
-            "clauses": clauses,
-            "clause_explanations": clause_explanations,
             "structured_clauses": structured_clauses,
         }
     except HTTPException:
@@ -876,19 +861,14 @@ async def init_genai_analysis(
         )
 
     try:
-        clauses = await analyze_contract(
-            contract["content"],
-            response_language=response_language,
-        )
-        clause_explanations = await explain_clauses_for_layman(
-            clauses,
-            response_language=response_language,
-        )
+        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
+        structured_clauses = extract_key_clauses(contract["content"])
+        validated_for_health = {k:v.get("extracted_text") for k,v in structured_clauses.get("clauses",{}).items() if isinstance(v,dict) and v.get("status")=="found" and v.get("extracted_text")}
         llm_evaluation = await evaluate_contract(
-            clauses,
+            validated_for_health or {"summary": contract["content"][:500]},
             response_language=response_language,
         )
-        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
+        rule_evaluation = evaluate_contract_health_from_clauses(validated_for_health or {"summary": contract["content"][:500]}, response_language=response_language)
 
         health_evaluation = {
             **llm_evaluation,
@@ -898,8 +878,8 @@ async def init_genai_analysis(
         }
         results = {
             "contract_type": rule_evaluation.get("contract_type"),
-            "clauses": clauses,
-            "clause_explanations": clause_explanations,
+            "structured_clauses": structured_clauses,
+            "clauses": validated_for_health,
             "health_evaluation": health_evaluation,
             "final_report_summary": {
                 "approved": health_evaluation.get("approved"),
