@@ -971,6 +971,11 @@ async def chat_with_contract(
         )
         if not latest_analysis:
             raise HTTPException(status_code=400, detail="Please analyze the contract before using the assistant.")
+        report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
+        chat_context_text = contract["content"]
+        if report_context:
+            chat_context_text = f"{chat_context_text}\n\n{report_context}"
+
         q = (request.question or "").strip().lower()
         if q in {"hi", "hello", "hey"}:
             return {
@@ -979,11 +984,26 @@ async def chat_with_contract(
                 "confidence": "High",
                 "limitations": "Greeting response; ask a contract-specific question for grounded evidence.",
             }
-        report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
-        chat_context_text = contract["content"]
-        if report_context:
-            chat_context_text = f"{chat_context_text}\n\n{report_context}"
-
+        if q in {"vacation", "leave", "annual leave", "vacation leave"}:
+            structured = answer_contract_question(
+                chat_context_text,
+                "Does this contract mention vacation or leave?",
+                response_language=request.response_language,
+            )
+            has_evidence = bool(structured.get("evidence"))
+            return {
+                "answer": (
+                    "Are you asking whether the contract includes vacation or leave? "
+                    + (
+                        "I could not find a vacation or leave clause in the extracted contract text."
+                        if not has_evidence
+                        else "I found leave-related language in the contract."
+                    )
+                ),
+                "evidence_snippets": [item.get("quote", "") for item in structured.get("evidence", [])[:2]],
+                "confidence": "Medium" if has_evidence else "Low",
+                "limitations": "AI-assisted review only — not legal advice. Responses are grounded in extracted contract text.",
+            }
         llm_answer = await contract_chat(
             contract_text=chat_context_text,
             question=request.question,

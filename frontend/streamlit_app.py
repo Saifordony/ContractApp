@@ -1097,9 +1097,8 @@ def contract_analysis_page():
                 st.write(f"**Confidence:** {context.get('confidence_label', 'Medium')}")
                 rows = []
                 for item in benchmark_payload.get("clause_comparison", []):
-                    weight = max(item.get("weight", 1), 1)
-                    pct = item.get("earned", 0) / weight
-                    color = "🟢" if pct >= 1 else "🟠" if pct > 0 else "🔴"
+                    sev = str(item.get("severity", "")).lower()
+                    color = "🟢" if sev == "low" else "🟠" if sev in {"medium", "high"} else "🔴"
                     st.write(f"{color} {item.get('review_area')}: {item.get('your_contract')}")
                     rows.append(item)
                 if rows:
@@ -1157,12 +1156,16 @@ def contract_analysis_page():
                         payload = chat_response.json()
                         answer = payload.get("answer", "No answer returned")
                         confidence = payload.get("confidence", 0)
+                        if isinstance(confidence, str):
+                            confidence_label = confidence
+                        else:
+                            confidence_label = "High" if confidence >= 0.75 else ("Medium" if confidence >= 0.5 else "Low")
                         evidence = payload.get("evidence_snippets", [])
 
                         lines = [
                             answer,
                             "",
-                            f"Confidence: {'High' if confidence >= 0.75 else ('Medium' if confidence >= 0.5 else 'Low')}",
+                            f"Confidence: {confidence_label}",
                         ]
                         if evidence:
                             lines.append("Evidence:")
