@@ -930,29 +930,39 @@ def contract_analysis_page():
                         data = response.json()
                         structured = data.get("structured_clauses", {})
                         clauses = structured.get("clauses", {})
+                        clause_explanations = data.get("clause_explanations", {})
 
                         st.success("Contract analyzed successfully!")
                         st.subheader("Validated Clause Extraction")
 
                         for clause_type, payload in clauses.items():
-                            with st.expander(f"{clause_type}"):
+                            title = clause_type.replace("_", " ").title()
+                            with st.expander(title):
                                 status = payload.get("status", "unknown") if isinstance(payload, dict) else "unknown"
-                                st.write(f"Status: **{status}**")
-                                st.write(f"Confidence: **{payload.get('confidence', 0.0) if isinstance(payload, dict) else 0.0}**")
+                                st.caption(f"Status: {status} | Confidence: {payload.get('confidence', 0.0) if isinstance(payload, dict) else 0.0}")
+
+                                st.markdown("**📄 Contract Text**")
                                 if isinstance(payload, dict) and payload.get("extracted_text"):
-                                    st.write(payload.get("extracted_text"))
+                                    st.info(str(payload.get("extracted_text")))
                                 elif clause_type == "parties":
                                     st.warning("No reliable Parties clause found.")
-                                evid = payload.get("evidence_snippets", []) if isinstance(payload, dict) else []
-                                if evid:
-                                    st.markdown("**Evidence**")
-                                    for ev in evid:
-                                        st.write(f"- {ev.get('quote','')}")
+                                    st.info("No extracted text for this clause.")
+                                else:
+                                    st.info("No extracted text for this clause.")
+
+                                st.markdown("**💡 In Simple Terms**")
+                                explanation = clause_explanations.get(clause_type)
+                                if explanation:
+                                    st.success(str(explanation))
+                                else:
+                                    st.markdown("*Run analysis to see plain-language explanation.*")
+
                                 issues = payload.get("issues", []) if isinstance(payload, dict) else []
                                 if issues:
                                     st.markdown("**Issues**")
                                     for issue in issues:
                                         st.write(f"- {issue}")
+
                                 if isinstance(payload, dict) and payload.get("recommended_action"):
                                     st.markdown("**Recommended action**")
                                     st.write(payload.get("recommended_action"))

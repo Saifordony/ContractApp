@@ -336,6 +336,10 @@ async def analyze_contract_endpoint(
         )
         print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
         structured_clauses = extract_key_clauses(contract_text)
+        found_clauses = {k:v.get("extracted_text") for k,v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
+        clause_explanations = await explain_clauses_for_layman(found_clauses, response_language=payload.response_language) if found_clauses else {}
+        found_clauses = {k:v.get("extracted_text") for k,v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
+        clause_explanations = await explain_clauses_for_layman(found_clauses, response_language=response_language) if found_clauses else {}
 
         # Log the action
         await db.logs.insert_one(
@@ -348,7 +352,7 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"structured_clauses": structured_clauses}
+        return {"structured_clauses": structured_clauses, "clause_explanations": clause_explanations}
     except HTTPException:
         raise
     except Exception as e:
@@ -399,6 +403,7 @@ async def analyze_contract_text_endpoint(
         )
         return {
             "structured_clauses": structured_clauses,
+            "clause_explanations": clause_explanations,
         }
     except HTTPException:
         raise

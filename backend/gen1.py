@@ -29,220 +29,50 @@ llm_model = ChatOllama(
     temperature=0.2,
 )
 
-analysis_system_prompt = """ 
-    
-You are a professional and intelligent contract analyzer specialized in extracting key clause types and their contents from a contract text.
-
-Your responsibilities include:
-1. Reading contracts carefully.
-2. Identifying and classifying key legal clauses.
-3. Returning a structured JSON object where each key is the clause type and the value is its full content as found in the contract.
-
----
+analysis_system_prompt = """
+You are a professional contract clause extraction engine.
 
 You are given this contract text:
-
 {contract_text}
-
----
 
 Response language requirement: {response_language}.
 
-Your task is to read the contract text carefully, analyze it, and extract the key legal clauses to return a structured JSON object containing the clause types and their contents.
-
-Let’s break your task into steps:
-
----
-
-## Step 1: Reading  
-Carefully read the contract text, make sure you understand every word, heading, and statement.
-
----
-
-## Step 2: Identification & Classification  
-Identify and classify the key legal clauses found in the contract text.
-
-### Focus on these clause types (normalize variations as instructed):
-
-- Definitions Clause: Establishes the meaning of specific terms used throughout the contract to ensure consistent interpretation and avoid misunderstandings.
-
-- Scope of Work Clause: Clearly defines the services, deliverables, or obligations expected from each party, specifying what is included and excluded.
-
-- Payment Terms Clause: Specifies the payment schedule, amounts, methods, and consequences of late or missed payments.
-
-- Confidentiality Clause: Protects sensitive or proprietary information from unauthorized disclosure during and after the contract.
-
-- Termination Clause: Outlines the conditions, procedures, and notice requirements under which the contract may be ended before its natural expiration.
-
-- Force Majeure Clause: Relieves parties from liability or obligation when unforeseeable and uncontrollable events prevent contract performance.
-
-- Dispute Resolution Clause: Specifies how disputes will be handled, including methods such as negotiation, mediation, arbitration, and applicable jurisdiction.
-
-- Governing Law / Choice of Law Clause: Determines which jurisdiction’s laws will govern the interpretation and enforcement of the contract.
-
-- Limitation of Liability Clause: Caps the amount or types of damages a party may be liable for, helping allocate and limit risk.
-
-- Entire Agreement Clause: Confirms that the written contract constitutes the full agreement between the parties, superseding prior agreements or oral understandings.
-
-- Indemnification Clause: Describes each party’s obligation to protect the other from specified claims or damages.
-
-- Notices Clause: Specifies how and where legal notices or formal communications must be sent.
-
-- Amendment Clause: Explains how the contract may be modified or amended.
-
-- Assignment Clause: Defines whether rights or obligations can be assigned or transferred to another party.
-
-- Severability Clause: Ensures the rest of the contract remains enforceable even if one provision is invalid.
-
-- Non-Waiver Clause: States that failure to enforce a provision does not waive the right to enforce it later.
-
----
-
-### IMPORTANT:
-Map clause titles that are similar to the correct type.
-
-Examples of acceptable mappings:
-- Term and Termination = Termination Clause
-- Termination and Renewal = Termination Clause
-- Governing Law = Governing Law / Choice of Law Clause
-- Limitation of Liability and Disclaimer = Limitation of Liability Clause
-- Dispute Resolution and Arbitration = Dispute Resolution Clause
-- Assignment and Subcontracting = Assignment Clause
-
-If the contract contains a clause with a different heading but a similar meaning to the description, map it to the appropriate type.
-
-Do not skip clauses that match or map to these types, even if the title is written slightly different.
-
-In addition to the specific clause types listed above, if the contract contains any other legal clauses not mentioned in the list, you must also extract and include them in the output using their exact title as it appears in the contract.
-
----
-
-## Step 3: Output  
-Present the results of your analysis as a valid JSON object where:
-- Each key is the exact clause type.
-- Each value is the full content of the clause as found in the contract text (keep the same wording, punctuation, and formatting).
-
-The output must be valid JSON with no extra text, notes, or comments — only the JSON object.
-
-Do not fabricate clauses that do not exist.
-
-Do not leave empty keys or placeholders for missing clauses — simply omit them.
-
----
-
-### The JSON format should be like this:
-{{
-  "ClauseType": "Clause content here...",
-  "ClauseType": "Clause content here..."
-}}
-
----
-
-Here is an example to help you :
-
-
-contract text :
-"
-MASTER SERVICE AGREEMENT
-
-This Master Service Agreement (“Agreement”) is entered into by and between Omega Corp (“Contractor”) and Delta Ltd (“Client”) effective as of July 1, 2025.
-
-1. Definitions  
-For the purposes of this Agreement, “Confidential Information” includes but is not limited to trade secrets, business plans, and customer data.
-
-2. Scope and Deliverables  
-Contractor shall provide IT consulting, cloud migration, and cybersecurity services pursuant to statements of work (“SOWs”) issued under this Agreement.
-
-3. Payment and Invoicing  
-Client shall remit payment net 45 days upon receipt of invoice. Invoices are issued monthly and must be disputed within 15 days or deemed accepted.
-
-4. Change Orders  
-Any modifications to the scope require written change orders signed by authorized representatives of both parties.
-
-5. Confidentiality and Data Protection  
-Parties agree to maintain strict confidentiality, comply with applicable data protection laws (including GDPR), and implement reasonable security measures.
-
-6. Intellectual Property Rights  
-Contractor retains all pre-existing IP. Deliverables created under this Agreement shall be owned by Client upon full payment, subject to Contractor’s moral rights.
-
-7. Representations and Warranties  
-Contractor represents it has all necessary licenses and will perform work in accordance with industry standards. Client warrants that data provided is accurate and lawful.
-
-8. Limitation of Liability and Disclaimer  
-Neither party shall be liable for incidental, punitive, or consequential damages. Liability caps at the total fees paid in the prior 12 months.
-
-9. Indemnification and Defense  
-Each party agrees to indemnify, defend, and hold harmless the other against third-party claims arising from negligence or breach of this Agreement.
-
-10. Force Majeure  
-Events beyond reasonable control, including acts of government, pandemics, or cyberattacks, excuse non-performance for the duration of the event plus reasonable recovery time.
-
-11. Term, Termination, and Renewal  
-Initial term of two years, automatically renewing for one-year periods unless either party gives 90 days prior written notice. Termination for material breach requires 60 days cure.
-
-12. Transition Assistance  
-Upon termination, Contractor will provide up to 30 days transition support at standard rates.
-
-13. Dispute Resolution and Arbitration  
-Disputes not resolved by good faith negotiation shall proceed to mediation, then final and binding arbitration under ICC rules in New York.
-
-14. Governing Law and Jurisdiction  
-Agreement governed by New York law. Jurisdiction exclusive to courts in New York County.
-
-15. Assignment and Subcontracting  
-Client may assign rights with consent. Contractor may subcontract duties but remains liable for subcontractor performance.
-
-16. Compliance with Laws  
-Both parties shall comply with all applicable laws, regulations, and export controls.
-
-17. Notices  
-All communications must be in writing and sent by registered mail or courier.
-
-18. Entire Agreement and Amendments  
-This Agreement supersedes all prior agreements and may be amended only by written document signed by authorized representatives.
-
-19. Severability  
-If any provision is invalid, remaining provisions shall remain enforceable.
-
-20. Non-Waiver  
-Failure to exercise any right shall not constitute waiver.
-
-21. Counterparts  
-This Agreement may be executed in counterparts, each considered an original.
-
-22. Further Assurances  
-Parties agree to take further actions as necessary to effectuate the Agreement.
-
-IN WITNESS WHEREOF, the parties have caused this Agreement to be duly executed.
-
-
-Output:
-{{
-  "Definitions": "For the purposes of this Agreement, “Confidential Information” includes but is not limited to trade secrets, business plans, and customer data.",
-  "Scope and Deliverables": "Contractor shall provide IT consulting, cloud migration, and cybersecurity services pursuant to statements of work (“SOWs”) issued under this Agreement.",
-  "Payment and Invoicing": "Client shall remit payment net 45 days upon receipt of invoice. Invoices are issued monthly and must be disputed within 15 days or deemed accepted.",
-  "Change Orders": "Any modifications to the scope require written change orders signed by authorized representatives of both parties.",
-  "Confidentiality and Data Protection": "Parties agree to maintain strict confidentiality, comply with applicable data protection laws (including GDPR), and implement reasonable security measures.",
-  "Intellectual Property Rights": "Contractor retains all pre-existing IP. Deliverables created under this Agreement shall be owned by Client upon full payment, subject to Contractor’s moral rights.",
-  "Representations and Warranties": "Contractor represents it has all necessary licenses and will perform work in accordance with industry standards. Client warrants that data provided is accurate and lawful.",
-  "Limitation of Liability and Disclaimer": "Neither party shall be liable for incidental, punitive, or consequential damages. Liability caps at the total fees paid in the prior 12 months.",
-  "Indemnification and Defense": "Each party agrees to indemnify, defend, and hold harmless the other against third-party claims arising from negligence or breach of this Agreement.",
-  "Force Majeure": "Events beyond reasonable control, including acts of government, pandemics, or cyberattacks, excuse non-performance for the duration of the event plus reasonable recovery time.",
-  "Term, Termination, and Renewal": "Initial term of two years, automatically renewing for one-year periods unless either party gives 90 days prior written notice. Termination for material breach requires 60 days cure.",
-  "Transition Assistance": "Upon termination, Contractor will provide up to 30 days transition support at standard rates.",
-  "Dispute Resolution and Arbitration": "Disputes not resolved by good faith negotiation shall proceed to mediation, then final and binding arbitration under ICC rules in New York.",
-  "Governing Law and Jurisdiction": "Agreement governed by New York law. Jurisdiction exclusive to courts in New York County.",
-  "Assignment and Subcontracting": "Client may assign rights with consent. Contractor may subcontract duties but remains liable for subcontractor performance.",
-  "Compliance with Laws": "Both parties shall comply with all applicable laws, regulations, and export controls.",
-  "Notices": "All communications must be in writing and sent by registered mail or courier.",
-  "Entire Agreement and Amendments": "This Agreement supersedes all prior agreements and may be amended only by written document signed by authorized representatives.",
-  "Severability": "If any provision is invalid, remaining provisions shall remain enforceable.",
-  "Non-Waiver": "Failure to exercise any right shall not constitute waiver.",
-  "Counterparts": "This Agreement may be executed in counterparts, each considered an original.",
-  "Further Assurances": "Parties agree to take further actions as necessary to effectuate the Agreement."
-}}
-
- """
+Extract clauses into a flat JSON object using ONLY these clause keys and meanings:
+- parties: Names, roles, and identifying information of the parties entering the agreement.
+- effective_date: The date the contract starts or becomes legally binding.
+- scope_of_work: The specific services, deliverables, or job responsibilities defined in the contract.
+- compensation: Salary, fees, payment amounts, currency, frequency, and any bonuses or commissions.
+- working_hours: Hours per day/week, shift arrangements, overtime policy.
+- leave_policy: Annual leave, sick leave, public holidays, and unpaid leave entitlements.
+- probation: Trial/probation period duration and conditions.
+- termination: Notice periods, grounds for termination, resignation process, end-of-service entitlements.
+- confidentiality: Non-disclosure obligations, definition of confidential information, duration.
+- non_compete: Restrictions on working for competitors after the contract ends.
+- intellectual_property: Ownership of work produced during the engagement.
+- governing_law: Which country or jurisdiction's law governs this contract.
+- dispute_resolution: How disputes are handled — courts, arbitration, mediation.
+- force_majeure: Unforeseeable events that excuse a party from performance.
+- limitation_of_liability: Caps on damages or excluded liability types.
+- indemnification: Who bears costs if a third party makes a claim.
+- payment_terms: Invoice schedules, due dates, late payment penalties.
+- renewal: Automatic or manual renewal terms and conditions.
+- miscellaneous: Any other important clauses not covered above.
+
+For each clause key, include ONLY content that directly and specifically belongs
+to that clause type. Do not put content from one clause type into another.
+If a clause is not present in the contract, omit that key entirely from the JSON.
+Do not invent or summarize — extract the actual contract text verbatim for each clause.
+
+Output requirements:
+- Return a valid JSON object only.
+- Every key must be one of the clause names above.
+- Every value must be the exact extracted contract text for that clause.
+- No extra keys, no nested objects, no arrays.
+
+Before returning the JSON, review each key-value pair and ask yourself:
+does this content actually describe what this clause type means?
+If the answer is no, move the content to the correct clause key or remove it.
+"""
 
 prompt1 = PromptTemplate.from_template(analysis_system_prompt)
 
@@ -435,20 +265,24 @@ prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
 layman_clause_explainer_prompt = PromptTemplate.from_template(
     """
-You are a legal explainer for non-lawyers.
-
-Given contract clauses in JSON, return JSON with the EXACT SAME KEYS where each value is:
-- a short, plain-English (or requested language) explanation of what that clause means in practice
-- max 2 short sentences
-- avoid legal jargon as much as possible
-- do not invent details beyond the clause text
+You are explaining contract clauses to someone who has never read a contract before.
 
 Response language requirement: {response_language}.
 
-Clauses JSON:
+Given this input JSON of clauses:
 {clauses_json}
 
-Return valid JSON only.
+Return valid JSON only, with the EXACT SAME KEYS.
+Each value must follow this exact format:
+[CLAUSE_NAME]
+What it means: One or two sentences in simple everyday language explaining what this clause means for the person signing.
+What to watch out for: One sentence flagging anything that could be risky or unfair for the signing party (or say "Nothing unusual here." if it looks standard).
+
+Strict rules:
+- Do NOT repeat or copy the original clause text in your explanation.
+- Do NOT use legal jargon. Write as if explaining to a friend over a phone call.
+- Your explanation must be shorter than the original clause text.
+- If a clause is short and standard (for example governing law), keep the explanation to one sentence maximum.
 """
 )
 
