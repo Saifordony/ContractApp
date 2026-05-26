@@ -971,38 +971,53 @@ def contract_analysis_page():
                         clauses = data["clauses"]
                         clause_explanations = data.get("clause_explanations", {})
                         structured = data.get("structured_clauses", {})
+                        extraction_metadata = data.get("extraction_metadata", {})
+                        raw_text_preview = data.get("raw_text_preview", "")
 
                         st.success("Contract analyzed successfully!")
                         st.subheader("Extracted Clauses")
-                        clause_cards = []
-                        for clause_type, content in clauses.items():
-                            text = str(content or "").strip()
-                            length = len(text)
-                            noisy = is_likely_noisy_clause(text)
-                            status = "⚠️ Needs Review" if noisy else ("✅ Strong" if length > 120 else "🟡 Brief")
-                            source_preview = text[:220] + ("..." if len(text) > 220 else "")
-                            clause_cards.append((clause_type, text, status, source_preview, noisy))
-
-                        noisy_count = sum(1 for _, _, _, _, noisy in clause_cards if noisy)
-                        if noisy_count:
-                            styled_error_banner(f"{noisy_count} extracted clause(s) look non-contractual and were flagged for manual review.")
-
-                        for clause_type, content, status, source_preview, noisy in clause_cards:
-                            display_name = pretty_clause_name(clause_type)
-                            with st.expander(f"{display_name} — {status}"):
-                                st.caption("Extracted Text")
-                                st.write(content)
-                                st.caption("Source snippet")
-                                st.code(source_preview)
-                                if noisy:
-                                    st.caption("This may contain CV/job-description text and should be reviewed.")
-                                explanation = clause_explanations.get(clause_type)
-                                if explanation:
-                                    st.markdown("**In simple terms:**")
-                                    st.write(explanation)
+                        clause_results = structured.get("clause_results", [])
+                        for item in clause_results:
+                            label = item.get("clause_name", pretty_clause_name(item.get("clause_key", "clause")))
+                            status = item.get("status", "not_found")
+                            confidence = item.get("confidence", 0.0)
+                            badge = "✅ Found" if status == "found" else "🟡 Partially Found" if status == "partially_found" else "⚠️ Needs Review" if status == "needs_review" else "❌ Not Found"
+                            with st.expander(f"{label} — {badge}"):
+                                st.write(f"**Confidence:** {confidence}")
+                                st.write(f"**Summary:** {item.get('plain_english_summary', '')}")
+                                st.write(f"**Why It Matters:** {item.get('why_it_matters', '')}")
+                                if status == "not_found":
+                                    st.info("No reliable evidence found in the contract.")
+                                else:
+                                    st.write("**Extracted Text:**")
+                                    st.write(item.get("extracted_text", ""))
+                                evidence = item.get("evidence_snippets", [])
+                                if evidence:
+                                    st.write("**Evidence Snippets:**")
+                                    for ev in evidence[:3]:
+                                        st.write(f"- \"{ev.get('quote', '')}\"")
+                                st.write(f"**Recommended Action:** {item.get('recommended_action', '')}")
+                                why = item.get("debug", {})
+                                with st.expander("Why did the AI classify this?"):
+                                    st.write(f"Matched heading: {why.get('matched_heading')}")
+                                    st.write(f"Matched keywords: {', '.join(why.get('matched_keywords', []))}")
+                                    st.write(f"Validation result: {why.get('validation_result')}")
+                                    if evidence:
+                                        st.write(f"Evidence quote: {evidence[0].get('quote', '')}")
+                                if item.get("issues"):
+                                    st.write("**Issues:**")
+                                    for issue in item.get("issues", []):
+                                        st.write(f"- {issue}")
                         if structured.get("warnings"):
                             for w in structured.get("warnings", []):
                                 styled_error_banner(w)
+                        with st.expander("Debug: Extracted Contract Text"):
+                            st.write("Extraction metadata:")
+                            st.json(extraction_metadata)
+                            st.write("Detected headings:")
+                            st.write(structured.get("detected_headings", []))
+                            st.write("Extracted chunk count:", len(structured.get("chunks", [])))
+                            st.code(raw_text_preview or "No preview available.")
 
                         # Store clauses for evaluation
                         st.session_state.current_clauses = clauses
