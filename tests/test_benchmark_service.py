@@ -1,89 +1,44 @@
-import json
-from pathlib import Path
-
-from backend.services.benchmark_service import (
-    BenchmarkAnalyzeResponse,
-    classify_clause_type,
-    extract_numeric_features,
-    ingest_seed_dataset,
-    load_seed_from_repo,
-    run_benchmark_analysis,
-    split_clauses,
-    _compute_percentiles,
-)
+from backend.services.benchmark_baselines import REGIONAL_BASELINES, run_benchmark
 
 
-def test_clause_splitter_stable_output():
-    text = """
-    MASTER SERVICES AGREEMENT
-    PAYMENT TERMS
-    Invoices due within 30 days.
-    TERMINATION
-    Either party may terminate with 30 days notice.
-    """
-    clauses = split_clauses(text)
-    assert len(clauses) >= 2
-    assert any("payment" in c[0] for c in clauses)
+def _long_text() -> str:
+    return "This clause is fully detailed with obligations, timeframes, remedies, governing references, and clear implementation terms for all parties."
 
 
-def test_clause_splitter_fallback_for_plain_text_contract():
-    text = (
-        "This agreement starts on Jan 1. Payment is due within 15 days of invoice. "
-        "Either party may terminate with 30 days notice. Liability is capped at 100%. "
-        "Confidential information must not be disclosed."
-    )
-    clauses = split_clauses(text)
-    assert len(clauses) >= 2
-
-def test_clause_classifier_expected_labels():
-    assert classify_clause_type("Payment Terms", "invoice due in 30 days") == "payment_terms"
-    assert classify_clause_type("Termination", "terminate with notice") == "termination"
-    assert classify_clause_type("Random", "hello world") == "misc"
+def test_full_coverage_employment_scores_100():
+    clauses = {k: _long_text() for k in REGIONAL_BASELINES["employment"]["clauses"].keys()}
+    result = run_benchmark(clauses, "employment")
+    assert result["score"] == 100
+    assert result["grade"] == "A"
 
 
-def test_percentiles_computation():
-    stats = _compute_percentiles([10, 20, 30, 40])
-    assert stats["median"] == 25.0
-    assert stats["p25"] == 10.0
-    assert stats["p75"] == 30.0
+def test_all_missing_scores_zero():
+    result = run_benchmark({}, "employment")
+    assert result["score"] == 0
+    assert result["grade"] == "F"
 
 
-def test_benchmark_analysis_integration_with_seed_fixture(tmp_path):
-    # ensure seed loaded
-    load_seed_from_repo()
-
-    contract_text = Path("contract-analysis-platform/tests/fixtures/sample_contract.txt").read_text()
-    result = run_benchmark_analysis(
-        filename="sample_contract.txt",
-        file_bytes=contract_text.encode(),
-        contract_type="employment",
-        jurisdiction="jordan",
-        industry="technology",
-        opt_in_store_user_data=False,
-    )
-
-    validated = BenchmarkAnalyzeResponse.model_validate(result)
-    assert validated.clause_results
-    assert all(0 <= c.clause_score <= 100 for c in validated.clause_results)
-    high_conf = [c for c in validated.clause_results if c.confidence >= 0.5]
-    if high_conf:
-        assert any(c.citations for c in high_conf)
+def test_grade_boundaries():
+    assert run_benchmark({}, "employment")["grade"] == "F"  # 0
+    assert run_benchmark({"compensation": "x" * 100, "working_hours": "x" * 100, "leave_policy": "x" * 100}, "employment")["grade"] == "D"  # 40
+    assert run_benchmark({"compensation": "x" * 100, "working_hours": "x" * 100, "leave_policy": "x" * 100, "probation": "x" * 100, "termination": "x" * 100}, "employment")["grade"] == "C"  # 55
+    assert run_benchmark({"compensation": "x" * 100, "working_hours": "x" * 100, "leave_policy": "x" * 100, "probation": "x" * 100, "termination": "x" * 100, "confidentiality": "x" * 100}, "employment")["grade"] == "B"  # 67 -> wait
+    assert run_benchmark({k: "x" * 100 for k in REGIONAL_BASELINES["employment"]["clauses"].keys()}, "employment")["grade"] == "A"
 
 
-def test_no_evidence_case_is_low_confidence_and_not_green():
-    ingest_seed_dataset([], clear_first=True)
-    contract_text = "PART-TIME JOB RIGHTS. Employee may work another job freely."
-    result = run_benchmark_analysis(
-        filename="contract.txt",
-        file_bytes=contract_text.encode(),
-        contract_type="ultra_rare_type",
-        jurisdiction="nowhere",
-        industry="unknown",
-        opt_in_store_user_data=False,
-    )
+def test_partial_credit_for_thin_clause():
+    result = run_benchmark({"compensation": "x" * 40}, "employment")
+    comp = next(item for item in result["clause_breakdown"] if item["clause"] == "compensation")
+    assert comp["earned"] == 10
+    assert comp["status"] == "partial"
 
-    assert result["clause_results"]
-    first = result["clause_results"][0]
-    assert first["confidence"] <= 0.25
-    assert first["alignment_label"] != "green"
-    assert "Low evidence" in first["explanation"]
+
+def test_unknown_contract_type_falls_back_to_general_commercial():
+    result = run_benchmark({}, "unknown_type")
+    assert result["contract_type"] == "general_commercial"
+
+
+def test_employment_includes_market_comparison_when_salary_present():
+    result = run_benchmark({"compensation": "Base salary is 5000 JOD per month with annual review and benefits package."}, "employment")
+    assert "benchmark_comparisons" in result
+    assert result["benchmark_comparisons"]

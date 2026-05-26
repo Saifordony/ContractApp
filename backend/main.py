@@ -23,12 +23,14 @@ from backend.gen1 import (
 )
 from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
+from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
 from backend.services.benchmark_service import (
     ingest_seed_dataset,
     load_seed_from_repo,
     run_benchmark_analysis,
 )
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +45,15 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
 
 def is_genai_configured() -> bool:
     return bool(OLLAMA_BASE_URL.strip()) and bool(OLLAMA_MODEL.strip())
+
+
+def is_ollama_reachable() -> bool:
+    """Check whether Ollama endpoint is reachable."""
+    try:
+        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
+        return response.ok
+    except Exception:
+        return False
 
 
 if not is_genai_configured():
@@ -137,6 +148,8 @@ async def lifespan(app: FastAPI):
         print("Database connections established")
     except Exception as e:
         print(f"Database connection failed: {e}")
+    if not is_ollama_reachable():
+        print(f"WARNING: Ollama not reachable at {OLLAMA_BASE_URL}. GenAI features will be unavailable.")
 
     yield
 
@@ -325,6 +338,7 @@ async def analyze_contract_endpoint(
             contract_text,
             response_language=response_language,
         )
+        structured_clauses = extract_key_clauses(contract_text)
         clause_explanations = await explain_clauses_for_layman(
             clauses,
             response_language=response_language,
@@ -341,7 +355,11 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"clauses": clauses, "clause_explanations": clause_explanations}
+        return {
+            "clauses": clauses,
+            "clause_explanations": clause_explanations,
+            "structured_clauses": structured_clauses,
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -355,7 +373,7 @@ async def analyze_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 
@@ -372,8 +390,8 @@ async def analyze_contract_text_endpoint(
         )
 
     contract_text = (payload.contract_text or "").strip()
-    if not contract_text:
-        raise HTTPException(status_code=400, detail="contract_text cannot be empty")
+    if len(contract_text) < 100:
+        raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
 
     try:
         clauses = await analyze_contract(
@@ -415,7 +433,7 @@ async def analyze_contract_text_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
@@ -469,7 +487,7 @@ async def evaluate_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 # Backend Services endpoints
@@ -499,6 +517,7 @@ async def get_logs(
     user: Optional[str] = Query(None),
     endpoint: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    level: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1, le=100),
     current_user: dict = Depends(get_current_user),
@@ -510,6 +529,8 @@ async def get_logs(
         filter_dict["endpoint"] = endpoint
     if status:
         filter_dict["status"] = status
+    if level:
+        filter_dict["level"] = level
 
     skip = (page - 1) * limit
     logs = await db.logs.find(filter_dict).skip(skip).limit(limit).to_list(limit)
@@ -563,7 +584,12 @@ async def get_chat_quality_metrics(current_user: dict = Depends(get_current_user
 
 @app.get("/healthz")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    mongo_ok = "connected"
+    try:
+        await db_client.admin.command("ping")
+    except Exception:
+        mongo_ok = "unreachable"
+    return {"status": "ok", "mongodb": mongo_ok, "ollama": "reachable" if is_ollama_reachable() else "unreachable"}
 
 
 @app.get("/readyz")
@@ -910,7 +936,7 @@ async def init_genai_analysis(
             "results": results
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
 
 
 @app.post("/contracts/{contract_id}/chat")
@@ -993,7 +1019,35 @@ async def chat_with_contract(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+
+
+@app.post("/contracts/{contract_id}/benchmark")
+async def run_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
+    object_id = parse_object_id(contract_id, "contract ID")
+    contract = await db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    analysis = await db.contract_analyses.find_one({"contract_id": contract_id}, sort=[("created_at", -1)])
+    clauses = ((analysis or {}).get("results") or {}).get("clauses")
+    if not isinstance(clauses, dict):
+        raise HTTPException(status_code=404, detail="No extracted clauses found. Run analysis first.")
+    contract_type = (((analysis or {}).get("results") or {}).get("health_evaluation") or {}).get("contract_type", "general_commercial")
+    result = run_benchmark(clauses, contract_type)
+    await db.contracts.update_one({"_id": object_id}, {"$set": {"benchmark_result": result, "updated_at": datetime.utcnow()}})
+    return result
+
+
+@app.get("/contracts/{contract_id}/benchmark")
+async def get_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
+    object_id = parse_object_id(contract_id, "contract ID")
+    contract = await db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    result = contract.get("benchmark_result")
+    if not result:
+        raise HTTPException(status_code=404, detail="Benchmark has not been run yet.")
+    return result
 
 
 @app.post("/benchmark/ingest")
