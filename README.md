@@ -50,3 +50,17 @@ streamlit run frontend/streamlit_app.py --server.port 8501
 ## Notes
 - If backend runs in Docker and Ollama runs on host, use `OLLAMA_BASE_URL=http://host.docker.internal:11434`.
 - GenAI endpoints return `503` if Ollama is not configured/reachable.
+
+
+## Docker startup conflict fix (Windows/Mac/Linux)
+If you see an error like:
+`Conflict. The container name "/contract_analysis_mongo" is already in use`
+
+Use one of these options:
+- Start with a unique project name (recommended):
+  - `docker compose -p contractapp_dev up --build`
+- Or clean previous containers first:
+  - `docker compose down --remove-orphans`
+  - `docker rm -f contract_analysis_mongo contract_analysis_backend contract_analysis_frontend`
+
+This repository's compose file intentionally avoids hardcoded `container_name` values so multiple copies can run side-by-side.

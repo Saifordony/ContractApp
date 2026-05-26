@@ -4,7 +4,6 @@ services:
   # MongoDB Database
   mongodb:
     image: mongo:7.0
-    container_name: contract_analysis_mongo
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
@@ -21,7 +20,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: contract_analysis_backend
     restart: unless-stopped
     depends_on:
       - mongodb
@@ -47,7 +45,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    container_name: contract_analysis_frontend
     restart: unless-stopped
     depends_on:
       - backend
