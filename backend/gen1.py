@@ -1,4 +1,5 @@
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from typing import Dict, Any
 from io import BytesIO
@@ -17,17 +18,30 @@ from backend.services.contract_intelligence import answer_contract_question
 executor = ThreadPoolExecutor()
 
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 if not OLLAMA_MODEL:
     print("WARNING: OLLAMA_MODEL is not set. GenAI features will be disabled.")
 
-llm_model = ChatOllama(
-    model=OLLAMA_MODEL,
-    base_url=OLLAMA_BASE_URL,
-    temperature=0.2,
-)
+if AI_PROVIDER == "ollama":
+    ollama_native_base = OLLAMA_BASE_URL.replace("/v1", "").rstrip("/")
+    llm_model = ChatOllama(
+        model=OLLAMA_MODEL,
+        base_url=ollama_native_base,
+        temperature=0.2,
+    )
+else:
+    llm_model = ChatOpenAI(
+        model=OPENAI_MODEL,
+        base_url=OPENAI_BASE_URL or None,
+        api_key=OPENAI_API_KEY,
+        temperature=0.2,
+    )
 
 analysis_system_prompt = """
 You are a professional contract clause extraction engine.

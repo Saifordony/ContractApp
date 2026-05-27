@@ -39,25 +39,81 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+
+def selected_base_url() -> str:
+    return OLLAMA_BASE_URL if AI_PROVIDER == "ollama" else OPENAI_BASE_URL
+
+
+def selected_model() -> str:
+    return OLLAMA_MODEL if AI_PROVIDER == "ollama" else OPENAI_MODEL
+
+
+def llm_health_check() -> Dict[str, Any]:
+    base_url = selected_base_url()
+    model = selected_model()
+    models_url = f"{base_url}/models" if base_url else ""
+    status = {
+        "ai_provider": AI_PROVIDER,
+        "base_url": base_url,
+        "model": model,
+        "reachable": False,
+        "available_models": [],
+        "error": None,
+    }
+    if not base_url or not model:
+        status["error"] = "Missing base URL or model configuration"
+        return status
+    try:
+        headers: Dict[str, str] = {}
+        if AI_PROVIDER == "ollama":
+            headers["Authorization"] = f"Bearer {OPENAI_API_KEY or 'ollama'}"
+        elif OPENAI_API_KEY:
+            headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
+        response = requests.get(models_url, headers=headers, timeout=5)
+        if not response.ok:
+            status["error"] = f"HTTP {response.status_code} from {models_url}"
+            return status
+        payload = response.json()
+        status["available_models"] = [
+            item.get("id")
+            for item in payload.get("data", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        status["reachable"] = True
+        return status
+    except Exception as exc:
+        status["error"] = str(exc)
+        return status
 
 
 def is_genai_configured() -> bool:
-    return bool(OLLAMA_BASE_URL.strip()) and bool(OLLAMA_MODEL.strip())
+    if AI_PROVIDER == "ollama":
+        return bool(OLLAMA_BASE_URL.strip()) and bool(OLLAMA_MODEL.strip())
+    return bool(OPENAI_API_KEY.strip()) and bool(OPENAI_MODEL.strip())
 
 
-def is_ollama_reachable() -> bool:
-    """Check whether Ollama endpoint is reachable."""
-    try:
-        response = requests.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3)
-        return response.ok
-    except Exception:
-        return False
+def llm_unreachable_message() -> str:
+    if AI_PROVIDER == "ollama":
+        return (
+            f"LLM provider is set to Ollama, but the backend container cannot reach "
+            f"{OLLAMA_BASE_URL}/models. Confirm Ollama is running on Windows and "
+            f"OLLAMA_BASE_URL is set correctly."
+        )
+    return (
+        "LLM provider is set to OpenAI, but the backend cannot reach the configured "
+        "OpenAI endpoint. Confirm OPENAI_API_KEY and OPENAI_BASE_URL settings."
+    )
 
 
 if not is_genai_configured():
-    print("WARNING: OLLAMA_MODEL/OLLAMA_BASE_URL not configured. GenAI features will be disabled.")
+    print("WARNING: LLM configuration incomplete. GenAI features will be disabled.")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
@@ -148,8 +204,17 @@ async def lifespan(app: FastAPI):
         print("Database connections established")
     except Exception as e:
         print(f"Database connection failed: {e}")
-    if not is_ollama_reachable():
-        print(f"WARNING: Ollama not reachable at {OLLAMA_BASE_URL}. GenAI features will be unavailable.")
+    print(
+        f"LLM startup config: provider={AI_PROVIDER}, "
+        f"model={selected_model()}, base_url={selected_base_url()}"
+    )
+    llm_status = llm_health_check()
+    print(
+        "LLM startup health: "
+        f"reachable={llm_status.get('reachable')}, "
+        f"model_count={len(llm_status.get('available_models', []))}, "
+        f"error={llm_status.get('error')}"
+    )
 
     yield
 
@@ -366,7 +431,7 @@ async def analyze_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+        raise HTTPException(status_code=503, detail=llm_unreachable_message())
 
 
 
@@ -418,7 +483,7 @@ async def analyze_contract_text_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+        raise HTTPException(status_code=503, detail=llm_unreachable_message())
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
@@ -472,7 +537,7 @@ async def evaluate_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+        raise HTTPException(status_code=503, detail=llm_unreachable_message())
 
 
 # Backend Services endpoints
@@ -574,7 +639,12 @@ async def health_check():
         await db_client.admin.command("ping")
     except Exception:
         mongo_ok = "unreachable"
-    return {"status": "ok", "mongodb": mongo_ok, "ollama": "reachable" if is_ollama_reachable() else "unreachable"}
+    return {"status": "ok", "mongodb": mongo_ok, "llm": llm_health_check()}
+
+
+@app.get("/llm/health")
+async def llm_health():
+    return llm_health_check()
 
 
 @app.get("/readyz")
@@ -916,7 +986,7 @@ async def init_genai_analysis(
             "results": results
         }
     except Exception as e:
-        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+        raise HTTPException(status_code=503, detail=llm_unreachable_message())
 
 
 @app.post("/contracts/{contract_id}/chat")
@@ -999,7 +1069,7 @@ async def chat_with_contract(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail="LLM service unavailable. Ensure Ollama is running and reachable.")
+        raise HTTPException(status_code=503, detail=llm_unreachable_message())
 
 
 @app.post("/contracts/{contract_id}/benchmark")
