@@ -30,7 +30,15 @@ from backend.services.benchmark_service import (
     load_seed_from_repo,
     run_benchmark_analysis,
 )
-import requests
+from backend.llm_config import (
+    AI_PROVIDER,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    is_genai_configured,
+    llm_health_check,
+    selected_base_url,
+    selected_model,
+)
 
 # Load environment variables
 load_dotenv()
@@ -39,79 +47,6 @@ load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-
-
-def selected_base_url() -> str:
-    return OLLAMA_BASE_URL if AI_PROVIDER == "ollama" else OPENAI_BASE_URL
-
-
-def selected_model() -> str:
-    return OLLAMA_MODEL if AI_PROVIDER == "ollama" else OPENAI_MODEL
-
-
-def llm_health_check() -> Dict[str, Any]:
-    base_url = selected_base_url()
-    model = selected_model()
-    models_url = f"{base_url}/models" if base_url else ""
-    status = {
-        "ai_provider": AI_PROVIDER,
-        "base_url": base_url,
-        "model": model,
-        "reachable": False,
-        "available_models": [],
-        "error": None,
-    }
-    if not base_url or not model:
-        status["error"] = "Missing base URL or model configuration"
-        return status
-    try:
-        headers: Dict[str, str] = {}
-        if AI_PROVIDER == "ollama":
-            headers["Authorization"] = f"Bearer {OPENAI_API_KEY or 'ollama'}"
-        elif OPENAI_API_KEY:
-            headers["Authorization"] = f"Bearer {OPENAI_API_KEY}"
-        response = requests.get(models_url, headers=headers, timeout=5)
-        if not response.ok:
-            status["error"] = f"HTTP {response.status_code} from {models_url}"
-            return status
-        payload = response.json()
-        status["available_models"] = [
-            item.get("id")
-            for item in payload.get("data", [])
-            if isinstance(item, dict) and item.get("id")
-        ]
-        status["reachable"] = True
-        return status
-    except Exception as exc:
-        status["error"] = str(exc)
-        return status
-
-
-def is_genai_configured() -> bool:
-    if AI_PROVIDER == "ollama":
-        return bool(OLLAMA_BASE_URL.strip()) and bool(OLLAMA_MODEL.strip())
-    return bool(OPENAI_API_KEY.strip()) and bool(OPENAI_MODEL.strip())
-
-
-def llm_unreachable_message() -> str:
-    if AI_PROVIDER == "ollama":
-        return (
-            f"LLM provider is set to Ollama, but the backend container cannot reach "
-            f"{OLLAMA_BASE_URL}/models. Confirm Ollama is running on Windows and "
-            f"OLLAMA_BASE_URL is set correctly."
-        )
-    return (
-        "LLM provider is set to OpenAI, but the backend cannot reach the configured "
-        "OpenAI endpoint. Confirm OPENAI_API_KEY and OPENAI_BASE_URL settings."
-    )
-
-
 if not is_genai_configured():
     print("WARNING: LLM configuration incomplete. GenAI features will be disabled.")
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
@@ -285,6 +220,30 @@ def ensure_benchmark_enabled() -> None:
         raise HTTPException(status_code=404, detail="Benchmark feature is disabled")
 
 
+def log_analysis_llm_context(route: str) -> Dict[str, Any]:
+    health = llm_health_check()
+    print(
+        f"{route}: USING VALIDATED CLAUSE EXTRACTION PIPELINE; "
+        f"AI_PROVIDER={AI_PROVIDER}; "
+        f"OLLAMA_BASE_URL={OLLAMA_BASE_URL}; "
+        f"OLLAMA_MODEL={OLLAMA_MODEL}; "
+        f"llm_reachable={health.get('reachable')}"
+    )
+    return health
+
+
+def format_analysis_error(exc: Exception, health: Optional[Dict[str, Any]] = None) -> str:
+    if health and health.get("reachable") is False:
+        return (
+            f"LLM provider is set to {health.get('ai_provider')}, but the backend cannot reach "
+            f"{health.get('base_url')}/models. Error: {health.get('error')}"
+        )
+    message = str(exc) or exc.__class__.__name__
+    if "json" in message.lower() or "parse" in message.lower():
+        return f"Model response parsing failed: {message}"
+    return f"Analysis failed: {exc.__class__.__name__}: {message}"
+
+
 # Authentication utilities
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -392,6 +351,7 @@ async def analyze_contract_endpoint(
             detail="GenAI service unavailable: Ollama not configured",
         )
 
+    analysis_health = None
     try:
         pdf_bytes = await file.read()
         contract_text = extract_text_from_pdf_bytes(
@@ -399,12 +359,18 @@ async def analyze_contract_endpoint(
             use_ocr=use_ocr,
             response_language=response_language,
         )
-        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
+        analysis_health = log_analysis_llm_context("/genai/analyze-contract")
         structured_clauses = extract_key_clauses(contract_text)
-        found_clauses = {k:v.get("extracted_text") for k,v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
-        clause_explanations = await explain_clauses_for_layman(found_clauses, response_language=payload.response_language) if found_clauses else {}
-        found_clauses = {k:v.get("extracted_text") for k,v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
-        clause_explanations = await explain_clauses_for_layman(found_clauses, response_language=response_language) if found_clauses else {}
+        found_clauses = {
+            k: v.get("extracted_text")
+            for k, v in structured_clauses.get("clauses", {}).items()
+            if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")
+        }
+        clause_explanations = (
+            await explain_clauses_for_layman(found_clauses, response_language=response_language)
+            if found_clauses
+            else {}
+        )
 
         # Log the action
         await db.logs.insert_one(
@@ -431,7 +397,8 @@ async def analyze_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail=llm_unreachable_message())
+        print(f"/genai/analyze-contract failed: {e}")
+        raise HTTPException(status_code=500, detail=format_analysis_error(e, analysis_health))
 
 
 
@@ -451,9 +418,20 @@ async def analyze_contract_text_endpoint(
     if len(contract_text) < 100:
         raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
 
+    analysis_health = None
     try:
-        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
+        analysis_health = log_analysis_llm_context("/genai/analyze-contract-text")
         structured_clauses = extract_key_clauses(contract_text)
+        found_clauses = {
+            k: v.get("extracted_text")
+            for k, v in structured_clauses.get("clauses", {}).items()
+            if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")
+        }
+        clause_explanations = (
+            await explain_clauses_for_layman(found_clauses, response_language=payload.response_language)
+            if found_clauses
+            else {}
+        )
 
         await db.logs.insert_one(
             {
@@ -483,7 +461,8 @@ async def analyze_contract_text_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail=llm_unreachable_message())
+        print(f"/genai/analyze-contract-text failed: {e}")
+        raise HTTPException(status_code=500, detail=format_analysis_error(e, analysis_health))
 
 @app.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
@@ -537,7 +516,7 @@ async def evaluate_contract_endpoint(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail=llm_unreachable_message())
+        raise HTTPException(status_code=500, detail=format_analysis_error(e, llm_health_check()))
 
 
 # Backend Services endpoints
@@ -986,7 +965,7 @@ async def init_genai_analysis(
             "results": results
         }
     except Exception as e:
-        raise HTTPException(status_code=503, detail=llm_unreachable_message())
+        raise HTTPException(status_code=500, detail=format_analysis_error(e, llm_health_check()))
 
 
 @app.post("/contracts/{contract_id}/chat")
@@ -1069,7 +1048,7 @@ async def chat_with_contract(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=503, detail=llm_unreachable_message())
+        raise HTTPException(status_code=500, detail=format_analysis_error(e, llm_health_check()))
 
 
 @app.post("/contracts/{contract_id}/benchmark")

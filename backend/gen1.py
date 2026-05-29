@@ -1,4 +1,3 @@
-from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from typing import Dict, Any
@@ -8,40 +7,35 @@ import asyncio
 import ast
 import re
 from concurrent.futures import ThreadPoolExecutor
-import os
 import fitz  # PyMuPDF
 from PIL import Image
 import pytesseract
 
 from backend.services.contract_intelligence import answer_contract_question
+from backend.llm_config import (
+    AI_PROVIDER,
+    OPENAI_BASE_URL,
+    OPENAI_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    selected_api_key,
+)
 
 executor = ThreadPoolExecutor()
 
 
-AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+model_name = OLLAMA_MODEL if AI_PROVIDER == "ollama" else OPENAI_MODEL
+base_url = OLLAMA_BASE_URL if AI_PROVIDER == "ollama" else (OPENAI_BASE_URL or None)
 
-if not OLLAMA_MODEL:
-    print("WARNING: OLLAMA_MODEL is not set. GenAI features will be disabled.")
+if not model_name:
+    print("WARNING: selected LLM model is not set. GenAI features may be disabled.")
 
-if AI_PROVIDER == "ollama":
-    ollama_native_base = OLLAMA_BASE_URL.replace("/v1", "").rstrip("/")
-    llm_model = ChatOllama(
-        model=OLLAMA_MODEL,
-        base_url=ollama_native_base,
-        temperature=0.2,
-    )
-else:
-    llm_model = ChatOpenAI(
-        model=OPENAI_MODEL,
-        base_url=OPENAI_BASE_URL or None,
-        api_key=OPENAI_API_KEY,
-        temperature=0.2,
-    )
+llm_model = ChatOpenAI(
+    model=model_name,
+    base_url=base_url,
+    api_key=selected_api_key(),
+    temperature=0.2,
+)
 
 analysis_system_prompt = """
 You are a professional contract clause extraction engine.

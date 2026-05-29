@@ -1,6 +1,6 @@
 import pytest
 
-pytest.importorskip("langchain_ollama")
+pytest.importorskip("langchain_openai")
 
 import backend.gen1 as gen1
 
