@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
 import os
+import sys
 import html
 import io
 import json
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
 import pandas as pd
@@ -11,6 +13,12 @@ import fitz  # PyMuPDF
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
+
+# Streamlit executes this file from /app/frontend in Docker, so make the
+# repository root importable before loading the frontend package modules.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from frontend.components.alerts import empty_state, friendly_error
 from frontend.components.cards import metric_card, section_card
