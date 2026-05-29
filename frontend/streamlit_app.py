@@ -1448,88 +1448,147 @@ def clients_contracts_page():
 
 
 
-def benchmark_page():
-    """Benchmark Comparison page (additive feature)."""
-    st.title("Benchmark Comparison")
-    st.caption("Clause-level benchmarking only. Not legal advice.")
 
-    with st.form("benchmark_form"):
-        uploaded_file = st.file_uploader("Upload contract (.pdf, .docx, .txt)", type=["pdf", "docx", "txt"])
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            contract_type = st.selectbox(
-                "Contract Type",
-                ["employment", "msa", "vendor", "nda", "other"],
-            )
-        with col2:
-            jurisdiction = st.selectbox(
-                "Jurisdiction",
-                ["jordan", "usa", "uk", "eu", "other"],
-            )
-        with col3:
-            industry = st.text_input("Industry (optional)")
+def render_benchmark_comparison(payload: Dict[str, Any]):
+    context = payload.get("benchmark_context", {})
+    overall = payload.get("overall_position", {})
+    st.subheader(payload.get("benchmark_title", "Benchmark Comparison"))
 
-        opt_in = st.checkbox("Opt-in: store embedding + minimal metadata for future benchmarks", value=False)
-        submitted = st.form_submit_button("Run Benchmark")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Benchmark Alignment Score", f"{overall.get('alignment_score', 'N/A')}/100")
+    with c2:
+        st.metric("Position", overall.get("position_label", "N/A"))
+    with c3:
+        st.metric("Confidence", context.get("confidence_label", "N/A"))
 
-    if submitted:
-        if not uploaded_file:
-            st.error("Please upload a contract file.")
-            return
+    st.markdown("### Benchmark Context")
+    st.info(
+        f"**Contract type:** {context.get('contract_type', 'N/A')}\n\n"
+        f"**Region / jurisdiction:** {context.get('region', 'N/A')} / {context.get('jurisdiction', 'Not clearly detected')}\n\n"
+        f"**Benchmark basis:** {context.get('benchmark_basis', 'Rule-based benchmark standard')}\n\n"
+        f"**Sample size:** {context.get('sample_size') or 'Not applicable'}"
+    )
+    for limitation in context.get("limitations", []):
+        st.caption(f"Limitation: {limitation}")
 
-        with st.spinner("Running clause-level benchmark analysis..."):
-            files = {"file": (uploaded_file.name, uploaded_file.read(), "application/octet-stream")}
-            data = {
-                "contract_type": contract_type,
-                "jurisdiction": jurisdiction,
-                "industry": industry,
-                "opt_in_store_user_data": opt_in,
+    st.markdown("### Overall Position")
+    st.success(overall.get("executive_summary", "No executive summary available."))
+    reasons = overall.get("top_reasons_for_score", [])
+    if reasons:
+        st.markdown("**Top reasons for score**")
+        for reason in reasons[:3]:
+            st.write(f"- {reason}")
+
+    st.markdown("### Your Contract vs Benchmark")
+    rows = payload.get("your_contract_vs_benchmark", [])
+    if rows:
+        display_rows = [
+            {
+                "Review Area": r.get("review_area"),
+                "Your Contract": r.get("your_contract"),
+                "Benchmark Expectation": r.get("benchmark_expectation"),
+                "Result": r.get("result"),
+                "Severity": r.get("severity"),
+                "Recommendation": r.get("recommendation"),
             }
-            response = make_api_request("/benchmark/analyze", "POST", data=data, files=files)
+            for r in rows
+        ]
+        st.dataframe(display_rows, use_container_width=True, hide_index=True)
+        with st.expander("Evidence behind benchmark rows"):
+            for r in rows:
+                evidence = r.get("evidence", [])
+                if evidence:
+                    st.markdown(f"**{r.get('review_area')}**")
+                    for ev in evidence:
+                        st.info(ev.get("quote", ""))
+                        if ev.get("location"):
+                            st.caption(ev.get("location"))
+    else:
+        st.warning("No benchmark rows were generated.")
 
-        if response and response.status_code == 200:
-            payload = response.json()
-            clause_results = payload.get("clause_results", [])
-            st.metric("Overall Alignment Score", payload.get("overall_score", "N/A"))
-            st.caption(f"Compared {len(clause_results)} clause(s) from this contract.")
+    st.markdown("### Market Terms Comparison")
+    terms = payload.get("market_terms_comparison", [])
+    if terms:
+        st.dataframe([
+            {
+                "Term": t.get("term"),
+                "Your Contract": t.get("your_contract"),
+                "Benchmark Expectation / Average": t.get("benchmark_average"),
+                "Benchmark Range": t.get("benchmark_range"),
+                "Difference": t.get("difference"),
+                "Interpretation": t.get("interpretation"),
+                "Limitations": t.get("limitations"),
+            }
+            for t in terms
+        ], use_container_width=True, hide_index=True)
 
-            fallbacks = payload.get("meta", {}).get("fallbacks_used", [])
-            if fallbacks:
-                st.info(f"Fallbacks used: {', '.join(fallbacks)}")
-
-            if not clause_results:
-                st.warning("No clauses detected from this file.")
-
-            for clause in clause_results:
-                label = clause.get("alignment_label", "yellow")
-                badge = "🟢" if label == "green" else "🟡" if label == "yellow" else "🔴"
-                score = clause.get("clause_score", "N/A")
-                conf = clause.get("confidence", 0)
-                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} — {score}/100"):
-                    st.write(f"Confidence: {conf}")
-                    st.write(f"Peers (N): {clause.get('benchmark_stats', {}).get('N', 0)}")
-
-                    patterns = clause.get('typical_patterns', [])
-                    if patterns:
-                        st.write("Typical patterns:")
-                        for pattern in patterns[:2]:
-                            st.write(f"- {pattern}")
-
-                    if clause.get("suggested_revision"):
-                        st.write(f"Suggested revision: {clause['suggested_revision']}")
-
-                    citations = clause.get("citations", [])
-                    if citations:
-                        st.write("References:")
-                        for cit in citations[:2]:
-                            st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("### Strengths")
+        strengths = payload.get("strengths", [])
+        if strengths:
+            for item in strengths:
+                st.write(f"✅ {item}")
         else:
-            st.error("Benchmark analysis failed")
+            st.caption("No major benchmark strengths identified yet.")
+    with col_b:
+        st.markdown("### Gaps")
+        gaps = payload.get("gaps", [])
+        if gaps:
+            for item in gaps[:8]:
+                st.write(f"⚠️ {item}")
+        else:
+            st.caption("No major benchmark gaps identified.")
+
+    st.markdown("### Priority Recommendations")
+    priorities = payload.get("priority_recommendations", {})
+    st.markdown("**Priority 1 — Must Fix Before Approval**")
+    for item in priorities.get("priority_1_must_fix", []) or ["No critical benchmark fixes identified."]:
+        st.write(f"- {item}")
+    st.markdown("**Priority 2 — Recommended Enhancements**")
+    for item in priorities.get("priority_2_recommended", []) or ["No recommended benchmark enhancements identified."]:
+        st.write(f"- {item}")
+
+    st.markdown("### AI Commentary")
+    st.write(payload.get("ai_commentary", "AI commentary unavailable."))
+
+    with st.expander("Debug: Raw Benchmark Response"):
+        st.json(payload)
+
+def benchmark_page():
+    """Professional Benchmark Comparison page."""
+    st.title("Benchmark Comparison")
+    st.caption("Compare an analyzed contract against rule-based benchmark standards. AI-assisted review only — not legal advice.")
+
+    contracts = get_contracts_list()
+    if not contracts:
+        st.info("No contracts found. Upload and analyze a contract first.")
+        return
+
+    options = {f"{c.get('title', 'Untitled Contract')} ({c.get('_id') or c.get('id')})": c.get('_id') or c.get('id') for c in contracts}
+    selected_label = st.selectbox("Select analyzed contract", list(options.keys()))
+    selected_contract_id = options[selected_label]
+
+    if st.button("Run Benchmark Comparison", type="primary"):
+        with st.spinner("Building benchmark comparison from validated clauses..."):
+            response = make_api_request(f"/benchmark/compare/{selected_contract_id}", "POST")
+        if response and response.status_code == 200:
+            st.session_state[f"benchmark_comparison_{selected_contract_id}"] = response.json()
+            st.success("Benchmark comparison completed.")
+        else:
+            st.error("Benchmark comparison failed")
             if response:
                 try:
                     st.error(response.json().get("detail", "Unknown error"))
                 except Exception:
                     pass
+
+    payload = st.session_state.get(f"benchmark_comparison_{selected_contract_id}")
+    if payload:
+        render_benchmark_comparison(payload)
+    else:
+        st.info("Run Benchmark Comparison to see context, score, contract-vs-benchmark rows, market terms, gaps, and recommendations.")
 
 
 def admin_dashboard():

@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from bson import ObjectId
 from bson.errors import InvalidId
 import os
+import json
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from backend.gen1 import (
@@ -19,6 +20,7 @@ from backend.gen1 import (
     extract_text_from_pdf_bytes,
     analyze_and_evaluate_contract,
     explain_clauses_for_layman,
+    llm_model,
 )
 from backend.services.contract_intelligence import extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
@@ -30,6 +32,7 @@ from backend.services.benchmark_service import (
     run_benchmark_analysis,
 )
 from backend.services.contract_chat_service import build_contract_chat_response
+from backend.services.benchmark_comparison_service import build_benchmark_comparison
 from backend.llm_config import (
     AI_PROVIDER,
     OLLAMA_BASE_URL,
@@ -239,6 +242,20 @@ def log_analysis_llm_context(route: str) -> Dict[str, Any]:
     )
     return health
 
+
+
+
+def generate_benchmark_ai_commentary(payload: Dict[str, Any]) -> str:
+    prompt = (
+        "You are a contract benchmark analyst. Compare the uploaded contract only against "
+        "the provided benchmark rules, baseline data, and extracted evidence. Do not invent "
+        "averages, market values, or legal requirements. If no benchmark dataset exists, clearly "
+        "state that the comparison is rule-based. Return a short, professional, user-friendly "
+        "interpretation in plain English.\n\nBenchmark payload:\n"
+        + json.dumps(payload, ensure_ascii=False)[:12000]
+    )
+    result = llm_model.invoke(prompt).content
+    return str(result).strip()
 
 def format_analysis_error(exc: Exception, health: Optional[Dict[str, Any]] = None) -> str:
     if health and health.get("reachable") is False:
@@ -1059,6 +1076,53 @@ async def chat_with_contract(
         raise HTTPException(status_code=500, detail="The contract assistant hit an unexpected error. Please try again.")
 
 
+
+
+@app.post("/benchmark/compare/{contract_id}")
+async def compare_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
+    ensure_benchmark_enabled()
+    object_id = parse_object_id(contract_id, "contract ID")
+    contract = await db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    analysis = await db.contract_analyses.find_one({"contract_id": contract_id}, sort=[("created_at", -1)])
+    results = (analysis or {}).get("results", {})
+    structured = results.get("structured_clauses", {}) if isinstance(results, dict) else {}
+    validated_clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
+    if not validated_clauses:
+        raise HTTPException(status_code=400, detail="Please analyze the contract before running benchmark comparison.")
+
+    contract_type = (results.get("contract_type") if isinstance(results, dict) else None) or (results.get("health_evaluation", {}) if isinstance(results, dict) else {}).get("contract_type")
+    readiness_review = results.get("health_evaluation", {}) if isinstance(results, dict) else {}
+    ai_commentary_fn = generate_benchmark_ai_commentary if llm_health_check().get("reachable") else None
+    try:
+        benchmark = build_benchmark_comparison(
+            contract_id=contract_id,
+            validated_clauses=validated_clauses,
+            raw_contract_text=contract.get("content", ""),
+            contract_type=contract_type,
+            jurisdiction=readiness_review.get("jurisdiction") if isinstance(readiness_review, dict) else None,
+            readiness_review=readiness_review,
+            ai_commentary_fn=ai_commentary_fn,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    await db.contracts.update_one(
+        {"_id": object_id},
+        {"$set": {"benchmark_result": benchmark, "updated_at": datetime.utcnow()}},
+    )
+    await db.logs.insert_one({
+        "user": current_user["username"],
+        "endpoint": f"/benchmark/compare/{contract_id}",
+        "action": "benchmark_compare",
+        "timestamp": datetime.utcnow(),
+        "status": "success",
+        "alignment_score": benchmark.get("overall_position", {}).get("alignment_score"),
+    })
+    return benchmark
+
 @app.post("/contracts/{contract_id}/benchmark")
 async def run_contract_benchmark(contract_id: str, current_user: dict = Depends(get_current_user)):
     object_id = parse_object_id(contract_id, "contract ID")
@@ -1070,7 +1134,20 @@ async def run_contract_benchmark(contract_id: str, current_user: dict = Depends(
     if not isinstance(clauses, dict):
         raise HTTPException(status_code=404, detail="No extracted clauses found. Run analysis first.")
     contract_type = (((analysis or {}).get("results") or {}).get("health_evaluation") or {}).get("contract_type", "general_commercial")
-    result = run_benchmark(clauses, contract_type)
+    analysis_results = (analysis or {}).get("results", {})
+    structured = analysis_results.get("structured_clauses", {}) if isinstance(analysis_results, dict) else {}
+    validated_clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
+    if validated_clauses:
+        result = build_benchmark_comparison(
+            contract_id=contract_id,
+            validated_clauses=validated_clauses,
+            raw_contract_text=contract.get("content", ""),
+            contract_type=contract_type,
+            readiness_review=analysis_results.get("health_evaluation", {}),
+            ai_commentary_fn=generate_benchmark_ai_commentary if llm_health_check().get("reachable") else None,
+        )
+    else:
+        result = run_benchmark(clauses, contract_type)
     await db.contracts.update_one({"_id": object_id}, {"$set": {"benchmark_result": result, "updated_at": datetime.utcnow()}})
     return result
 

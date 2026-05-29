@@ -284,11 +284,19 @@ def build_contract_chat_response(
         response = _empty_response("\n".join(lines), "grounded_answer", "Medium")
     elif intent == "benchmark_question":
         if benchmark_result:
-            score = benchmark_result.get("overall_score") or benchmark_result.get("score")
-            answer = f"I found benchmark information for this contract."
+            overall = benchmark_result.get("overall_position", {}) if isinstance(benchmark_result, dict) else {}
+            score = overall.get("alignment_score") or benchmark_result.get("overall_score") or benchmark_result.get("score")
+            position = overall.get("position_label")
+            gaps = benchmark_result.get("gaps", []) if isinstance(benchmark_result, dict) else []
+            answer = "I found benchmark information for this contract."
             if score is not None:
-                answer += f" The benchmark score is {score}."
-            answer += " Review benchmark gaps before signing."
+                answer += f" Benchmark Alignment Score: {score}/100."
+            if position:
+                answer += f" Position: {position}."
+            if gaps:
+                answer += " Biggest benchmark gaps: " + "; ".join(str(g) for g in gaps[:3])
+            else:
+                answer += " Review benchmark gaps before signing."
             response = _empty_response(answer, "grounded_answer", "Medium", ["What should I fix first?", "Why is the score low?", "What benchmark gaps matter most?"])
         else:
             response = _empty_response(
