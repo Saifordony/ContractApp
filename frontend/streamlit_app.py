@@ -594,10 +594,19 @@ def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any
 
 def render_chat_history(chat_messages):
     if not chat_messages:
+        st.markdown(
+            """
+            <div class='chat-shell'>
+                <h3 style='margin:0 0 .25rem 0;'>Ask anything about this contract</h3>
+                <p style='margin:0;color:#5a6578;'>I can help you find clauses, explain risks, summarize obligations, and identify missing terms.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
-    for msg in chat_messages:
+    for idx, msg in enumerate(chat_messages):
         role = msg.get("role", "assistant")
         role_class = "user" if role == "user" else "assistant"
         escaped_text = html.escape(msg.get("content", ""))
@@ -610,6 +619,14 @@ def render_chat_history(chat_messages):
             """,
             unsafe_allow_html=True,
         )
+        evidence = msg.get("evidence_snippets") or []
+        if role != "user" and evidence:
+            with st.expander(f"Evidence for assistant response {idx + 1}"):
+                for ev in evidence:
+                    st.markdown(f"**{ev.get('clause_name', 'Evidence')}** — {ev.get('relevance', 'Relevant evidence')}")
+                    st.info(ev.get("quote", ""))
+                    if ev.get("location"):
+                        st.caption(ev.get("location"))
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 
@@ -1042,76 +1059,111 @@ def contract_analysis_page():
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
-        st.caption("Contract assistant only — not legal advice. Answers are grounded in detected contract evidence.")
-        chat_key = f"contract_chat_history_{contract_id}"
-        if chat_key not in st.session_state:
-            st.session_state[chat_key] = []
+        st.caption("AI-assisted review only — not legal advice. Answers stay grounded in this contract.")
 
-        render_chat_history(st.session_state[chat_key])
+        st.session_state.selected_contract_id = contract_id
+        if "chat_messages_by_contract" not in st.session_state:
+            st.session_state.chat_messages_by_contract = {}
+        if "last_chat_error" not in st.session_state:
+            st.session_state.last_chat_error = None
 
-        with st.form(f"contract_chat_form_{contract_id}", clear_on_submit=True):
-            q_col, send_col = st.columns([8, 1])
-            with q_col:
-                user_question = st.text_input(
-                    "Ask a question about this contract...",
-                    placeholder="Ask a question about this contract...",
-                    label_visibility="collapsed",
-                    key=f"chat_input_{contract_id}",
-                )
-            with send_col:
-                send_clicked = st.form_submit_button("Send")
+        messages_by_contract = st.session_state.chat_messages_by_contract
+        if contract_id not in messages_by_contract:
+            messages_by_contract[contract_id] = []
+        chat_messages = messages_by_contract[contract_id]
 
-        if send_clicked:
-            if not user_question or not user_question.strip():
-                st.warning("Please enter a question first.")
-            else:
-                question = user_question.strip()
-                st.session_state[chat_key].append({"role": "user", "content": question})
+        chip_prompts = [
+            "What clauses are missing?",
+            "What are the main risks?",
+            "Does this contract mention vacation?",
+            "Explain the termination clause.",
+            "What should I review before signing?",
+        ]
+        st.markdown("**Try asking:**")
+        chip_cols = st.columns(len(chip_prompts))
+        selected_prompt = None
+        for idx, prompt in enumerate(chip_prompts):
+            with chip_cols[idx]:
+                if st.button(prompt, key=f"chat_chip_{contract_id}_{idx}"):
+                    selected_prompt = prompt
 
-                with st.spinner("Thinking..."):
-                    chat_response = make_api_request(
-                        f"/contracts/{contract_id}/chat",
-                        "POST",
-                        {"question": question, "response_language": response_language},
-                    )
-
-                    if chat_response and chat_response.status_code == 200:
-                        payload = chat_response.json()
-                        answer = payload.get("answer", "No answer returned")
-                        confidence = payload.get("confidence", 0)
-                        intent = payload.get("intent", "general_contract")
-                        evidence = payload.get("evidence", [])
-                        follow_ups = payload.get("follow_up_questions", [])
-
-                        lines = [
-                            answer,
-                            "",
-                            f"Confidence: {confidence}",
-                            f"Intent: {str(intent).replace('_', ' ')}",
-                        ]
-                        if evidence:
-                            lines.append("Evidence:")
-                            for ev in evidence[:2]:
-                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
-                        if follow_ups:
-                            lines.append("Suggested next questions:")
-                            for q in follow_ups[:2]:
-                                lines.append(f"- {q}")
-
-                        st.session_state[chat_key].append(
-                            {"role": "assistant", "content": "\n".join(lines)}
-                        )
-                    else:
-                        error_msg = "Failed to get AI answer"
-                        if chat_response:
-                            try:
-                                error_data = chat_response.json()
-                                error_msg = error_data.get("detail", error_msg)
-                            except Exception:
-                                pass
-                        st.error(error_msg)
+        c1, c2 = st.columns([1, 5])
+        with c1:
+            if st.button("Clear chat", key=f"clear_chat_{contract_id}"):
+                st.session_state.chat_messages_by_contract[contract_id] = []
+                st.session_state.last_chat_error = None
                 st.rerun()
-        
+
+        render_chat_history(chat_messages)
+
+        if chat_messages and chat_messages[-1].get("role") == "assistant":
+            followups = chat_messages[-1].get("suggested_followups", [])[:3]
+            if followups:
+                st.markdown("**Suggested follow-ups:**")
+                follow_cols = st.columns(len(followups))
+                for idx, followup in enumerate(followups):
+                    with follow_cols[idx]:
+                        if st.button(followup, key=f"chat_followup_{contract_id}_{len(chat_messages)}_{idx}"):
+                            selected_prompt = followup
+
+        typed_prompt = st.chat_input(
+            "Ask about clauses, risks, obligations, missing terms, or signing concerns...",
+            key=f"current_chat_input_{contract_id}",
+        )
+        question = selected_prompt or typed_prompt
+
+        if question and question.strip():
+            question = question.strip()
+            chat_messages.append({"role": "user", "content": question})
+            st.session_state.last_chat_error = None
+
+            with st.spinner("Reviewing the contract evidence..."):
+                chat_response = make_api_request(
+                    f"/contracts/{contract_id}/chat",
+                    "POST",
+                    {
+                        "message": question,
+                        "chat_history": chat_messages[-10:],
+                        "response_language": response_language,
+                    },
+                )
+
+            if chat_response and chat_response.status_code == 200:
+                payload = chat_response.json()
+                chat_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": payload.get("answer", "I could not generate an answer."),
+                        "answer_type": payload.get("answer_type"),
+                        "confidence": payload.get("confidence"),
+                        "evidence_snippets": payload.get("evidence_snippets", []),
+                        "suggested_followups": payload.get("suggested_followups", []),
+                        "limitations": payload.get("limitations"),
+                    }
+                )
+            else:
+                friendly_error = "I couldn’t reach the contract assistant service. Please make sure the backend is running."
+                technical_detail = None
+                if chat_response:
+                    try:
+                        error_data = chat_response.json()
+                        technical_detail = error_data.get("detail")
+                        if chat_response.status_code == 400:
+                            friendly_error = "Please analyze this contract first so I have evidence to answer from."
+                        elif chat_response.status_code == 503:
+                            friendly_error = "The AI model is currently unavailable. Please check Ollama/OpenAI configuration and try again."
+                        elif technical_detail:
+                            friendly_error = "The contract assistant hit a problem, but no raw traceback is shown here."
+                    except Exception:
+                        technical_detail = chat_response.text[:800]
+                st.session_state.last_chat_error = technical_detail
+                chat_messages.append({"role": "assistant", "content": friendly_error, "answer_type": "error"})
+            st.rerun()
+
+        if st.session_state.last_chat_error:
+            with st.expander("Technical details"):
+                st.write(st.session_state.last_chat_error)
+
         # Add option to clear current contract and start over
         st.markdown("---")
         if st.button("Clear Contract and Start Over"):

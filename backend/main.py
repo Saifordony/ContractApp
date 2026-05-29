@@ -18,10 +18,9 @@ from backend.gen1 import (
     evaluate_contract,
     extract_text_from_pdf_bytes,
     analyze_and_evaluate_contract,
-    contract_chat,
     explain_clauses_for_layman,
 )
-from backend.services.contract_intelligence import answer_contract_question, extract_key_clauses
+from backend.services.contract_intelligence import extract_key_clauses
 from backend.services.contract_health import evaluate_contract_health_from_clauses
 from backend.services.benchmark_baselines import run_benchmark
 from backend.services.pipeline_analysis import analyze_pipeline
@@ -30,6 +29,7 @@ from backend.services.benchmark_service import (
     load_seed_from_repo,
     run_benchmark_analysis,
 )
+from backend.services.contract_chat_service import build_contract_chat_response
 from backend.llm_config import (
     AI_PROVIDER,
     OLLAMA_BASE_URL,
@@ -104,9 +104,17 @@ class ContractTextAnalysisRequest(BaseModel):
     contract_text: str
     response_language: str = "english"
 
+class ChatHistoryMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ContractChatRequest(BaseModel):
-    question: str
+    message: Optional[str] = None
+    question: Optional[str] = None
+    chat_history: list[ChatHistoryMessage] = []
     response_language: str = "english"
+    debug: bool = False
 
 
 class PipelineOpportunity(BaseModel):
@@ -984,39 +992,40 @@ async def chat_with_contract(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(status_code=400, detail="Contract has no content to chat about")
+        raise HTTPException(status_code=400, detail="Please analyze this contract before using the assistant.")
 
     if not is_genai_configured():
         raise HTTPException(
             status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
+            detail="The AI model is currently unavailable. Please check Ollama/OpenAI configuration and try again.",
         )
+
+    health = llm_health_check()
+    if not health.get("reachable"):
+        raise HTTPException(
+            status_code=503,
+            detail="The AI model is currently unavailable. Please check Ollama/OpenAI configuration and try again.",
+        )
+
+    message = (request.message or request.question or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Please enter a message for the contract assistant.")
 
     try:
         latest_analysis = await db.contract_analyses.find_one(
             {"contract_id": contract_id},
             sort=[("created_at", -1)],
         )
-        report_context = build_report_context_from_results((latest_analysis or {}).get("results", {}))
-        chat_context_text = contract["content"]
-        if report_context:
-            chat_context_text = f"{chat_context_text}\n\n{report_context}"
-
-        llm_answer = await contract_chat(
-            contract_text=chat_context_text,
-            question=request.question,
-            response_language=request.response_language,
+        analysis_results = (latest_analysis or {}).get("results", {})
+        chat_history = [item.dict() for item in request.chat_history]
+        structured_answer = build_contract_chat_response(
+            message=message,
+            contract_text=contract["content"],
+            analysis_results=analysis_results,
+            benchmark_result=contract.get("benchmark_result"),
+            chat_history=chat_history,
+            debug=request.debug,
         )
-        structured_answer = answer_contract_question(chat_context_text, request.question, response_language=request.response_language)
-
-        # Keep chat strictly grounded: never replace structured evidence-based answer with free-form LLM text.
-        # Preserve LLM phrasing as optional alternative only when structured grounding succeeded.
-        if (
-            not structured_answer.get("answer", "").startswith("Not Found")
-            and isinstance(llm_answer, str)
-            and llm_answer.strip()
-        ):
-            structured_answer["suggested_natural_answer"] = llm_answer.strip()
 
         await db.logs.insert_one(
             {
@@ -1025,18 +1034,17 @@ async def chat_with_contract(
                 "action": "contract_chat",
                 "timestamp": datetime.utcnow(),
                 "status": "success",
-                "retrieved_chunk_ids": structured_answer.get("retrieved_chunk_ids", []),
-                "retrieval_scores": structured_answer.get("retrieval_scores", []),
-                "evidence_count": len(structured_answer.get("evidence", [])),
-                "confidence": structured_answer.get("confidence", 0.0),
-                "intent": structured_answer.get("intent", "unknown"),
-                "not_found_count": len(structured_answer.get("not_found", [])),
-                "prompt_preview": request.question[:200],
+                "evidence_count": len(structured_answer.get("evidence_snippets", [])),
+                "confidence": structured_answer.get("confidence", "Low"),
+                "intent": (structured_answer.get("debug") or {}).get("intent", structured_answer.get("answer_type", "unknown")),
+                "prompt_preview": message[:200],
                 "output_preview": structured_answer.get("answer", "")[:240],
             }
         )
 
         return structured_answer
+    except HTTPException:
+        raise
     except Exception as e:
         await db.logs.insert_one(
             {
@@ -1048,7 +1056,7 @@ async def chat_with_contract(
                 "error": str(e),
             }
         )
-        raise HTTPException(status_code=500, detail=format_analysis_error(e, llm_health_check()))
+        raise HTTPException(status_code=500, detail="The contract assistant hit an unexpected error. Please try again.")
 
 
 @app.post("/contracts/{contract_id}/benchmark")
