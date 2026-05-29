@@ -357,19 +357,58 @@ def get_ai_status_label() -> str:
     return "Checking"
 
 
-def render_chrome_header(username: str):
+def get_header_stats() -> Dict[str, Any]:
+    """Load lightweight header metrics without surfacing API failures in the main UI."""
+    stats: Dict[str, Any] = {
+        "total_requests": 0,
+        "success_rate": "N/A",
+        "clients": 0,
+        "contracts": 0,
+        "analyzed_contracts": 0,
+    }
+
+    token = st.session_state.get("token")
+    metrics_response, _ = request_api(API_BASE_URL, "/metrics", method="GET", token=token, timeout=8)
+    if metrics_response and metrics_response.status_code == 200:
+        metrics = metrics_response.json()
+        stats["total_requests"] = metrics.get("total_requests", 0) or 0
+        success_rate = metrics.get("success_rate")
+        stats["success_rate"] = f"{success_rate:.1f}%" if isinstance(success_rate, (int, float)) else "N/A"
+
+    clients_response, _ = request_api(API_BASE_URL, "/clients", method="GET", token=token, timeout=8)
+    if clients_response and clients_response.status_code == 200:
+        stats["clients"] = len(clients_response.json().get("clients", []))
+
+    contracts_response, _ = request_api(API_BASE_URL, "/contracts", method="GET", token=token, timeout=8)
+    if contracts_response and contracts_response.status_code == 200:
+        contracts = contracts_response.json().get("contracts", [])
+        stats["contracts"] = len(contracts)
+        stats["analyzed_contracts"] = sum(1 for contract in contracts if contract.get("status") == "analyzed")
+
+    return stats
+
+
+def render_chrome_header(username: str, stats: Dict[str, Any] | None = None):
     selected_contract = st.session_state.get("current_contract_title") or st.session_state.get("selected_contract_id") or "No contract selected"
     topbar(username, ai_status=get_ai_status_label(), selected_contract=str(selected_contract))
 
+    header_stats = {
+        "total_requests": 0,
+        "success_rate": "N/A",
+        "clients": 0,
+        "analyzed_contracts": 0,
+        **(stats or get_header_stats()),
+    }
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_metric_card("Total Requests", str(stats['total_requests']), "All tracked API calls")
+        render_metric_card("Total Requests", str(header_stats.get("total_requests", 0)), "All tracked API calls")
     with c2:
-        render_metric_card("Success Rate", str(stats['success_rate']), "Healthy backend responses")
+        render_metric_card("Success Rate", str(header_stats.get("success_rate", "N/A")), "Healthy backend responses")
     with c3:
-        render_metric_card("Clients", str(stats['clients']), "Managed organizations")
+        render_metric_card("Clients", str(header_stats.get("clients", 0)), "Managed organizations")
     with c4:
-        render_metric_card("Contracts", str(stats['contracts']), "Contracts in your workspace")
+        render_metric_card("Analyzed Contracts", str(header_stats.get("analyzed_contracts", 0)), "Ready for review")
 
 
 def make_api_request(
