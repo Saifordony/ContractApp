@@ -51,7 +51,8 @@ def render_clause_card(clause_key: str, payload: Dict[str, Any], explanation: st
             st.write(action)
         evidence = payload.get("evidence_snippets", []) if isinstance(payload, dict) else []
         if evidence:
-            with st.expander("Evidence snippets"):
+            st.markdown("#### Evidence snippets")
+            with st.container():
                 for ev in evidence:
                     st.info(ev.get("quote", ""))
                     if ev.get("location"):
