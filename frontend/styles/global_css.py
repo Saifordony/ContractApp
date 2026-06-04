@@ -51,6 +51,28 @@ def apply_global_css(sidebar_compact: bool = False) -> None:
         .chat-bubble {{ max-width:78%; padding:.8rem 1rem; border-radius:18px; line-height:1.5; border:1px solid var(--border); }}
         .chat-bubble.assistant {{ background:#fff; color:var(--text); border-top-left-radius:6px; }}
         .chat-bubble.user {{ background:var(--primary); color:#fff; border-color:var(--primary); border-top-right-radius:6px; }}
+
+        .brand-lockup {{ display:flex; align-items:center; gap:.65rem; margin:.35rem 0 1rem; }}
+        .brand-mark {{ width:38px; height:38px; border-radius:13px; display:inline-flex; align-items:center; justify-content:center; background:linear-gradient(135deg,#172554,#4F46E5); color:#fff; font-weight:900; box-shadow:0 12px 28px rgba(79,70,229,.24); }}
+        .brand-name {{ color:var(--primary); font-weight:850; letter-spacing:-.035em; font-size:1.12rem; }}
+        .brand-subtitle {{ color:var(--muted); font-size:.82rem; margin-top:-.15rem; }}
+        .auth-shell {{ min-height:calc(100vh - 7rem); display:grid; place-items:center; padding:2rem 1rem; background:radial-gradient(circle at 12% 20%, rgba(79,70,229,.16), transparent 34%), radial-gradient(circle at 86% 12%, rgba(37,99,235,.14), transparent 30%); }}
+        .auth-card {{ width:min(980px,100%); display:grid; grid-template-columns:1.05fr .95fr; gap:1.2rem; background:rgba(255,255,255,.82); border:1px solid rgba(255,255,255,.78); border-radius:28px; box-shadow:0 26px 70px rgba(15,23,42,.14); backdrop-filter:blur(18px); padding:1.25rem; }}
+        .auth-hero {{ border-radius:22px; background:linear-gradient(145deg,#172554 0%,#312E81 55%,#4F46E5 100%); padding:2rem; color:#fff; min-height:520px; display:flex; flex-direction:column; justify-content:space-between; }}
+        .auth-hero * {{ color:#fff!important; }}
+        .auth-hero h1 {{ color:#fff!important; font-size:2.4rem; line-height:1.05; margin:.7rem 0; }}
+        .trust-list {{ display:grid; gap:.7rem; margin-top:1.5rem; }}
+        .trust-item {{ background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:.75rem .85rem; }}
+        .auth-panel {{ padding:1.4rem 1.2rem; }}
+        .auth-panel h2 {{ margin:.15rem 0 .2rem; color:var(--primary); letter-spacing:-.035em; }}
+        .auth-panel p {{ color:var(--muted); margin:.1rem 0 1rem; }}
+        .auth-panel .stTextInput input {{ border-radius:12px; border:1px solid var(--border); transition:all .18s ease; }}
+        .auth-panel .stTextInput input:focus {{ border-color:var(--accent); box-shadow:0 0 0 4px rgba(79,70,229,.12); }}
+        .auth-panel .stButton button, .auth-panel div[data-testid="stFormSubmitButton"] button {{ width:100%; border-radius:12px; background:linear-gradient(135deg,#172554,#4F46E5); color:#fff; border:0; font-weight:800; transition:transform .16s ease, box-shadow .16s ease; }}
+        .auth-panel .stButton button:hover, .auth-panel div[data-testid="stFormSubmitButton"] button:hover {{ transform:translateY(-1px); box-shadow:0 14px 30px rgba(79,70,229,.22); }}
+        .next-step-card {{ border:1px solid var(--border); background:#fff; border-radius:18px; padding:1rem 1.1rem; box-shadow:0 10px 30px rgba(15,23,42,.05); margin:.75rem 0; }}
+        .next-step-card strong {{ color:var(--primary); }}
+        @media (max-width: 900px) {{ .auth-card {{ grid-template-columns:1fr; }} .auth-hero {{ min-height:auto; }} }}
         div[data-testid="stDataFrame"] {{ border:1px solid var(--border); border-radius:14px; overflow:hidden; }}
         </style>
         """,

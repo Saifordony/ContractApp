@@ -30,6 +30,36 @@ from frontend.services.formatters import titleize_key
 from frontend.services.state import clear_session, init_session_state, select_contract
 from frontend.styles.global_css import apply_global_css
 
+
+
+def render_brand_logo(subtitle: str | None = None) -> None:
+    subtitle_html = f"<div class='brand-subtitle'>{html.escape(subtitle)}</div>" if subtitle else ""
+    st.markdown(
+        f"""
+        <div class='brand-lockup'>
+            <div class='brand-mark'>CI</div>
+            <div>
+                <div class='brand-name'>Contract Intelligence</div>
+                {subtitle_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_next_step(title: str, body: str) -> None:
+    st.markdown(
+        f"""
+        <div class='next-step-card'>
+            <strong>{html.escape(title)}</strong><br/>
+            <span>{html.escape(body)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
@@ -608,70 +638,111 @@ def render_chat_history(chat_messages):
 
 
 def login_page():
-    """Login and Registration page"""
-    st.markdown("<div class='login-wrap'><div class='login-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='eyebrow'>AI Legal-Tech SaaS</div>", unsafe_allow_html=True)
-    st.title("Contract Analysis Platform")
-    st.caption("Analyze clauses, assess readiness, benchmark contract terms, and ask AI questions grounded in the uploaded contract.")
+    """Premium Login and Registration page."""
+    st.markdown("<div class='auth-shell'><div class='auth-card'>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class='auth-hero'>
+            <div>
+                <div class='brand-lockup'>
+                    <div class='brand-mark'>CI</div>
+                    <div>
+                        <div class='brand-name' style='color:#fff;'>Contract Intelligence</div>
+                        <div class='brand-subtitle' style='color:rgba(255,255,255,.78);'>AI contract review workspace</div>
+                    </div>
+                </div>
+                <h1>Review contracts with confidence.</h1>
+                <p>Upload contracts, review clauses, benchmark terms, and ask evidence-based AI questions in one clean workspace.</p>
+            </div>
+            <div class='trust-list'>
+                <div class='trust-item'>✓ AI-powered clause review</div>
+                <div class='trust-item'>✓ Evidence-based answers</div>
+                <div class='trust-item'>✓ Private by default</div>
+            </div>
+        </div>
+        <div class='auth-panel'>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_brand_logo("Secure workspace for contract review")
 
-    tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
+    tab1, tab2 = st.tabs(["Sign in", "Create account"])
 
     with tab1:
+        st.markdown("### Welcome back")
+        st.caption("Sign in to your workspace.")
         with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Sign In")
+            username = st.text_input("Username", placeholder="Enter your username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            submit = st.form_submit_button("Sign in")
 
             if submit:
-                response = make_api_request(
-                    "/auth/login",
-                    "POST",
-                    {"username": username, "password": password},
-                    auth=False,
-                )
-
-                if response and response.status_code == 200:
-                    data = response.json()
-                    st.session_state.token = data["access_token"]
-                    st.session_state.username = username
-                    st.success("Login successful!")
-                    st.rerun()
-                else:
-                    api_error = st.session_state.get("last_api_error")
-                    if api_error and api_error.status_code is None:
-                        friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
-                    else:
-                        st.error("Login failed. Please check your credentials.")
-
-    with tab2:
-        with st.form("register_form"):
-            username = st.text_input("Username")
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            submit = st.form_submit_button("Sign Up")
-
-            if submit:
-                if password != confirm_password:
-                    st.error("Passwords do not match")
+                if not username.strip() or not password:
+                    st.error("Please enter your username and password.")
                 else:
                     response = make_api_request(
-                        "/auth/register",
+                        "/auth/login",
                         "POST",
-                        {"username": username, "email": email, "password": password},
+                        {"username": username.strip(), "password": password},
                         auth=False,
                     )
 
                     if response and response.status_code == 200:
-                        st.success("Registration successful! Please sign in.")
+                        data = response.json()
+                        st.session_state.token = data["access_token"]
+                        st.session_state.username = username.strip()
+                        st.success("Signed in successfully.")
+                        st.rerun()
                     else:
                         api_error = st.session_state.get("last_api_error")
                         if api_error and api_error.status_code is None:
                             friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
                         else:
-                            st.error("Registration failed. Username or email might already exist.")
+                            st.error("We could not sign you in. Please check your username and password.")
+        st.caption("New here? Create an account using the tab beside Sign in.")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    with tab2:
+        st.markdown("### Create your workspace")
+        st.caption("Start analyzing contracts with AI-powered insights.")
+        with st.form("register_form"):
+            username = st.text_input("Username", placeholder="Choose a username", key="register_username")
+            email = st.text_input("Email", placeholder="name@company.com", key="register_email")
+            password = st.text_input("Password", type="password", placeholder="Use at least 8 characters", key="register_password")
+            confirm_password = st.text_input("Confirm password", type="password", placeholder="Re-enter your password", key="register_confirm_password")
+            st.caption("Use at least 8 characters. Choose something you do not use elsewhere.")
+            submit = st.form_submit_button("Create account")
+
+            if submit:
+                if not username.strip():
+                    st.error("Please enter a username.")
+                elif not email.strip():
+                    st.error("Please enter an email address.")
+                elif not password:
+                    st.error("Please enter a password.")
+                elif len(password) < 8:
+                    st.error("Please use a password with at least 8 characters.")
+                elif password != confirm_password:
+                    st.error("Passwords do not match. Please re-enter them.")
+                else:
+                    response = make_api_request(
+                        "/auth/register",
+                        "POST",
+                        {"username": username.strip(), "email": email.strip(), "password": password},
+                        auth=False,
+                    )
+
+                    if response and response.status_code == 200:
+                        st.success("Account created. You can now sign in.")
+                        st.caption("Already have an account? Sign in using the tab above.")
+                    else:
+                        api_error = st.session_state.get("last_api_error")
+                        if api_error and api_error.status_code is None:
+                            friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
+                        else:
+                            st.error("That username or email may already be registered.")
+        st.caption("Already have an account? Sign in using the tab above.")
+
+    st.markdown("</div></div></div>", unsafe_allow_html=True)
 
 
 def get_clients_list():
@@ -684,8 +755,9 @@ def get_clients_list():
 
 def contract_analysis_page():
     """Guided Contract Analysis page."""
-    page_header("Contract Analysis", "Upload, extract, validate, review, benchmark, and ask AI questions from one guided workflow.", "AI Legal-Tech Workspace")
-    workflow_stepper(["Select client", "Upload contract", "Extract clauses", "Review readiness", "Compare benchmark", "Ask AI"], active_index=2 if st.session_state.get("current_clauses") else 1)
+    page_header("Analyze", "Upload a contract, extract key clauses, review health, compare benchmarks, and ask AI questions from one guided workflow.", "Contract workflow")
+    workflow_stepper(["Select client", "Upload contract", "Run analysis", "Review health", "Compare benchmark", "Ask AI"], active_index=2 if st.session_state.get("current_clauses") else 1)
+    render_next_step("Next step", "Select or create a client, upload a PDF contract, then choose Analyze Contract Clauses.")
     
     # Display extended success message for client creation
     if "client_creation_success" in st.session_state:
@@ -1168,7 +1240,7 @@ def get_contracts_list():
 
 def clients_contracts_page():
     """Enhanced Clients and Contracts management page with full CRUD operations"""
-    page_header("Clients & Contracts", "Manage your client workspace, select contracts, and launch analysis actions.", "Workspace Management")
+    page_header("Clients and Contracts", "Manage clients, upload contracts, and launch analysis actions.", "Workspace")
 
     tab1, tab2 = st.tabs(["Client Management", "Contract Management"])
 
@@ -1536,7 +1608,7 @@ def render_benchmark_comparison(payload: Dict[str, Any]):
 
 def benchmark_page():
     """Professional Benchmark Comparison page."""
-    page_header("Benchmark Comparison", "Compare this contract against benchmark expectations for its contract type.", "Professional Benchmark Report")
+    page_header("Benchmark", "Compare this contract against benchmark expectations for its contract type.", "Contract comparison")
 
     contracts = get_contracts_list()
     if not contracts:
@@ -1670,27 +1742,53 @@ def admin_dashboard():
 
 
 def dashboard_page():
-    page_header("Dashboard", "A calm command center for contract analysis, readiness, benchmark comparison, and AI Q&A.", "Executive Workspace")
+    render_brand_logo("Professional contract review workspace")
+    page_header("Dashboard", "Your contract review command center. Start with a client, upload a contract, then run analysis.", "Overview")
     stats = get_dashboard_stats()
-    c1, c2, c3, c4 = st.columns(4)
+    contracts = get_contracts_list()
+    analyzed_contracts = sum(1 for contract in contracts if contract.get("status") == "analyzed")
+    benchmark_outliers = sum(1 for contract in contracts if (contract.get("benchmark_result") or {}).get("overall_position", {}).get("alignment_score", 100) < 50)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        render_metric_card("Total Clients", str(stats.get("clients", "—")), "Managed organizations")
+        render_metric_card("Total Contracts", str(stats.get("contracts", len(contracts) or 0)), "Uploaded contracts")
     with c2:
-        render_metric_card("Total Contracts", str(stats.get("contracts", "—")), "Contracts in workspace")
+        render_metric_card("Clients", str(stats.get("clients", 0)), "Active workspaces")
     with c3:
-        render_metric_card("Success Rate", str(stats.get("success_rate", "—")), "Backend health trend")
+        render_metric_card("Analyses Completed", str(analyzed_contracts), "Ready for review")
     with c4:
-        render_metric_card("AI Status", get_ai_status_label(), "Ollama/OpenAI provider")
-    section_card("Quick Actions", "Use the sidebar to upload a contract, run readiness review, compare benchmarks, or ask AI.", "⚡")
+        render_metric_card("Average Contract Health", "N/A", "Run health review to calculate")
+    with c5:
+        render_metric_card("Benchmark Outliers", str(benchmark_outliers), "Need closer review")
+
+    if not contracts:
+        empty_state(
+            "Start by adding a client and uploading your first contract.",
+            "Once a contract is uploaded, you can run clause analysis, check contract health, compare benchmarks, and ask AI questions.",
+            "Go to Clients or Analyze to begin.",
+        )
+    else:
+        st.markdown("### Recent contracts")
+        recent_rows = [
+            {
+                "Contract": contract.get("title", "Untitled contract"),
+                "Status": titleize_key(contract.get("status", "uploaded")),
+                "Created": str(contract.get("created_at", "N/A"))[:19],
+            }
+            for contract in contracts[:6]
+        ]
+        st.dataframe(recent_rows, use_container_width=True, hide_index=True)
+
+    render_next_step("Recommended next step", "Select a client, upload a contract, then run Contract Analysis to unlock health review, benchmark comparison, and AI Assistant.")
 
 
 def ask_ai_page():
-    page_header("Ask AI About This Contract", "Ask contract-specific questions grounded in extracted evidence.", "Contract Assistant")
+    page_header("AI Assistant", "Ask contract-specific questions grounded in extracted evidence.", "Contract assistant")
     empty_state("Use Ask AI inside Contract Analysis", "Select or upload a contract, then use the chat panel attached to that contract so history and evidence stay scoped correctly.", "Go to Contract Analysis → Ask AI About This Contract")
 
 
 def settings_diagnostics_page():
-    page_header("Settings / Diagnostics", "Check API, LLM, and database readiness without exposing secrets.", "Operations")
+    page_header("Settings", "Check app, AI, and database readiness without exposing secrets.", "Diagnostics")
     health = make_api_request("/healthz", auth=False)
     if health and health.status_code == 200:
         st.markdown("### API Health")
@@ -1709,7 +1807,7 @@ def settings_diagnostics_page():
 def main():
     """Main application"""
     st.set_page_config(
-        page_title="Contract Analysis Platform", page_icon="📄", layout="wide"
+        page_title="Contract Intelligence", page_icon="⚖️", layout="wide"
     )
 
     if "sidebar_compact" not in st.session_state:
@@ -1725,28 +1823,27 @@ def main():
     
 
     # Sidebar navigation
-    st.sidebar.title("⚖️ ContractAI")
-    st.sidebar.caption(f"Welcome, {st.session_state.username}")
-    st.sidebar.caption("Premium contract intelligence workspace")
-    st.sidebar.toggle("Compact sidebar", key="sidebar_compact")
-    st.sidebar.markdown("---")
-    nav_items = [
-        "Dashboard",
-        "Contract Analysis",
-        "Contract Readiness Review",
-        "Benchmark Comparison",
-        "Ask AI",
-        "Clients & Contracts",
-        "Admin / Logs",
-        "Settings / Diagnostics",
-    ]
-    if not BENCHMARK_ENABLED:
-        nav_items.remove("Benchmark Comparison")
-    navigation = st.sidebar.radio("Navigate", nav_items, label_visibility="collapsed")
-
-    if st.sidebar.button("Logout"):
-        clear_session()
-        st.rerun()
+    with st.sidebar:
+        render_brand_logo("Contract review workspace")
+        st.caption(f"Signed in as {st.session_state.username}")
+        st.toggle("Compact sidebar", key="sidebar_compact")
+        st.markdown("---")
+        nav_items = [
+            "Dashboard",
+            "Clients",
+            "Contracts",
+            "Analyze",
+            "Benchmark",
+            "AI Assistant",
+            "Settings",
+        ]
+        if not BENCHMARK_ENABLED:
+            nav_items.remove("Benchmark")
+        navigation = st.radio("Navigate", nav_items, label_visibility="collapsed")
+        st.markdown("---")
+        if st.button("Log out"):
+            clear_session()
+            st.rerun()
 
     render_chrome_header(st.session_state.username)
 
@@ -1755,25 +1852,21 @@ def main():
     # Main content
     if navigation == "Dashboard":
         dashboard_page()
-    elif navigation == "Contract Analysis":
-        contract_analysis_page()
-        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
-    elif navigation == "Contract Readiness Review":
-        page_header("Contract Readiness Review", "AI-assisted review of completeness, clarity, and approval readiness.", "Readiness")
-        empty_state("Run a readiness review from Contract Analysis", "After analyzing a contract, use Evaluate Contract Health or Run Complete Analysis Pipeline to generate a readiness report.")
-    elif navigation == "Benchmark Comparison":
-        benchmark_page()
-        st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
-    elif navigation == "Ask AI":
-        ask_ai_page()
-    elif navigation == "Clients & Contracts":
+    elif navigation in {"Clients", "Contracts"}:
         clients_contracts_page()
         st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
-    elif navigation == "Admin / Logs":
-        admin_dashboard()
-        st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
-    elif navigation == "Settings / Diagnostics":
+    elif navigation == "Analyze":
+        contract_analysis_page()
+        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
+    elif navigation == "Benchmark":
+        benchmark_page()
+        st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
+    elif navigation == "AI Assistant":
+        ask_ai_page()
+    elif navigation == "Settings":
         settings_diagnostics_page()
+        st.markdown("---")
+        admin_dashboard()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
