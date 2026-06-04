@@ -18,7 +18,14 @@ Required environment variables for Docker Compose backend:
 - `AI_PROVIDER=ollama`
 - `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`
 - `OLLAMA_MODEL=llama3.1:8b`
+- `OLLAMA_TEMPERATURE=0.1`
+- `OLLAMA_NUM_CTX=8192`
+- `OLLAMA_TIMEOUT=120`
 - `OPENAI_API_KEY=ollama`
+
+Recommended local model setup:
+- `ollama pull llama3.1:8b` (safe default)
+- Optional stronger local models if your machine has enough RAM/VRAM: `ollama pull qwen2.5:14b`, `ollama pull llama3.1:70b`, `ollama pull deepseek-r1:14b`, or `ollama pull mistral-nemo`
 
 From Windows host (PowerShell):
 - `curl.exe http://localhost:11434/v1/models`

@@ -7,9 +7,26 @@ from typing import Any, Dict
 
 import requests
 
+def _float_env(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 AI_PROVIDER = os.getenv("AI_PROVIDER", "ollama").strip().lower()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434/v1").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_TEMPERATURE = _float_env("OLLAMA_TEMPERATURE", 0.1)
+OLLAMA_NUM_CTX = _int_env("OLLAMA_NUM_CTX", 8192)
+OLLAMA_TIMEOUT = _int_env("OLLAMA_TIMEOUT", 120)
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -45,6 +62,10 @@ def llm_health_check() -> Dict[str, Any]:
         "model": model,
         "reachable": False,
         "available_models": [],
+        "temperature": OLLAMA_TEMPERATURE if AI_PROVIDER == "ollama" else None,
+        "num_ctx": OLLAMA_NUM_CTX if AI_PROVIDER == "ollama" else None,
+        "timeout": OLLAMA_TIMEOUT if AI_PROVIDER == "ollama" else None,
+        "recommended_stronger_models": ["qwen2.5:14b", "llama3.1:70b", "deepseek-r1:14b", "mistral-nemo"],
         "error": None,
     }
     if not base_url or not model:

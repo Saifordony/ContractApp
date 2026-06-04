@@ -7,6 +7,10 @@ from backend.services.contract_intelligence import (
     chunk_contract_text,
     retrieve_relevant_chunks_with_scores,
 )
+from backend.services.ollama_contract_ai import (
+    build_clause_memory,
+    run_contract_reasoning_pipeline,
+)
 
 DISCLAIMER = "AI-assisted review only — not legal advice."
 
@@ -207,6 +211,7 @@ def build_contract_chat_response(
     intent, clause_key = classify_chat_intent(message)
     clauses = _extract_structured_clauses(analysis_results)
     health = analysis_results.get("health_evaluation", {}) if isinstance(analysis_results, dict) else {}
+    clause_memory = build_clause_memory(contract_text, clauses) if contract_text else {"missing_clauses": []}
 
     if intent == "greeting":
         response = _empty_response(
@@ -241,15 +246,32 @@ def build_contract_chat_response(
                 "debug": None,
             }
         else:
-            raw_evidence = _raw_text_evidence(contract_text, message, limit=2)
+            reasoning = run_contract_reasoning_pipeline(
+                question=message,
+                contract_text=contract_text,
+                debug=debug,
+            )
+            raw_evidence = [
+                {
+                    "quote": item.get("quote", ""),
+                    "clause_name": "Contract Text",
+                    "location": item.get("location", "Contract evidence"),
+                    "relevance": "Hybrid retrieved evidence",
+                }
+                for item in reasoning.get("evidence", [])[:2]
+            ]
+            has_support = bool(raw_evidence) and not str(reasoning.get("answer", "")).lower().startswith("not found")
             response = {
-                "answer": f"You’re probably asking whether the contract includes {_title_clause(clause_key).lower()}. I could not find reliable evidence for that in the uploaded contract. If this term matters, consider adding a clear clause for it before signing.",
-                "answer_type": "missing_evidence",
-                "confidence": "Medium" if raw_evidence else "Low",
+                "answer": (
+                    f"You’re probably asking whether the contract includes {_title_clause(clause_key).lower()}. "
+                    + (reasoning.get("answer") if has_support else "I could not find reliable evidence for that in the uploaded contract. If this term matters, consider adding a clear clause for it before signing.")
+                ),
+                "answer_type": "grounded_answer" if has_support else "missing_evidence",
+                "confidence": "Medium" if has_support else "Low",
                 "evidence_snippets": raw_evidence,
                 "suggested_followups": ["What clauses are missing?", "What should I fix first?", "What are the main risks?"],
                 "limitations": DISCLAIMER,
-                "debug": None,
+                "debug": reasoning.get("debug") if debug else None,
             }
     elif intent == "missing_clauses":
         missing = _missing_clause_names(clauses, health)
@@ -321,16 +343,29 @@ def build_contract_chat_response(
                 "evidence_snippets": evidence,
             }
     else:
-        evidence = _raw_text_evidence(contract_text, message, limit=3)
-        if evidence:
+        reasoning = run_contract_reasoning_pipeline(
+            question=message,
+            contract_text=contract_text,
+            debug=debug,
+        )
+        evidence = [
+            {
+                "quote": item.get("quote", ""),
+                "clause_name": "Contract Text",
+                "location": item.get("location", "Contract evidence"),
+                "relevance": "Hybrid retrieved evidence",
+            }
+            for item in reasoning.get("evidence", [])[:3]
+        ]
+        if evidence and not str(reasoning.get("answer", "")).lower().startswith("not found"):
             response = {
-                "answer": "I found contract text that appears relevant. Here is the safest answer based on that evidence: review the quoted section below and use it as the source for this point.",
+                "answer": reasoning.get("answer") or "I found contract text that appears relevant. Review the quoted evidence below before relying on this point.",
                 "answer_type": "grounded_answer",
-                "confidence": "Medium",
+                "confidence": "High" if reasoning.get("confidence", 0) >= 0.75 else "Medium",
                 "evidence_snippets": evidence,
                 "suggested_followups": DEFAULT_FOLLOWUPS,
                 "limitations": DISCLAIMER,
-                "debug": None,
+                "debug": reasoning.get("debug") if debug else None,
             }
         else:
             response = _empty_response(
@@ -346,5 +381,6 @@ def build_contract_chat_response(
             "history_count": len(chat_history),
             "has_analysis": bool(analysis_results),
             "has_benchmark": bool(benchmark_result),
+            "clause_memory_missing": clause_memory.get("missing_clauses", []),
         }
     return response

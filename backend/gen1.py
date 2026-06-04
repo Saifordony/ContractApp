@@ -18,6 +18,9 @@ from backend.llm_config import (
     OPENAI_MODEL,
     OLLAMA_BASE_URL,
     OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TEMPERATURE,
+    OLLAMA_TIMEOUT,
     selected_api_key,
 )
 
@@ -30,12 +33,17 @@ base_url = OLLAMA_BASE_URL if AI_PROVIDER == "ollama" else (OPENAI_BASE_URL or N
 if not model_name:
     print("WARNING: selected LLM model is not set. GenAI features may be disabled.")
 
-llm_model = ChatOpenAI(
-    model=model_name,
-    base_url=base_url,
-    api_key=selected_api_key(),
-    temperature=0.2,
-)
+llm_kwargs = {
+    "model": model_name,
+    "base_url": base_url,
+    "api_key": selected_api_key(),
+    "temperature": OLLAMA_TEMPERATURE if AI_PROVIDER == "ollama" else 0.2,
+}
+if AI_PROVIDER == "ollama":
+    llm_kwargs["request_timeout"] = OLLAMA_TIMEOUT
+    llm_kwargs["model_kwargs"] = {"num_ctx": OLLAMA_NUM_CTX}
+
+llm_model = ChatOpenAI(**llm_kwargs)
 
 analysis_system_prompt = """
 You are a professional contract clause extraction engine.
