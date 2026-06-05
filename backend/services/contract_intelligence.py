@@ -215,6 +215,62 @@ def _extract_sentences_with_keywords(text: str, question_tokens: set[str], limit
     return picked
 
 
+
+
+SKILLS_NOISE_HINTS = {"git", "agile", "problem-solving", "communication skills", "version control", "probation period", "job description", "requirements", "experience with"}
+
+
+def _is_skills_noise(text: str) -> bool:
+    t=(text or "").lower()
+    return any(h in t for h in SKILLS_NOISE_HINTS)
+
+
+def _validated_clause_record(clause_name: str, matches: list[dict], source_text: str = "") -> Dict[str, Any]:
+    issues: List[str] = []
+    if not matches:
+        if clause_name == "parties" and _is_skills_noise(source_text):
+            return {
+                "status": "not_found",
+                "confidence": 0.0,
+                "extracted_text": None,
+                "evidence_snippets": [],
+                "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
+                "recommended_action": "Look for party-identification language (e.g., 'between X and Y', legal entity names, or defined party terms).",
+            }
+        return {
+            "status": "not_found",
+            "confidence": 0.0,
+            "extracted_text": None,
+            "evidence_snippets": [],
+            "issues": ["No reliable evidence found for this clause."],
+            "recommended_action": "Request explicit clause text or perform manual legal review.",
+        }
+
+    top = matches[0]
+    top_quote = str(top.get("quote", ""))
+
+    if clause_name == "parties" and _is_skills_noise(top_quote):
+        return {
+            "status": "not_found",
+            "confidence": 0.0,
+            "extracted_text": None,
+            "evidence_snippets": [],
+            "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
+            "recommended_action": "Look for party-identification language (e.g., 'between X and Y', legal entity names, or defined party terms).",
+        }
+
+    ev=[{"quote":m.get("quote",""),"location":m.get("location",""),"chunk_id":m.get("chunk_id","")} for m in matches[:2]]
+    confidence = 0.86 if len(matches) > 1 else 0.72
+    return {
+        "status": "found",
+        "confidence": confidence,
+        "extracted_text": top_quote,
+        "evidence_snippets": ev,
+        "issues": issues,
+        "recommended_action": "No immediate action required.",
+    }
+
+
 def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
     chunks = chunk_contract_text(contract_text)
     clause_map = {
@@ -249,19 +305,7 @@ def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
                     }
                 )
 
-        if not matches:
-            extracted[clause_name] = {
-                "value": "Not Found",
-                "evidence": [],
-                "status": "missing",
-            }
-            continue
-
-        extracted[clause_name] = {
-            "value": matches[0]["quote"],
-            "evidence": matches[:2],
-            "status": "found",
-        }
+        extracted[clause_name] = _validated_clause_record(clause_name, matches, contract_text)
 
         unique_quotes = {m["quote"] for m in matches[:3]}
         if len(unique_quotes) > 1 and clause_name in {"term", "renewal", "payment_terms", "termination"}:

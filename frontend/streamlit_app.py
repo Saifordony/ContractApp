@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
 import os
+import sys
 import html
 import io
 import json
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
 import pandas as pd
@@ -12,15 +14,58 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
+# Streamlit executes this file from /app/frontend in Docker, so make the
+# repository root importable before loading the frontend package modules.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from frontend.components.alerts import empty_state, friendly_error
+from frontend.components.cards import metric_card, section_card
+from frontend.components.clause_cards import render_clause_card
+from frontend.components.layout import page_header, topbar, workflow_stepper
+from frontend.components.readiness_review import render_readiness_review
+from frontend.services.api_client import request_api
+from frontend.services.formatters import titleize_key
+from frontend.services.state import clear_session, init_session_state, select_contract
+from frontend.styles.global_css import apply_global_css
+
+
+
+def render_brand_logo(subtitle: str | None = None) -> None:
+    subtitle_html = f"<div class='brand-subtitle'>{html.escape(subtitle)}</div>" if subtitle else ""
+    st.markdown(
+        f"""
+        <div class='brand-lockup'>
+            <div class='brand-mark'>CI</div>
+            <div>
+                <div class='brand-name'>Contract Intelligence</div>
+                {subtitle_html}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_next_step(title: str, body: str) -> None:
+    st.markdown(
+        f"""
+        <div class='next-step-card'>
+            <strong>{html.escape(title)}</strong><br/>
+            <span>{html.escape(body)}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
 # Initialize session state
-if "token" not in st.session_state:
-    st.session_state.token = None
-if "username" not in st.session_state:
-    st.session_state.username = None
+init_session_state()
 
 
 def apply_modern_theme(sidebar_compact: bool = False):
@@ -332,42 +377,68 @@ def get_dashboard_stats() -> Dict:
 
 
 def render_metric_card(title: str, value: str, subtitle: str = ""):
-    st.markdown(
-        f"""
-        <div class='metric-card'>
-            <div class='metric-label'>{title}</div>
-            <div class='metric-value'>{value}</div>
-            <div class='metric-sub'>{subtitle}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    metric_card(title, value, subtitle)
 
 
-def render_chrome_header(username: str):
-    stats = get_dashboard_stats()
-    st.markdown(
-        f"""
-        <div class='topbar'>
-            <div>
-                <div class='topbar-title'>📊 CONTRACT INTELLIGENCE DASHBOARD</div>
-                <div class='topbar-sub'>Welcome, {username} — bilingual OCR + AI analysis workspace</div>
-            </div>
-            <div class='topbar-sub'>EN | AR • Secure Session</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def get_ai_status_label() -> str:
+    response, _ = request_api(API_BASE_URL, "/llm/health", method="GET", timeout=8)
+    if response and response.status_code == 200:
+        return "Online" if response.json().get("reachable") else "Offline"
+    return "Checking"
+
+
+def get_header_stats() -> Dict[str, Any]:
+    """Load lightweight header metrics without surfacing API failures in the main UI."""
+    stats: Dict[str, Any] = {
+        "total_requests": 0,
+        "success_rate": "N/A",
+        "clients": 0,
+        "contracts": 0,
+        "analyzed_contracts": 0,
+    }
+
+    token = st.session_state.get("token")
+    metrics_response, _ = request_api(API_BASE_URL, "/metrics", method="GET", token=token, timeout=8)
+    if metrics_response and metrics_response.status_code == 200:
+        metrics = metrics_response.json()
+        stats["total_requests"] = metrics.get("total_requests", 0) or 0
+        success_rate = metrics.get("success_rate")
+        stats["success_rate"] = f"{success_rate:.1f}%" if isinstance(success_rate, (int, float)) else "N/A"
+
+    clients_response, _ = request_api(API_BASE_URL, "/clients", method="GET", token=token, timeout=8)
+    if clients_response and clients_response.status_code == 200:
+        stats["clients"] = len(clients_response.json().get("clients", []))
+
+    contracts_response, _ = request_api(API_BASE_URL, "/contracts", method="GET", token=token, timeout=8)
+    if contracts_response and contracts_response.status_code == 200:
+        contracts = contracts_response.json().get("contracts", [])
+        stats["contracts"] = len(contracts)
+        stats["analyzed_contracts"] = sum(1 for contract in contracts if contract.get("status") == "analyzed")
+
+    return stats
+
+
+def render_chrome_header(username: str, stats: Dict[str, Any] | None = None):
+    selected_contract = st.session_state.get("current_contract_title") or st.session_state.get("selected_contract_id") or "No contract selected"
+    topbar(username, ai_status=get_ai_status_label(), selected_contract=str(selected_contract))
+
+    header_stats = {
+        "total_requests": 0,
+        "success_rate": "N/A",
+        "clients": 0,
+        "analyzed_contracts": 0,
+        **(stats or get_header_stats()),
+    }
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_metric_card("Total Requests", str(stats['total_requests']), "All tracked API calls")
+        render_metric_card("Total Requests", str(header_stats.get("total_requests", 0)), "All tracked API calls")
     with c2:
-        render_metric_card("Success Rate", str(stats['success_rate']), "Healthy backend responses")
+        render_metric_card("Success Rate", str(header_stats.get("success_rate", "N/A")), "Healthy backend responses")
     with c3:
-        render_metric_card("Clients", str(stats['clients']), "Managed organizations")
+        render_metric_card("Clients", str(header_stats.get("clients", 0)), "Managed organizations")
     with c4:
-        render_metric_card("Contracts", str(stats['contracts']), "Contracts in your workspace")
+        render_metric_card("Analyzed Contracts", str(header_stats.get("analyzed_contracts", 0)), "Ready for review")
 
 
 def make_api_request(
@@ -377,42 +448,31 @@ def make_api_request(
     files: Dict = None,
     auth: bool = True,
 ):
-    """Make API request with error handling"""
-    headers = {}
-    if auth and st.session_state.token:
-        headers["Authorization"] = f"Bearer {st.session_state.token}"
+    """Compatibility wrapper around the shared frontend API client."""
+    token = st.session_state.token if auth else None
+    response, api_error = request_api(
+        API_BASE_URL,
+        endpoint,
+        method=method,
+        token=token,
+        data=data,
+        files=files,
+    )
+    st.session_state.last_api_error = api_error
 
-    try:
-        if method == "GET":
-            response = requests.get(f"{API_BASE_URL}{endpoint}", headers=headers)
-        elif method == "POST":
-            if files:
-                response = requests.post(
-                    f"{API_BASE_URL}{endpoint}", headers=headers, files=files, data=data
-                )
-            else:
-                headers["Content-Type"] = "application/json"
-                response = requests.post(
-                    f"{API_BASE_URL}{endpoint}", headers=headers, json=data
-                )
-        elif method == "PUT":
-            headers["Content-Type"] = "application/json"
-            response = requests.put(
-                f"{API_BASE_URL}{endpoint}", headers=headers, json=data
-            )
-        elif method == "DELETE":
-            response = requests.delete(f"{API_BASE_URL}{endpoint}", headers=headers)
+    if response is not None and response.status_code == 401:
+        st.session_state.token = None
+        st.session_state.username = None
+        friendly_error(
+            "Your session expired. Please sign in again.",
+            "Sign in to continue using your workspace.",
+            api_error.technical_detail if api_error else None,
+        )
+        st.rerun()
 
-        if response.status_code == 401:
-            st.session_state.token = None
-            st.session_state.username = None
-            st.error("Session expired. Please login again.")
-            st.rerun()
-
-        return response
-    except requests.exceptions.RequestException as e:
-        st.error(f"API request failed: {str(e)}")
-        return None
+    if response is None and api_error:
+        friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
+    return response
 
 
 def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
@@ -434,60 +494,7 @@ def extract_text_from_uploaded_pdf(pdf_bytes: bytes) -> str:
 
 
 def render_contract_evaluation(evaluation: Dict):
-    approved = evaluation.get("approved", False)
-    if approved:
-        st.success("Contract Approved")
-    else:
-        st.error("Contract Not Approved")
-
-    contract_type = evaluation.get("contract_type")
-    if contract_type:
-        confidence = evaluation.get("contract_type_confidence")
-        confidence_text = f" (confidence: {confidence})" if confidence is not None else ""
-        st.write(f"**Detected Contract Type:** {str(contract_type).replace('_', ' ').title()}{confidence_text}")
-
-    score = int(evaluation.get("health_score", 0))
-    st.write(f"**Health Score:** {score}/100")
-    st.progress(max(0, min(100, score)) / 100)
-
-    risk_level = str(evaluation.get("risk_level", "medium")).lower()
-    st.write(f"**Risk Level:** {risk_level.title()}")
-
-    st.write("**Reasoning:**")
-    st.write(evaluation.get("reasoning", "No reasoning provided"))
-
-    missing = evaluation.get("missing_critical_clauses", [])
-    recommended = evaluation.get("missing_recommended_clauses", [])
-    ambiguous = evaluation.get("ambiguous_clauses", [])
-    issues = evaluation.get("issues", [])
-    changes = evaluation.get("required_changes", [])
-
-    if missing:
-        st.markdown("#### Missing Mandatory Clauses")
-        for item in missing:
-            st.write(f"- {item}")
-
-    if recommended:
-        st.markdown("#### Missing Recommended Clauses")
-        for item in recommended:
-            st.write(f"- {item}")
-
-    if ambiguous:
-        st.markdown("#### Ambiguous Clauses To Fix")
-        for item in ambiguous:
-            clause_name = item.get("clause", "unknown")
-            reason = item.get("reason", "Needs clarification")
-            st.write(f"- **{clause_name}**: {reason}")
-
-    if issues:
-        st.markdown("#### Specific Issues Found")
-        for item in issues:
-            st.write(f"- {item}")
-
-    if changes:
-        st.markdown("#### What This Contract Needs")
-        for item in changes:
-            st.write(f"- {item}")
+    render_readiness_review(evaluation)
 
 
 def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any]) -> bytes:
@@ -594,10 +601,19 @@ def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any
 
 def render_chat_history(chat_messages):
     if not chat_messages:
+        st.markdown(
+            """
+            <div class='chat-shell'>
+                <h3 style='margin:0 0 .25rem 0;'>Ask anything about this contract</h3>
+                <p style='margin:0;color:#5a6578;'>I can help you find clauses, explain risks, summarize obligations, and identify missing terms.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         return
 
     st.markdown("<div class='chat-shell'><div class='chat-scroll'>", unsafe_allow_html=True)
-    for msg in chat_messages:
+    for idx, msg in enumerate(chat_messages):
         role = msg.get("role", "assistant")
         role_class = "user" if role == "user" else "assistant"
         escaped_text = html.escape(msg.get("content", ""))
@@ -610,67 +626,123 @@ def render_chat_history(chat_messages):
             """,
             unsafe_allow_html=True,
         )
+        evidence = msg.get("evidence_snippets") or []
+        if role != "user" and evidence:
+            with st.expander(f"Evidence for assistant response {idx + 1}"):
+                for ev in evidence:
+                    st.markdown(f"**{ev.get('clause_name', 'Evidence')}** — {ev.get('relevance', 'Relevant evidence')}")
+                    st.info(ev.get("quote", ""))
+                    if ev.get("location"):
+                        st.caption(ev.get("location"))
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 
 def login_page():
-    """Login and Registration page"""
-    st.markdown("<div class='login-wrap'><div class='login-card'>", unsafe_allow_html=True)
-    st.title("Contract Analysis Platform")
-    st.caption("Use Sign In or Sign Up below.")
+    """Premium Login and Registration page."""
+    st.markdown("<div class='auth-shell'><div class='auth-card'>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class='auth-hero'>
+            <div>
+                <div class='brand-lockup'>
+                    <div class='brand-mark'>CI</div>
+                    <div>
+                        <div class='brand-name' style='color:#fff;'>Contract Intelligence</div>
+                        <div class='brand-subtitle' style='color:rgba(255,255,255,.78);'>AI contract review workspace</div>
+                    </div>
+                </div>
+                <h1>Review contracts with confidence.</h1>
+                <p>Upload contracts, review clauses, benchmark terms, and ask evidence-based AI questions in one clean workspace.</p>
+            </div>
+            <div class='trust-list'>
+                <div class='trust-item'>✓ AI-powered clause review</div>
+                <div class='trust-item'>✓ Evidence-based answers</div>
+                <div class='trust-item'>✓ Private by default</div>
+            </div>
+        </div>
+        <div class='auth-panel'>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_brand_logo("Secure workspace for contract review")
 
-    tab1, tab2 = st.tabs(["Sign In", "Sign Up"])
+    tab1, tab2 = st.tabs(["Sign in", "Create account"])
 
     with tab1:
+        st.markdown("### Welcome back")
+        st.caption("Sign in to your workspace.")
         with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submit = st.form_submit_button("Sign In")
+            username = st.text_input("Username", placeholder="Enter your username")
+            password = st.text_input("Password", type="password", placeholder="Enter your password")
+            submit = st.form_submit_button("Sign in")
 
             if submit:
-                response = make_api_request(
-                    "/auth/login",
-                    "POST",
-                    {"username": username, "password": password},
-                    auth=False,
-                )
-
-                if response and response.status_code == 200:
-                    data = response.json()
-                    st.session_state.token = data["access_token"]
-                    st.session_state.username = username
-                    st.success("Login successful!")
-                    st.rerun()
-                else:
-                    st.error("Login failed. Please check your credentials.")
-
-    with tab2:
-        with st.form("register_form"):
-            username = st.text_input("Username")
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            confirm_password = st.text_input("Confirm Password", type="password")
-            submit = st.form_submit_button("Sign Up")
-
-            if submit:
-                if password != confirm_password:
-                    st.error("Passwords do not match")
+                if not username.strip() or not password:
+                    st.error("Please enter your username and password.")
                 else:
                     response = make_api_request(
-                        "/auth/register",
+                        "/auth/login",
                         "POST",
-                        {"username": username, "email": email, "password": password},
+                        {"username": username.strip(), "password": password},
                         auth=False,
                     )
 
                     if response and response.status_code == 200:
-                        st.success("Registration successful! Please sign in.")
+                        data = response.json()
+                        st.session_state.token = data["access_token"]
+                        st.session_state.username = username.strip()
+                        st.success("Signed in successfully.")
+                        st.rerun()
                     else:
-                        st.error(
-                            "Registration failed. Username or email might already exist."
-                        )
+                        api_error = st.session_state.get("last_api_error")
+                        if api_error and api_error.status_code is None:
+                            friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
+                        else:
+                            st.error("We could not sign you in. Please check your username and password.")
+        st.caption("New here? Create an account using the tab beside Sign in.")
 
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    with tab2:
+        st.markdown("### Create your workspace")
+        st.caption("Start analyzing contracts with AI-powered insights.")
+        with st.form("register_form"):
+            username = st.text_input("Username", placeholder="Choose a username", key="register_username")
+            email = st.text_input("Email", placeholder="name@company.com", key="register_email")
+            password = st.text_input("Password", type="password", placeholder="Use at least 8 characters", key="register_password")
+            confirm_password = st.text_input("Confirm password", type="password", placeholder="Re-enter your password", key="register_confirm_password")
+            st.caption("Use at least 8 characters. Choose something you do not use elsewhere.")
+            submit = st.form_submit_button("Create account")
+
+            if submit:
+                if not username.strip():
+                    st.error("Please enter a username.")
+                elif not email.strip():
+                    st.error("Please enter an email address.")
+                elif not password:
+                    st.error("Please enter a password.")
+                elif len(password) < 8:
+                    st.error("Please use a password with at least 8 characters.")
+                elif password != confirm_password:
+                    st.error("Passwords do not match. Please re-enter them.")
+                else:
+                    response = make_api_request(
+                        "/auth/register",
+                        "POST",
+                        {"username": username.strip(), "email": email.strip(), "password": password},
+                        auth=False,
+                    )
+
+                    if response and response.status_code == 200:
+                        st.success("Account created. You can now sign in.")
+                        st.caption("Already have an account? Sign in using the tab above.")
+                    else:
+                        api_error = st.session_state.get("last_api_error")
+                        if api_error and api_error.status_code is None:
+                            friendly_error(api_error.friendly_message, api_error.suggested_next_step, api_error.technical_detail)
+                        else:
+                            st.error("That username or email may already be registered.")
+        st.caption("Already have an account? Sign in using the tab above.")
+
+    st.markdown("</div></div></div>", unsafe_allow_html=True)
 
 
 def get_clients_list():
@@ -682,8 +754,10 @@ def get_clients_list():
 
 
 def contract_analysis_page():
-    """Contract Analysis page"""
-    st.title("Contract Analysis")
+    """Guided Contract Analysis page."""
+    page_header("Analyze", "Upload a contract, extract key clauses, review health, compare benchmarks, and ask AI questions from one guided workflow.", "Contract workflow")
+    workflow_stepper(["Select client", "Upload contract", "Run analysis", "Review health", "Compare benchmark", "Ask AI"], active_index=2 if st.session_state.get("current_clauses") else 1)
+    render_next_step("Next step", "Select or create a client, upload a PDF contract, then choose Analyze Contract Clauses.")
     
     # Display extended success message for client creation
     if "client_creation_success" in st.session_state:
@@ -906,6 +980,7 @@ def contract_analysis_page():
 
         with col1:
             if st.button("Analyze Contract Clauses"):
+                st.session_state.pop("current_clauses", None)
                 with st.spinner("Analyzing contract clauses..."):
                     if pdf_bytes:
                         files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
@@ -927,22 +1002,40 @@ def contract_analysis_page():
 
                     if response and response.status_code == 200:
                         data = response.json()
-                        clauses = data["clauses"]
+                        structured = data.get("structured_clauses", {})
+                        clauses = structured.get("clauses", {})
                         clause_explanations = data.get("clause_explanations", {})
 
                         st.success("Contract analyzed successfully!")
-                        st.subheader("Extracted Clauses")
+                        found_count = sum(1 for v in clauses.values() if isinstance(v, dict) and v.get("status") == "found")
+                        not_found_count = sum(1 for v in clauses.values() if isinstance(v, dict) and v.get("status") in {"not_found", "missing"})
+                        review_count = max(0, len(clauses) - found_count - not_found_count)
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Clauses Found", found_count)
+                        m2.metric("Need Review", review_count)
+                        m3.metric("Not Found", not_found_count)
 
-                        for clause_type, content in clauses.items():
-                            with st.expander(f"{clause_type}"):
-                                st.write(content)
-                                explanation = clause_explanations.get(clause_type)
-                                if explanation:
-                                    st.markdown("**In simple terms:**")
-                                    st.write(explanation)
+                        st.subheader("Validated Clause Extraction")
+                        filter_col, search_col = st.columns([1, 2])
+                        with filter_col:
+                            clause_filter = st.selectbox("Filter clauses", ["All", "Found", "Needs Review", "Not Found"], key=f"clause_filter_{contract_id}")
+                        with search_col:
+                            clause_search = st.text_input("Search clauses", placeholder="Search by clause name...", key=f"clause_search_{contract_id}")
+                        for clause_type, payload in clauses.items():
+                            status = payload.get("status", "unknown") if isinstance(payload, dict) else "unknown"
+                            title = titleize_key(clause_type)
+                            if clause_search and clause_search.lower() not in title.lower():
+                                continue
+                            if clause_filter == "Found" and status != "found":
+                                continue
+                            if clause_filter == "Needs Review" and status not in {"needs_review", "partial", "partially_found"}:
+                                continue
+                            if clause_filter == "Not Found" and status not in {"not_found", "missing"}:
+                                continue
+                            render_clause_card(clause_type, payload, clause_explanations.get(clause_type))
 
-                        # Store clauses for evaluation
-                        st.session_state.current_clauses = clauses
+                        # Store validated found clauses only for evaluation
+                        st.session_state.current_clauses = {k:v.get("extracted_text") for k,v in clauses.items() if isinstance(v, dict) and v.get("status")=="found" and v.get("extracted_text")}
                     elif response is not None:
                         st.error("Failed to analyze contract")
                         try:
@@ -1016,76 +1109,111 @@ def contract_analysis_page():
 
         st.markdown("---")
         st.subheader("Ask AI About This Contract")
-        st.caption("Contract assistant only — not legal advice. Answers are grounded in detected contract evidence.")
-        chat_key = f"contract_chat_history_{contract_id}"
-        if chat_key not in st.session_state:
-            st.session_state[chat_key] = []
+        st.caption("AI-assisted review only — not legal advice. Answers stay grounded in this contract.")
 
-        render_chat_history(st.session_state[chat_key])
+        select_contract(contract_id)
+        if "chat_messages_by_contract" not in st.session_state:
+            st.session_state.chat_messages_by_contract = {}
+        if "last_chat_error" not in st.session_state:
+            st.session_state.last_chat_error = None
 
-        with st.form(f"contract_chat_form_{contract_id}", clear_on_submit=True):
-            q_col, send_col = st.columns([8, 1])
-            with q_col:
-                user_question = st.text_input(
-                    "Ask a question about this contract...",
-                    placeholder="Ask a question about this contract...",
-                    label_visibility="collapsed",
-                    key=f"chat_input_{contract_id}",
-                )
-            with send_col:
-                send_clicked = st.form_submit_button("Send")
+        messages_by_contract = st.session_state.chat_messages_by_contract
+        if contract_id not in messages_by_contract:
+            messages_by_contract[contract_id] = []
+        chat_messages = messages_by_contract[contract_id]
 
-        if send_clicked:
-            if not user_question or not user_question.strip():
-                st.warning("Please enter a question first.")
-            else:
-                question = user_question.strip()
-                st.session_state[chat_key].append({"role": "user", "content": question})
+        chip_prompts = [
+            "What clauses are missing?",
+            "What are the main risks?",
+            "Does this contract mention vacation?",
+            "Explain the termination clause.",
+            "What should I review before signing?",
+        ]
+        st.markdown("**Try asking:**")
+        chip_cols = st.columns(len(chip_prompts))
+        selected_prompt = None
+        for idx, prompt in enumerate(chip_prompts):
+            with chip_cols[idx]:
+                if st.button(prompt, key=f"chat_chip_{contract_id}_{idx}"):
+                    selected_prompt = prompt
 
-                with st.spinner("Thinking..."):
-                    chat_response = make_api_request(
-                        f"/contracts/{contract_id}/chat",
-                        "POST",
-                        {"question": question, "response_language": response_language},
-                    )
-
-                    if chat_response and chat_response.status_code == 200:
-                        payload = chat_response.json()
-                        answer = payload.get("answer", "No answer returned")
-                        confidence = payload.get("confidence", 0)
-                        intent = payload.get("intent", "general_contract")
-                        evidence = payload.get("evidence", [])
-                        follow_ups = payload.get("follow_up_questions", [])
-
-                        lines = [
-                            answer,
-                            "",
-                            f"Confidence: {confidence}",
-                            f"Intent: {str(intent).replace('_', ' ')}",
-                        ]
-                        if evidence:
-                            lines.append("Evidence:")
-                            for ev in evidence[:2]:
-                                lines.append(f'- "{ev.get("quote", "")}" ({ev.get("location", "unknown")})')
-                        if follow_ups:
-                            lines.append("Suggested next questions:")
-                            for q in follow_ups[:2]:
-                                lines.append(f"- {q}")
-
-                        st.session_state[chat_key].append(
-                            {"role": "assistant", "content": "\n".join(lines)}
-                        )
-                    else:
-                        error_msg = "Failed to get AI answer"
-                        if chat_response:
-                            try:
-                                error_data = chat_response.json()
-                                error_msg = error_data.get("detail", error_msg)
-                            except Exception:
-                                pass
-                        st.error(error_msg)
+        c1, c2 = st.columns([1, 5])
+        with c1:
+            if st.button("Clear chat", key=f"clear_chat_{contract_id}"):
+                st.session_state.chat_messages_by_contract[contract_id] = []
+                st.session_state.last_chat_error = None
                 st.rerun()
-        
+
+        render_chat_history(chat_messages)
+
+        if chat_messages and chat_messages[-1].get("role") == "assistant":
+            followups = chat_messages[-1].get("suggested_followups", [])[:3]
+            if followups:
+                st.markdown("**Suggested follow-ups:**")
+                follow_cols = st.columns(len(followups))
+                for idx, followup in enumerate(followups):
+                    with follow_cols[idx]:
+                        if st.button(followup, key=f"chat_followup_{contract_id}_{len(chat_messages)}_{idx}"):
+                            selected_prompt = followup
+
+        typed_prompt = st.chat_input(
+            "Ask about clauses, risks, obligations, missing terms, or signing concerns...",
+            key=f"current_chat_input_{contract_id}",
+        )
+        question = selected_prompt or typed_prompt
+
+        if question and question.strip():
+            question = question.strip()
+            chat_messages.append({"role": "user", "content": question})
+            st.session_state.last_chat_error = None
+
+            with st.spinner("Reviewing the contract evidence..."):
+                chat_response = make_api_request(
+                    f"/contracts/{contract_id}/chat",
+                    "POST",
+                    {
+                        "message": question,
+                        "chat_history": chat_messages[-10:],
+                        "response_language": response_language,
+                    },
+                )
+
+            if chat_response and chat_response.status_code == 200:
+                payload = chat_response.json()
+                chat_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": payload.get("answer", "I could not generate an answer."),
+                        "answer_type": payload.get("answer_type"),
+                        "confidence": payload.get("confidence"),
+                        "evidence_snippets": payload.get("evidence_snippets", []),
+                        "suggested_followups": payload.get("suggested_followups", []),
+                        "limitations": payload.get("limitations"),
+                    }
+                )
+            else:
+                friendly_error = "I couldn’t reach the contract assistant service. Please make sure the backend is running."
+                technical_detail = None
+                if chat_response:
+                    try:
+                        error_data = chat_response.json()
+                        technical_detail = error_data.get("detail")
+                        if chat_response.status_code == 400:
+                            friendly_error = "Please analyze this contract first so I have evidence to answer from."
+                        elif chat_response.status_code == 503:
+                            friendly_error = "The AI model is currently unavailable. Please check Ollama/OpenAI configuration and try again."
+                        elif technical_detail:
+                            friendly_error = "The contract assistant hit a problem, but no raw traceback is shown here."
+                    except Exception:
+                        technical_detail = chat_response.text[:800]
+                st.session_state.last_chat_error = technical_detail
+                chat_messages.append({"role": "assistant", "content": friendly_error, "answer_type": "error"})
+            st.rerun()
+
+        if st.session_state.last_chat_error:
+            with st.expander("Technical details"):
+                st.write(st.session_state.last_chat_error)
+
         # Add option to clear current contract and start over
         st.markdown("---")
         if st.button("Clear Contract and Start Over"):
@@ -1112,7 +1240,7 @@ def get_contracts_list():
 
 def clients_contracts_page():
     """Enhanced Clients and Contracts management page with full CRUD operations"""
-    st.title("Data Management")
+    page_header("Clients and Contracts", "Manage clients, upload contracts, and launch analysis actions.", "Workspace")
 
     tab1, tab2 = st.tabs(["Client Management", "Contract Management"])
 
@@ -1370,88 +1498,146 @@ def clients_contracts_page():
 
 
 
-def benchmark_page():
-    """Benchmark Comparison page (additive feature)."""
-    st.title("Benchmark Comparison")
-    st.caption("Clause-level benchmarking only. Not legal advice.")
 
-    with st.form("benchmark_form"):
-        uploaded_file = st.file_uploader("Upload contract (.pdf, .docx, .txt)", type=["pdf", "docx", "txt"])
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            contract_type = st.selectbox(
-                "Contract Type",
-                ["employment", "msa", "vendor", "nda", "other"],
-            )
-        with col2:
-            jurisdiction = st.selectbox(
-                "Jurisdiction",
-                ["jordan", "usa", "uk", "eu", "other"],
-            )
-        with col3:
-            industry = st.text_input("Industry (optional)")
+def render_benchmark_comparison(payload: Dict[str, Any]):
+    context = payload.get("benchmark_context", {})
+    overall = payload.get("overall_position", {})
+    st.subheader(payload.get("benchmark_title", "Benchmark Comparison"))
 
-        opt_in = st.checkbox("Opt-in: store embedding + minimal metadata for future benchmarks", value=False)
-        submitted = st.form_submit_button("Run Benchmark")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Benchmark Alignment Score", f"{overall.get('alignment_score', 'N/A')}/100")
+    with c2:
+        st.metric("Position", overall.get("position_label", "N/A"))
+    with c3:
+        st.metric("Confidence", context.get("confidence_label", "N/A"))
 
-    if submitted:
-        if not uploaded_file:
-            st.error("Please upload a contract file.")
-            return
+    st.markdown("### Benchmark Context")
+    st.info(
+        f"**Contract type:** {context.get('contract_type', 'N/A')}\n\n"
+        f"**Region / jurisdiction:** {context.get('region', 'N/A')} / {context.get('jurisdiction', 'Not clearly detected')}\n\n"
+        f"**Benchmark basis:** {context.get('benchmark_basis', 'Rule-based benchmark standard')}\n\n"
+        f"**Sample size:** {context.get('sample_size') or 'Not applicable'}"
+    )
+    for limitation in context.get("limitations", []):
+        st.caption(f"Limitation: {limitation}")
 
-        with st.spinner("Running clause-level benchmark analysis..."):
-            files = {"file": (uploaded_file.name, uploaded_file.read(), "application/octet-stream")}
-            data = {
-                "contract_type": contract_type,
-                "jurisdiction": jurisdiction,
-                "industry": industry,
-                "opt_in_store_user_data": opt_in,
+    st.markdown("### Overall Position")
+    st.success(overall.get("executive_summary", "No executive summary available."))
+    reasons = overall.get("top_reasons_for_score", [])
+    if reasons:
+        st.markdown("**Top reasons for score**")
+        for reason in reasons[:3]:
+            st.write(f"- {reason}")
+
+    st.markdown("### Your Contract vs Benchmark")
+    rows = payload.get("your_contract_vs_benchmark", [])
+    if rows:
+        display_rows = [
+            {
+                "Review Area": r.get("review_area"),
+                "Your Contract": r.get("your_contract"),
+                "Benchmark Expectation": r.get("benchmark_expectation"),
+                "Result": r.get("result"),
+                "Severity": r.get("severity"),
+                "Recommendation": r.get("recommendation"),
             }
-            response = make_api_request("/benchmark/analyze", "POST", data=data, files=files)
+            for r in rows
+        ]
+        st.dataframe(display_rows, use_container_width=True, hide_index=True)
+        with st.expander("Evidence behind benchmark rows"):
+            for r in rows:
+                evidence = r.get("evidence", [])
+                if evidence:
+                    st.markdown(f"**{r.get('review_area')}**")
+                    for ev in evidence:
+                        st.info(ev.get("quote", ""))
+                        if ev.get("location"):
+                            st.caption(ev.get("location"))
+    else:
+        st.warning("No benchmark rows were generated.")
 
-        if response and response.status_code == 200:
-            payload = response.json()
-            clause_results = payload.get("clause_results", [])
-            st.metric("Overall Alignment Score", payload.get("overall_score", "N/A"))
-            st.caption(f"Compared {len(clause_results)} clause(s) from this contract.")
+    st.markdown("### Market Terms Comparison")
+    terms = payload.get("market_terms_comparison", [])
+    if terms:
+        st.dataframe([
+            {
+                "Term": t.get("term"),
+                "Your Contract": t.get("your_contract"),
+                "Benchmark Expectation / Average": t.get("benchmark_average"),
+                "Benchmark Range": t.get("benchmark_range"),
+                "Difference": t.get("difference"),
+                "Interpretation": t.get("interpretation"),
+                "Limitations": t.get("limitations"),
+            }
+            for t in terms
+        ], use_container_width=True, hide_index=True)
 
-            fallbacks = payload.get("meta", {}).get("fallbacks_used", [])
-            if fallbacks:
-                st.info(f"Fallbacks used: {', '.join(fallbacks)}")
-
-            if not clause_results:
-                st.warning("No clauses detected from this file.")
-
-            for clause in clause_results:
-                label = clause.get("alignment_label", "yellow")
-                badge = "🟢" if label == "green" else "🟡" if label == "yellow" else "🔴"
-                score = clause.get("clause_score", "N/A")
-                conf = clause.get("confidence", 0)
-                with st.expander(f"{badge} {clause.get('clause_type', 'unknown')} — {score}/100"):
-                    st.write(f"Confidence: {conf}")
-                    st.write(f"Peers (N): {clause.get('benchmark_stats', {}).get('N', 0)}")
-
-                    patterns = clause.get('typical_patterns', [])
-                    if patterns:
-                        st.write("Typical patterns:")
-                        for pattern in patterns[:2]:
-                            st.write(f"- {pattern}")
-
-                    if clause.get("suggested_revision"):
-                        st.write(f"Suggested revision: {clause['suggested_revision']}")
-
-                    citations = clause.get("citations", [])
-                    if citations:
-                        st.write("References:")
-                        for cit in citations[:2]:
-                            st.write(f"- {cit.get('benchmark_clause_id')}: {cit.get('snippet_used')}")
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("### Strengths")
+        strengths = payload.get("strengths", [])
+        if strengths:
+            for item in strengths:
+                st.write(f"✅ {item}")
         else:
-            st.error("Benchmark analysis failed")
+            st.caption("No major benchmark strengths identified yet.")
+    with col_b:
+        st.markdown("### Gaps")
+        gaps = payload.get("gaps", [])
+        if gaps:
+            for item in gaps[:8]:
+                st.write(f"⚠️ {item}")
+        else:
+            st.caption("No major benchmark gaps identified.")
+
+    st.markdown("### Priority Recommendations")
+    priorities = payload.get("priority_recommendations", {})
+    st.markdown("**Priority 1 — Must Fix Before Approval**")
+    for item in priorities.get("priority_1_must_fix", []) or ["No critical benchmark fixes identified."]:
+        st.write(f"- {item}")
+    st.markdown("**Priority 2 — Recommended Enhancements**")
+    for item in priorities.get("priority_2_recommended", []) or ["No recommended benchmark enhancements identified."]:
+        st.write(f"- {item}")
+
+    st.markdown("### AI Commentary")
+    st.write(payload.get("ai_commentary", "AI commentary unavailable."))
+
+    with st.expander("Debug: Raw Benchmark Response"):
+        st.json(payload)
+
+def benchmark_page():
+    """Professional Benchmark Comparison page."""
+    page_header("Benchmark", "Compare this contract against benchmark expectations for its contract type.", "Contract comparison")
+
+    contracts = get_contracts_list()
+    if not contracts:
+        st.info("No contracts found. Upload and analyze a contract first.")
+        return
+
+    options = {f"{c.get('title', 'Untitled Contract')} ({c.get('_id') or c.get('id')})": c.get('_id') or c.get('id') for c in contracts}
+    selected_label = st.selectbox("Select analyzed contract", list(options.keys()))
+    selected_contract_id = options[selected_label]
+
+    if st.button("Run Benchmark Comparison", type="primary"):
+        with st.spinner("Building benchmark comparison from validated clauses..."):
+            response = make_api_request(f"/benchmark/compare/{selected_contract_id}", "POST")
+        if response and response.status_code == 200:
+            st.session_state[f"benchmark_comparison_{selected_contract_id}"] = response.json()
+            st.success("Benchmark comparison completed.")
+        else:
+            st.error("Benchmark comparison failed")
             if response:
                 try:
                     st.error(response.json().get("detail", "Unknown error"))
                 except Exception:
                     pass
+
+    payload = st.session_state.get(f"benchmark_comparison_{selected_contract_id}")
+    if payload:
+        render_benchmark_comparison(payload)
+    else:
+        st.info("Run Benchmark Comparison to see context, score, contract-vs-benchmark rows, market terms, gaps, and recommendations.")
 
 
 def admin_dashboard():
@@ -1554,16 +1740,81 @@ def admin_dashboard():
                 st.info("No logs found")
 
 
+
+def dashboard_page():
+    render_brand_logo("Professional contract review workspace")
+    page_header("Dashboard", "Your contract review command center. Start with a client, upload a contract, then run analysis.", "Overview")
+    stats = get_dashboard_stats()
+    contracts = get_contracts_list()
+    analyzed_contracts = sum(1 for contract in contracts if contract.get("status") == "analyzed")
+    benchmark_outliers = sum(1 for contract in contracts if (contract.get("benchmark_result") or {}).get("overall_position", {}).get("alignment_score", 100) < 50)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        render_metric_card("Total Contracts", str(stats.get("contracts", len(contracts) or 0)), "Uploaded contracts")
+    with c2:
+        render_metric_card("Clients", str(stats.get("clients", 0)), "Active workspaces")
+    with c3:
+        render_metric_card("Analyses Completed", str(analyzed_contracts), "Ready for review")
+    with c4:
+        render_metric_card("Average Contract Health", "N/A", "Run health review to calculate")
+    with c5:
+        render_metric_card("Benchmark Outliers", str(benchmark_outliers), "Need closer review")
+
+    if not contracts:
+        empty_state(
+            "Start by adding a client and uploading your first contract.",
+            "Once a contract is uploaded, you can run clause analysis, check contract health, compare benchmarks, and ask AI questions.",
+            "Go to Clients or Analyze to begin.",
+        )
+    else:
+        st.markdown("### Recent contracts")
+        recent_rows = [
+            {
+                "Contract": contract.get("title", "Untitled contract"),
+                "Status": titleize_key(contract.get("status", "uploaded")),
+                "Created": str(contract.get("created_at", "N/A"))[:19],
+            }
+            for contract in contracts[:6]
+        ]
+        st.dataframe(recent_rows, use_container_width=True, hide_index=True)
+
+    render_next_step("Recommended next step", "Select a client, upload a contract, then run Contract Analysis to unlock health review, benchmark comparison, and AI Assistant.")
+
+
+def ask_ai_page():
+    page_header("AI Assistant", "Ask contract-specific questions grounded in extracted evidence.", "Contract assistant")
+    empty_state("Use Ask AI inside Contract Analysis", "Select or upload a contract, then use the chat panel attached to that contract so history and evidence stay scoped correctly.", "Go to Contract Analysis → Ask AI About This Contract")
+
+
+def settings_diagnostics_page():
+    page_header("Settings", "Check app, AI, and database readiness without exposing secrets.", "Diagnostics")
+    health = make_api_request("/healthz", auth=False)
+    if health and health.status_code == 200:
+        st.markdown("### API Health")
+        st.success("Backend API is responding.")
+        with st.expander("Debug: API health response"):
+            st.json(health.json())
+    llm = make_api_request("/llm/health", auth=False)
+    if llm and llm.status_code == 200:
+        llm_payload = llm.json()
+        status = "Online" if llm_payload.get("reachable") else "Offline"
+        st.markdown("### LLM Health")
+        st.info(f"AI provider: {llm_payload.get('ai_provider', 'Unknown')} · Status: {status}")
+        with st.expander("Debug: LLM health response"):
+            st.json(llm_payload)
+
 def main():
     """Main application"""
     st.set_page_config(
-        page_title="Contract Analysis Platform", page_icon="📄", layout="wide"
+        page_title="Contract Intelligence", page_icon="⚖️", layout="wide"
     )
 
     if "sidebar_compact" not in st.session_state:
         st.session_state.sidebar_compact = False
 
     apply_modern_theme(st.session_state.sidebar_compact)
+    apply_global_css(st.session_state.sidebar_compact)
 
     # Check if user is logged in
     if not st.session_state.token:
@@ -1571,44 +1822,51 @@ def main():
         return
     
 
-    # Sidebar navigation (functional)
-    st.sidebar.title("⚡ CAP")
-    st.sidebar.caption(f"Welcome, {st.session_state.username}")
-    st.sidebar.caption("Arabic + English OCR and bilingual AI responses enabled")
-    st.sidebar.toggle("Compact sidebar", key="sidebar_compact")
-    st.sidebar.markdown("---")
-    navigation = st.sidebar.radio(
-        "Navigate",
-        (["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard", "📚 Benchmark"] if BENCHMARK_ENABLED else ["🏠 Contract Analysis", "🗂️ Data Management", "📊 Admin Dashboard"]),
-        label_visibility="collapsed",
-    )
-
-    if st.sidebar.button("Logout"):
-        # Clear all session state
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+    # Sidebar navigation
+    with st.sidebar:
+        render_brand_logo("Contract review workspace")
+        st.caption(f"Signed in as {st.session_state.username}")
+        st.toggle("Compact sidebar", key="sidebar_compact")
+        st.markdown("---")
+        nav_items = [
+            "Dashboard",
+            "Clients",
+            "Contracts",
+            "Analyze",
+            "Benchmark",
+            "AI Assistant",
+            "Settings",
+        ]
+        if not BENCHMARK_ENABLED:
+            nav_items.remove("Benchmark")
+        navigation = st.radio("Navigate", nav_items, label_visibility="collapsed")
+        st.markdown("---")
+        if st.button("Log out"):
+            clear_session()
+            st.rerun()
 
     render_chrome_header(st.session_state.username)
 
     st.markdown("<div class='page-transition'>", unsafe_allow_html=True)
 
     # Main content
-    if navigation == "🏠 Contract Analysis":
-        contract_analysis_page()
-        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
-
-    elif navigation == "🗂️ Data Management":
+    if navigation == "Dashboard":
+        dashboard_page()
+    elif navigation in {"Clients", "Contracts"}:
         clients_contracts_page()
         st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
-
-    elif navigation == "📊 Admin Dashboard":
-        admin_dashboard()
-        st.markdown("<div class='fab-chip'>📈 Main Action: Monitor Metrics</div>", unsafe_allow_html=True)
-
-    elif navigation == "📚 Benchmark":
+    elif navigation == "Analyze":
+        contract_analysis_page()
+        st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
+    elif navigation == "Benchmark":
         benchmark_page()
         st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
+    elif navigation == "AI Assistant":
+        ask_ai_page()
+    elif navigation == "Settings":
+        settings_diagnostics_page()
+        st.markdown("---")
+        admin_dashboard()
 
     st.markdown("</div>", unsafe_allow_html=True)
 

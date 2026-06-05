@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 CONTRACT_TYPE_RULES: Dict[str, Dict[str, Any]] = {
@@ -137,12 +137,24 @@ def _pretty_clause_name(name: str, response_language: str) -> str:
     return arabic_map.get(name, name) if _is_arabic_response(response_language) else name
 
 
-def _dimension(name: str, score: int, explanation: str, evidence: List[Dict[str, str]]) -> Dict[str, Any]:
+def _dimension(
+    name: str,
+    score: int,
+    explanation: str,
+    evidence: List[Dict[str, str]],
+    missing_information: Optional[List[str]] = None,
+    recommended_action: Optional[str] = None,
+) -> Dict[str, Any]:
+    bounded_score = max(0, min(100, score))
     return {
         "name": name,
-        "score": max(0, min(100, score)),
+        "score": bounded_score,
         "explanation": explanation,
+        "reason": explanation,
         "evidence": evidence,
+        "supporting_evidence": evidence,
+        "missing_information": missing_information or [],
+        "recommended_action": recommended_action or "Review this area against the cited contract evidence before approval.",
     }
 
 
