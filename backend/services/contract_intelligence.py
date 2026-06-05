@@ -19,10 +19,10 @@ SYNONYM_MAP: Dict[str, List[str]] = {
     "law": ["governing law", "jurisdiction", "laws"],
     "governs": ["governing", "jurisdiction"],
     "jurisdiction": ["governing law", "law", "governed"],
-    "payment": ["invoice", "fee", "price", "compensation", "pay"],
-    "terminate": ["termination", "end", "cancel"],
-    "confidential": ["non-disclosure", "nda", "privacy"],
-    "liability": ["damages", "cap", "indemnity"],
+    "payment": ["invoice", "fee", "price", "compensation", "pay", "الدفع", "الرسوم", "المقابل", "الراتب"],
+    "terminate": ["termination", "end", "cancel", "إنهاء", "فسخ", "مدة العقد"],
+    "confidential": ["non-disclosure", "nda", "privacy", "سرية", "المعلومات السرية"],
+    "liability": ["damages", "cap", "indemnity", "مسؤولية", "حدود المسؤولية"],
 }
 
 
@@ -42,13 +42,13 @@ PERSONAL_NONLEGAL_HINTS = {
 
 
 INTENT_KEYWORDS: Dict[str, set[str]] = {
-    "leave_policy": {"leave", "vacation", "sick", "absence", "day off", "time off"},
-    "working_hours": {"hours", "schedule", "shift", "overtime", "week"},
-    "compensation": {"salary", "payment", "invoice", "bonus", "compensation", "pay"},
-    "termination": {"terminate", "termination", "resign", "notice", "end"},
-    "confidentiality": {"confidential", "nda", "non-disclosure", "disclose"},
-    "governing_law": {"law", "jurisdiction", "court", "arbitration", "dispute"},
-    "obligations": {"must", "obligation", "required", "responsibility", "deliverable"},
+    "leave_policy": {"leave", "vacation", "sick", "absence", "day off", "time off", "إجازة", "اجازة", "مرضية", "عطلة"},
+    "working_hours": {"hours", "schedule", "shift", "overtime", "week", "ساعات", "دوام", "إضافي"},
+    "compensation": {"salary", "payment", "invoice", "bonus", "compensation", "pay", "راتب", "الدفع", "الرسوم", "المقابل المالي"},
+    "termination": {"terminate", "termination", "resign", "notice", "end", "إنهاء", "فسخ", "إشعار", "مدة العقد"},
+    "confidentiality": {"confidential", "nda", "non-disclosure", "disclose", "سرية", "المعلومات السرية"},
+    "governing_law": {"law", "jurisdiction", "court", "arbitration", "dispute", "القانون", "النظام", "المحكمة", "تحكيم", "المنازعات"},
+    "obligations": {"must", "obligation", "required", "responsibility", "deliverable", "التزامات", "مسؤوليات", "الخدمة"},
 }
 
 @dataclass
@@ -60,7 +60,7 @@ class RetrievalHit:
 
 
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[a-zA-Z0-9_\-']+", (text or "").lower())
+    return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", (text or "").lower())
 
 
 def _expand_query_tokens(tokens: set[str]) -> set[str]:
@@ -314,19 +314,19 @@ def _validated_clause_record(clause_name: str, matches: list[dict], source_text:
 def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
     chunks = chunk_contract_text(contract_text)
     clause_map = {
-        "parties": ["party", "parties", "between"],
-        "effective_date": ["effective", "date"],
-        "term": ["term", "duration"],
-        "renewal": ["renew", "automatic renewal"],
-        "termination": ["termination", "terminate"],
-        "payment_terms": ["payment", "invoice", "fees"],
-        "liability": ["liability", "damages", "limit"],
-        "confidentiality": ["confidential", "confidentiality"],
-        "governing_law": ["governing law", "law", "jurisdiction"],
-        "dispute_resolution": ["dispute", "arbitration", "mediation"],
-        "sla_obligations": ["service level", "sla", "obligation", "deliverable"],
-        "penalties": ["penalty", "liquidated damages", "late fee"],
-        "change_control": ["change", "amendment", "change order"],
+        "parties": ["party", "parties", "between", "الأطراف", "طرف", "بين"],
+        "effective_date": ["effective", "date", "تاريخ", "سريان", "نافذ"],
+        "term": ["term", "duration", "مدة العقد", "المدة"],
+        "renewal": ["renew", "automatic renewal", "تجديد", "يتجدد"],
+        "termination": ["termination", "terminate", "إنهاء", "انهاء", "فسخ", "مدة العقد"],
+        "payment_terms": ["payment", "invoice", "fees", "الدفع", "الرسوم", "المقابل المالي", "راتب", "الأجر"],
+        "liability": ["liability", "damages", "limit", "مسؤولية", "حدود المسؤولية", "تعويض"],
+        "confidentiality": ["confidential", "confidentiality", "سرية", "المعلومات السرية"],
+        "governing_law": ["governing law", "law", "jurisdiction", "القانون الواجب التطبيق", "النظام المطبق", "القانون"],
+        "dispute_resolution": ["dispute", "arbitration", "mediation", "المنازعات", "تسوية النزاعات", "تحكيم", "وساطة"],
+        "sla_obligations": ["service level", "sla", "obligation", "deliverable", "التزامات", "مستوى الخدمة", "الخدمات"],
+        "penalties": ["penalty", "liquidated damages", "late fee", "غرامة", "جزاء", "تعويضات"],
+        "change_control": ["change", "amendment", "change order", "تعديل", "أمر تغيير"],
     }
 
     extracted: Dict[str, Dict[str, Any]] = {}

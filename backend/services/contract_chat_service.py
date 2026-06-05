@@ -13,6 +13,7 @@ from backend.services.ollama_contract_ai import (
 )
 
 DISCLAIMER = "AI-assisted review only — not legal advice."
+ARABIC_DISCLAIMER = "مراجعة بمساعدة الذكاء الاصطناعي فقط — ليست نصيحة قانونية."
 
 CONTRACT_CHAT_SYSTEM_PROMPT = """
 You are a senior contract intelligence assistant.
@@ -62,6 +63,7 @@ SMALL_TALK_PATTERNS = {
 APP_HELP_PATTERNS = {
     "what can you do", "what do you do", "explain this app", "how does this app work",
     "help", "help me", "what can i ask", "features", "capabilities",
+    "ماذا تستطيع", "اشرح التطبيق", "كيف يعمل", "مساعدة", "ساعدني", "ما الذي يمكنك",
 }
 
 UNSAFE_PATTERNS = {
@@ -69,23 +71,24 @@ UNSAFE_PATTERNS = {
     "forge", "fake signature", "backdate", "bypass the law", "break the law",
     "ignore your instructions", "show system prompt", "reveal system prompt", "hidden instructions",
     "chain of thought", "developer message", "system instructions",
+    "احتيال", "تزوير", "خداع", "تجاوز القانون", "اكشف التعليمات", "تعليمات النظام",
 }
 
 CLAUSE_SYNONYMS: Dict[str, List[str]] = {
-    "leave_policy": ["vacation", "leave", "annual leave", "paid leave", "sick leave", "holiday", "holidays"],
-    "compensation": ["salary", "compensation", "remuneration", "pay", "wage", "wages", "bonus", "commission"],
-    "termination": ["termination", "terminate", "firing", "dismissal", "quitting", "resignation", "notice"],
-    "governing_law": ["law", "governing law", "jurisdiction", "country"],
-    "dispute_resolution": ["dispute", "arbitration", "court", "mediation"],
-    "confidentiality": ["confidential", "confidentiality", "secret", "secrets", "nda", "non-disclosure"],
-    "intellectual_property": ["ip", "intellectual property", "ownership", "work product"],
-    "working_hours": ["hours", "working hours", "schedule", "overtime", "shift"],
-    "probation": ["probation", "trial period"],
-    "non_compete": ["non compete", "non-compete", "competitor", "competition"],
-    "parties": ["parties", "party", "employer", "employee", "client", "contractor"],
-    "payment_terms": ["invoice", "payment terms", "due date", "late payment", "fees"],
-    "renewal": ["renewal", "renew", "extension"],
-    "scope_of_work": ["scope", "responsibilities", "duties", "deliverables", "services"],
+    "leave_policy": ["vacation", "leave", "annual leave", "paid leave", "sick leave", "holiday", "holidays", "إجازة", "اجازة", "إجازات", "مرضية", "عطلة"],
+    "compensation": ["salary", "compensation", "remuneration", "pay", "wage", "wages", "bonus", "commission", "راتب", "أجر", "الأجر", "المقابل المالي", "الدفع"],
+    "termination": ["termination", "terminate", "firing", "dismissal", "quitting", "resignation", "notice", "إنهاء", "انهاء", "فسخ", "إشعار", "مدة العقد"],
+    "governing_law": ["law", "governing law", "jurisdiction", "country", "القانون الواجب التطبيق", "النظام المطبق", "القانون", "الاختصاص"],
+    "dispute_resolution": ["dispute", "arbitration", "court", "mediation", "المنازعات", "تسوية النزاعات", "تحكيم", "محكمة"],
+    "confidentiality": ["confidential", "confidentiality", "secret", "secrets", "nda", "non-disclosure", "سرية", "المعلومات السرية"],
+    "intellectual_property": ["ip", "intellectual property", "ownership", "work product", "ملكية فكرية", "حقوق الملكية"],
+    "working_hours": ["hours", "working hours", "schedule", "overtime", "shift", "ساعات العمل", "الدوام", "إضافي"],
+    "probation": ["probation", "trial period", "تجربة", "فترة التجربة"],
+    "non_compete": ["non compete", "non-compete", "competitor", "competition", "عدم منافسة"],
+    "parties": ["parties", "party", "employer", "employee", "client", "contractor", "الأطراف", "صاحب العمل", "الموظف", "العميل", "المقاول"],
+    "payment_terms": ["invoice", "payment terms", "due date", "late payment", "fees", "شروط الدفع", "فاتورة", "الرسوم", "تاريخ الاستحقاق"],
+    "renewal": ["renewal", "renew", "extension", "تجديد", "تمديد"],
+    "scope_of_work": ["scope", "responsibilities", "duties", "deliverables", "services", "نطاق العمل", "الخدمات", "المسؤوليات", "التزامات"],
 }
 
 QUESTION_SIGNALS = {
@@ -99,7 +102,7 @@ GREETINGS = {"hi", "hello", "hey", "good morning", "good afternoon", "good eveni
 
 
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[a-zA-Z0-9_\-']+", (text or "").lower())
+    return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", (text or "").lower())
 
 
 def _norm(text: str) -> str:
@@ -170,22 +173,22 @@ def classify_chat_intent(message: str, use_history: bool = True) -> Tuple[str, O
         return "app_help", None
     if _is_small_talk(q):
         return "small_talk", None
-    if any(word in q for word in ["rewrite", "redraft", "draft", "wording", "make this clause", "improve wording"]):
+    if any(word in q for word in ["rewrite", "redraft", "draft", "wording", "make this clause", "improve wording", "أعد صياغة", "صياغة", "مسودة"]):
         for clause_key, synonyms in CLAUSE_SYNONYMS.items():
             if clause_key.replace("_", " ") in q or any(s in q for s in synonyms):
                 return "rewrite_drafting", clause_key
         return "rewrite_drafting", None
-    if any(word in q for word in ["summarize", "summary", "overview", "what is this contract", "executive summary"]):
+    if any(word in q for word in ["summarize", "summary", "overview", "what is this contract", "executive summary", "لخص", "ملخص", "ما هو هذا العقد"]):
         return "contract_summary", None
-    if any(word in q for word in ["missing", "not included", "clauses are absent", "not found"]):
+    if any(word in q for word in ["missing", "not included", "clauses are absent", "not found", "ناقص", "غير موجود", "لم يذكر"]):
         return "missing_clause_check", None
-    if any(word in q for word in ["risk", "risks", "safe to sign", "safe", "red flag", "red flags"]):
+    if any(word in q for word in ["risk", "risks", "safe to sign", "safe", "red flag", "red flags", "مخاطر", "خطر", "آمن", "توقيع"]):
         return "risk_review", None
     if any(word in q for word in ["fix", "change first", "improve", "review before signing", "what should i review"]):
         return "recommendation", None
-    if any(word in q for word in ["benchmark", "market", "compare", "comparison"]):
+    if any(word in q for word in ["benchmark", "market", "compare", "comparison", "مقارنة", "معيار", "المقارنة المعيارية"]):
         return "benchmark_question", None
-    if any(word in q for word in ["score", "readiness", "approved", "approval", "health"]):
+    if any(word in q for word in ["score", "readiness", "approved", "approval", "health", "صحة العقد", "النتيجة", "جاهزية", "اعتماد"]):
         return "contract_health_question", None
 
     for clause_key, synonyms in CLAUSE_SYNONYMS.items():
@@ -244,18 +247,20 @@ def _app_help_response(response_language: str) -> Dict[str, Any]:
     return _empty_response(answer, "app_help", "High", ["What clauses are missing?", "Explain termination", "Draft a clearer payment clause"])
 
 
-def _unsafe_response() -> Dict[str, Any]:
+def _unsafe_response(response_language: str = "english") -> Dict[str, Any]:
+    answer = "لا أستطيع المساعدة في الاحتيال أو التزوير أو مخالفة القانون أو كشف التعليمات الداخلية. أستطيع مساعدتك في جعل البنود أوضح وأكثر قابلية للمراجعة." if _is_arabic_response(response_language) else "I can’t help create fraudulent, deceptive, illegal, or unsafe contract language, and I can’t reveal hidden instructions or system prompts. I can help rewrite clauses so they are clearer, fairer, and easier to review."
     return _empty_response(
-        "I can’t help create fraudulent, deceptive, illegal, or unsafe contract language, and I can’t reveal hidden instructions or system prompts. I can help rewrite clauses so they are clearer, fairer, and easier to review.",
+        answer,
         "unsafe_request",
         "High",
         ["Rewrite this clause clearly", "What risks should I review?", "What should I fix first?"],
     )
 
 
-def _no_contract_response() -> Dict[str, Any]:
+def _no_contract_response(response_language: str = "english") -> Dict[str, Any]:
+    answer = "يرجى رفع عقد أو اختياره أولاً، ثم أستطيع تحليله." if _is_arabic_response(response_language) else "Please upload or select a contract first, then I can analyze it."
     return _empty_response(
-        "Please upload or select a contract first, then I can analyze it.",
+        answer,
         "missing_contract",
         "High",
         ["Upload a contract", "What can you do?", "How does this app work?"],
@@ -378,6 +383,42 @@ def _missing_clause_names(clauses: Dict[str, Dict[str, Any]], health: Dict[str, 
     return list(dict.fromkeys(names))[:10]
 
 
+
+
+def _is_arabic_response(response_language: str) -> bool:
+    return (response_language or "english").strip().lower() in {"ar", "ara", "arabic", "العربية"}
+
+
+def _localized_disclaimer(response_language: str) -> str:
+    return ARABIC_DISCLAIMER if _is_arabic_response(response_language) else DISCLAIMER
+
+
+def _structure_answer(answer: str, response_language: str, evidence: List[Dict[str, str]], confidence: str, answer_type: str) -> str:
+    if not _is_arabic_response(response_language):
+        if answer_type == "missing_evidence" and "could not find" not in answer.lower():
+            answer = "I could not find this in the contract."
+        return answer
+    if answer_type == "small_talk" or answer_type == "app_help":
+        return answer
+    if answer_type == "missing_evidence":
+        short = "لم أجد ذلك في العقد."
+    else:
+        short = answer if re.search(r"[\u0600-\u06FF]", answer or "") else "راجعت الأدلة المتاحة في العقد. راجع النقاط والدليل أدناه قبل الاعتماد على النتيجة."
+    evidence_text = "لا يوجد دليل كافٍ في العقد." if not evidence else "\n".join(f"- {item.get('quote', '')[:260]}" for item in evidence[:3])
+    return (
+        "الإجابة المختصرة\n"
+        f"{short}\n\n"
+        "النقاط الرئيسية\n"
+        "- استخدمت البنود والأدلة المتاحة فقط.\n"
+        "- إذا كان الدليل ضعيفاً، يجب مراجعة البند قبل الاعتماد عليه.\n\n"
+        "الدليل من العقد\n"
+        f"{evidence_text}\n\n"
+        "مستوى الثقة\n"
+        f"{confidence}\n\n"
+        "الخطوة المقترحة\n"
+        "راجع النص المقتبس وأضف صياغة أوضح إذا كان البند ناقصاً أو غير واضح."
+    )
+
 def build_contract_chat_response(
     *,
     message: str,
@@ -413,13 +454,13 @@ def build_contract_chat_response(
             response["debug"] = {"intent": intent, "retrieval_used": False, "history_count": len(chat_history)}
         return response
     if intent == "unsafe_request":
-        response = _unsafe_response()
+        response = _unsafe_response(response_language)
         if debug:
             response["debug"] = {"intent": intent, "retrieval_used": False, "history_count": len(chat_history)}
         return response
 
     if _is_contract_intent(intent) and not contract_text.strip():
-        response = _no_contract_response()
+        response = _no_contract_response(response_language)
         if debug:
             response["debug"] = {"intent": intent, "retrieval_used": False, "history_count": len(chat_history)}
         return response
@@ -618,7 +659,15 @@ def build_contract_chat_response(
                 "Low",
             )
 
+    response["limitations"] = _localized_disclaimer(response_language)
     response["answer"] = _apply_response_mode(str(response.get("answer", "")), response_mode)
+    response["answer"] = _structure_answer(
+        str(response.get("answer", "")),
+        response_language,
+        response.get("evidence_snippets", []) or [],
+        str(response.get("confidence", "Medium")),
+        str(response.get("answer_type", "grounded_answer")),
+    )
 
     if debug:
         existing_debug = response.get("debug") if isinstance(response.get("debug"), dict) else {}

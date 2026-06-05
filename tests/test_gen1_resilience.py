@@ -77,3 +77,20 @@ def test_contract_chat_handles_llm_exception_without_crashing(monkeypatch):
     assert isinstance(answer, str)
     assert answer
     assert "new york" in answer.lower() or "governs" in answer.lower() or "contract" in answer.lower()
+
+
+def test_ocr_language_selection_supports_arabic_and_english():
+    assert gen1.get_ocr_languages("arabic") == "ara+eng"
+    assert gen1.get_ocr_languages("english") == "eng+ara"
+
+
+def test_upload_extractor_handles_txt_without_ocr():
+    result = gen1.extract_text_from_upload_bytes(b"Payment is due in 30 days.", "contract.txt", "text/plain")
+    assert result["text"] == "Payment is due in 30 days."
+    assert result["used_ocr"] is False
+
+
+def test_missing_docx_dependency_is_friendly(monkeypatch):
+    monkeypatch.setattr(gen1.importlib.util, "find_spec", lambda name: None if name == "docx" else object())
+    with pytest.raises(ValueError, match="DOCX support requires python-docx"):
+        gen1.extract_text_from_docx_bytes(b"not a docx")

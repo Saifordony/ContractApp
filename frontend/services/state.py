@@ -14,6 +14,8 @@ DEFAULTS = {
     "last_api_error": None,
     "last_chat_error": None,
     "sidebar_compact": False,
+    "ui_language": "en",
+    "theme_mode": "light",
 }
 
 

@@ -18,6 +18,7 @@ from backend.gen1 import (
     analyze_contract,
     evaluate_contract,
     extract_text_from_pdf_bytes,
+    extract_text_from_upload_bytes,
     analyze_and_evaluate_contract,
     explain_clauses_for_layman,
     llm_model,
@@ -368,8 +369,9 @@ async def analyze_contract_endpoint(
     use_ocr: bool = Form(True),
     current_user: dict = Depends(get_current_user),
 ):
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    allowed_extensions = (".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg")
+    if not file.filename or not file.filename.lower().endswith(allowed_extensions):
+        raise HTTPException(status_code=400, detail="Supported files: PDF, DOCX, TXT, PNG, JPG, and JPEG")
 
     if not is_genai_configured():
         raise HTTPException(
@@ -379,12 +381,15 @@ async def analyze_contract_endpoint(
 
     analysis_health = None
     try:
-        pdf_bytes = await file.read()
-        contract_text = extract_text_from_pdf_bytes(
-            pdf_bytes,
+        file_bytes = await file.read()
+        extracted = extract_text_from_upload_bytes(
+            file_bytes,
+            file.filename,
+            content_type=file.content_type,
             use_ocr=use_ocr,
             response_language=response_language,
         )
+        contract_text = extracted["text"]
         analysis_health = log_analysis_llm_context("/genai/analyze-contract")
         structured_clauses = extract_key_clauses(contract_text)
         found_clauses = {
@@ -409,7 +414,17 @@ async def analyze_contract_endpoint(
             }
         )
 
-        return {"structured_clauses": structured_clauses, "clause_explanations": clause_explanations}
+        ocr_warning = None
+        if extracted.get("used_ocr") and extracted.get("ocr_confidence") is not None and extracted.get("ocr_confidence", 1) < 0.45:
+            ocr_warning = "جودة المسح منخفضة، لذلك قد يكون بعض النص المستخرج غير دقيق." if response_language.lower().startswith("ar") else "The scan quality is low, so some extracted text may be inaccurate."
+        return {
+            "structured_clauses": structured_clauses,
+            "clause_explanations": clause_explanations,
+            "contract_text": contract_text,
+            "used_ocr": bool(extracted.get("used_ocr")),
+            "ocr_confidence": extracted.get("ocr_confidence"),
+            "ocr_warning": ocr_warning,
+        }
     except HTTPException:
         raise
     except Exception as e:

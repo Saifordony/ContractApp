@@ -116,3 +116,11 @@ def test_professional_pdf_handles_missing_ai_data_and_long_text():
 
 def test_simplify_text_replaces_hard_legal_jargon():
     assert "one-sided risk" in simplify_text("The indemnification provision creates asymmetric exposure.").lower()
+
+
+def test_arabic_pdf_generation_does_not_crash_and_has_arabic_labels():
+    pdf = build_professional_report_pdf("اتفاقية عمل", REPORT_PAYLOAD, client_name="شركة ألفا", report_title="تقرير مراجعة العقد", language="arabic")
+    assert pdf.startswith(b"%PDF")
+    text = _pdf_text(pdf)
+    assert "Chart:" in text
+    assert "Contract Intelligence" in text

@@ -33,11 +33,20 @@ def test_sidebar_uses_business_friendly_navigation_labels():
         "Analyze",
         "Benchmark",
         "AI Assistant",
+        "Reports",
         "Security & Privacy",
         "Settings",
+        "لوحة التحكم",
+        "العملاء",
+        "العقود",
+        "التحليل",
+        "المقارنة المعيارية",
+        "المساعد الذكي",
+        "التقارير",
+        "الإعدادات",
     ]:
-        assert f'"{label}"' in source
-    assert "Contract Readiness Review" not in source[source.index("nav_items = ["):source.index("navigation = st.radio")]
+        assert label in source
+    assert "Contract Readiness Review" not in source[source.index("NAV_KEYS = ["):source.index("def current_language")]
 
 
 def test_demo_mode_contains_preloaded_grading_workspace():
@@ -65,3 +74,24 @@ def test_dashboard_includes_guided_onboarding():
     assert "Upload contract" in source
     assert "Run analysis" in source
     assert "render_guided_onboarding()" in source
+
+
+def test_language_and_theme_switchers_are_static_configured():
+    source = Path("frontend/streamlit_app.py").read_text()
+    css = Path("frontend/styles/global_css.py").read_text()
+    assert "ui_language" in source
+    assert "theme_mode" in source
+    assert "Language / اللغة" in source
+    assert "Light mode" in source
+    assert "الوضع الداكن" in source
+    assert 'direction="rtl"' in source
+    for token in ["--bg", "--surface", "--text", "--muted", "--primary", "--border", "--success", "--warning", "--danger"]:
+        assert token in css
+    assert ".stApp { direction: rtl; }" in css
+
+
+def test_upload_copy_supports_ocr_and_file_types():
+    source = Path("frontend/streamlit_app.py").read_text()
+    assert "Supports PDF, scanned PDF, DOCX, TXT, PNG, JPG, and JPEG" in source
+    assert "Enable OCR for scanned files" in source
+    assert "current_upload_bytes" in source

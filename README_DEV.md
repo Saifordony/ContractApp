@@ -50,3 +50,31 @@ From inside backend container:
 
 ### Run self-test
 - `PYTHONPATH=contract-analysis-platform python -m backend.selftest`
+
+### OCR setup for scanned English/Arabic contracts
+
+The app supports text PDFs, scanned PDFs, DOCX, TXT, PNG, JPG, and JPEG uploads. Normal text extraction runs first; if the text is empty or too short, OCR is used when enabled.
+
+Install the Python dependencies from `requirements.txt`, then install the Tesseract binary and language packs:
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get update
+sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-ara
+```
+
+**macOS**
+```bash
+brew install tesseract tesseract-lang
+```
+
+**Windows**
+- Install Tesseract OCR from the official Windows installer.
+- Add the Tesseract install directory to `PATH`.
+- Confirm Arabic (`ara`) and English (`eng`) trained-data files are installed.
+
+OCR language selection:
+- English UI: `eng+ara`
+- Arabic UI: `ara+eng`
+
+If OCR dependencies are missing, the app returns a friendly message instead of failing silently. Low-quality scans may show a warning that extracted text may be inaccurate.

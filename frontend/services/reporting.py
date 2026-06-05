@@ -3,11 +3,14 @@ from __future__ import annotations
 import io
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 BRAND_PRIMARY = colors.HexColor("#172554")
 BRAND_ACCENT = colors.HexColor("#2563EB")
@@ -17,6 +20,60 @@ BRAND_BG = colors.HexColor("#F8FAFC")
 BRAND_SUCCESS = colors.HexColor("#16A34A")
 BRAND_WARNING = colors.HexColor("#D97706")
 BRAND_DANGER = colors.HexColor("#DC2626")
+
+REPORT_LABELS = {
+    "english": {
+        "tagline": "Simple-English AI contract review for business users",
+        "client_name": "Client name",
+        "contract_name": "Contract name",
+        "date_generated": "Date generated",
+        "important_note": "Important note",
+        "not_legal_advice": "AI-assisted review only — not legal advice. Use this report to guide review, not as a final legal opinion.",
+        "footer_note": "AI-assisted review only — not legal advice.",
+        "executive_summary": "Executive Summary",
+        "recommended_actions": "Recommended Actions",
+        "contract_health": "Contract Health",
+        "benchmark": "Benchmark Comparison",
+        "key_terms": "Key Extracted Terms",
+        "risks": "Main Risks",
+        "appendix": "Appendix: Evidence Snippets",
+        "health_chart": "Chart: Contract Health score by dimension",
+        "benchmark_chart": "Chart: Benchmark alignment by clause type",
+        "risk_chart": "Chart: Risk severity breakdown",
+        "confidence_chart": "Chart: Confidence levels by section",
+        "completeness_chart": "Chart: Extracted clauses completeness",
+    },
+    "arabic": {
+        "tagline": "مراجعة عقود بالذكاء الاصطناعي بلغة واضحة لمستخدمي الأعمال",
+        "client_name": "اسم العميل",
+        "contract_name": "اسم العقد",
+        "date_generated": "تاريخ الإصدار",
+        "important_note": "ملاحظة مهمة",
+        "not_legal_advice": "مراجعة بمساعدة الذكاء الاصطناعي فقط — هذا ليس رأياً قانونياً نهائياً.",
+        "footer_note": "مراجعة بمساعدة الذكاء الاصطناعي فقط — ليست نصيحة قانونية.",
+        "executive_summary": "الملخص التنفيذي",
+        "recommended_actions": "التوصيات",
+        "contract_health": "صحة العقد",
+        "benchmark": "المقارنة المعيارية",
+        "key_terms": "البنود الرئيسية",
+        "risks": "المخاطر",
+        "appendix": "ملحق الأدلة",
+        "health_chart": "Chart: صحة العقد حسب البعد",
+        "benchmark_chart": "Chart: توافق البنود مع المقارنة المعيارية",
+        "risk_chart": "Chart: توزيع شدة المخاطر",
+        "confidence_chart": "Chart: مستويات الثقة حسب القسم",
+        "completeness_chart": "Chart: اكتمال البنود المستخرجة",
+    },
+}
+
+
+def _report_language(language: str | None) -> str:
+    lang = (language or "english").strip().lower()
+    return "arabic" if lang in {"arabic", "ar", "ara", "العربية"} else "english"
+
+
+def _label(key: str, language: str) -> str:
+    return REPORT_LABELS[_report_language(language)].get(key, REPORT_LABELS["english"].get(key, key))
 
 
 def titleize_key(value: Any) -> str:
@@ -162,7 +219,7 @@ def _confidence_counts(clauses: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
 
 
 class _PdfReport:
-    def __init__(self, *, contract_title: str, client_name: str, report_title: str):
+    def __init__(self, *, contract_title: str, client_name: str, report_title: str, language: str = "english"):
         self.buffer = io.BytesIO()
         self.canvas = canvas.Canvas(self.buffer, pagesize=A4, pageCompression=0)
         self.width, self.height = A4
@@ -172,6 +229,17 @@ class _PdfReport:
         self.contract_title = contract_title
         self.client_name = client_name
         self.report_title = report_title
+        self.language = _report_language(language)
+        self.body_font = "Helvetica"
+        self.bold_font = "Helvetica-Bold"
+        font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+        bold_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+        if font_path.exists():
+            pdfmetrics.registerFont(TTFont("DejaVuSans", str(font_path)))
+            self.body_font = "DejaVuSans"
+        if bold_path.exists():
+            pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(bold_path)))
+            self.bold_font = "DejaVuSans-Bold"
 
     def save(self) -> bytes:
         self._footer()
@@ -184,8 +252,8 @@ class _PdfReport:
         c.setStrokeColor(BRAND_BORDER)
         c.line(self.margin, 32, self.width - self.margin, 32)
         c.setFillColor(BRAND_MUTED)
-        c.setFont("Helvetica", 8)
-        c.drawString(self.margin, 20, "AI-assisted review only — not legal advice.")
+        c.setFont(self.body_font, 8)
+        c.drawString(self.margin, 20, _label("footer_note", self.language))
         c.drawRightString(self.width - self.margin, 20, f"Page {self.page_number}")
 
     def _new_page(self) -> None:
@@ -204,13 +272,13 @@ class _PdfReport:
         c.setFillColor(BRAND_PRIMARY)
         c.circle(self.margin + 9, self.height - 32, 9, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 9)
+        c.setFont(self.bold_font, 9)
         c.drawCentredString(self.margin + 9, self.height - 35, "CI")
         c.setFillColor(BRAND_PRIMARY)
-        c.setFont("Helvetica-Bold", 11)
+        c.setFont(self.bold_font, 11)
         c.drawString(self.margin + 24, self.height - 35, "Contract Intelligence")
         c.setFillColor(BRAND_MUTED)
-        c.setFont("Helvetica", 8)
+        c.setFont(self.body_font, 8)
         c.drawRightString(self.width - self.margin, self.height - 35, self.contract_title[:60])
 
     def cover(self) -> None:
@@ -220,21 +288,21 @@ class _PdfReport:
         c.setFillColor(BRAND_PRIMARY)
         c.circle(self.margin + 18, self.height - 92, 18, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 14)
+        c.setFont(self.bold_font, 14)
         c.drawCentredString(self.margin + 18, self.height - 97, "CI")
         c.setFillColor(BRAND_PRIMARY)
-        c.setFont("Helvetica-Bold", 18)
+        c.setFont(self.bold_font, 18)
         c.drawString(self.margin + 46, self.height - 98, "Contract Intelligence")
-        c.setFont("Helvetica-Bold", 28)
+        c.setFont(self.bold_font, 28)
         c.drawString(self.margin, self.height - 180, self.report_title)
         c.setFillColor(BRAND_MUTED)
-        c.setFont("Helvetica", 13)
-        c.drawString(self.margin, self.height - 210, "Simple-English AI contract review for business users")
+        c.setFont(self.body_font, 13)
+        c.drawString(self.margin, self.height - 210, _label("tagline", self.language))
         self.y = self.height - 275
-        self.card("Client name", self.client_name or "Not specified")
-        self.card("Contract name", self.contract_title or "Not specified")
-        self.card("Date generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
-        self.card("Important note", "AI-assisted review only — not legal advice. Use this report to guide review, not as a final legal opinion.")
+        self.card(_label("client_name", self.language), self.client_name or "Not specified")
+        self.card(_label("contract_name", self.language), self.contract_title or "Not specified")
+        self.card(_label("date_generated", self.language), datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"))
+        self.card(_label("important_note", self.language), _label("not_legal_advice", self.language))
         self._new_page()
 
     def card(self, title: str, body: str, *, score_color=BRAND_ACCENT) -> None:
@@ -247,10 +315,10 @@ class _PdfReport:
         c.setFillColor(score_color)
         c.roundRect(self.margin, self.y - box_h + 8, 5, box_h, 2, stroke=0, fill=1)
         c.setFillColor(BRAND_PRIMARY)
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont(self.bold_font, 10)
         c.drawString(self.margin + 16, self.y - 14, title)
         c.setFillColor(colors.black)
-        c.setFont("Helvetica", 9)
+        c.setFont(self.body_font, 9)
         self._draw_wrapped(body, self.margin + 16, self.y - 30, self.width - self.margin * 2 - 28, 11)
         self.y -= box_h + 8
 
@@ -258,12 +326,12 @@ class _PdfReport:
         self.ensure(86)
         c = self.canvas
         c.setFillColor(BRAND_PRIMARY)
-        c.setFont("Helvetica-Bold", 15)
+        c.setFont(self.bold_font, 15)
         c.drawString(self.margin, self.y, title)
         self.y -= 16
         if subtitle:
             c.setFillColor(BRAND_MUTED)
-            c.setFont("Helvetica", 9)
+            c.setFont(self.body_font, 9)
             self._draw_wrapped(subtitle, self.margin, self.y, self.width - self.margin * 2, 11)
             self.y -= 10
         c.setStrokeColor(BRAND_BORDER)
@@ -273,7 +341,7 @@ class _PdfReport:
     def paragraph(self, text: str, *, size: int = 9, indent: int = 0, color=colors.black) -> None:
         self.ensure(60)
         self.canvas.setFillColor(color)
-        self.canvas.setFont("Helvetica", size)
+        self.canvas.setFont(self.body_font, size)
         used = self._draw_wrapped(simplify_text(text, max_chars=1200), self.margin + indent, self.y, self.width - self.margin * 2 - indent, size + 3)
         self.y -= used + 8
 
@@ -293,7 +361,7 @@ class _PdfReport:
         c.setFillColor(BRAND_PRIMARY)
         c.roundRect(x, self.y - 18, sum(col_widths), 22, 4, stroke=0, fill=1)
         c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 8)
+        c.setFont(self.bold_font, 8)
         for idx, header in enumerate(headers):
             c.drawString(x + 5, self.y - 10, header)
             x += col_widths[idx]
@@ -305,7 +373,7 @@ class _PdfReport:
             c.setFillColor(colors.white)
             c.rect(x, self.y - row_h + 8, sum(col_widths), row_h, stroke=1, fill=1)
             c.setFillColor(colors.black)
-            c.setFont("Helvetica", 7.5)
+            c.setFont(self.body_font, 7.5)
             for idx, cell in enumerate(row):
                 self._draw_wrapped(simplify_text(cell, max_chars=180), x + 5, self.y - 6, col_widths[idx] - 10, 9, max_lines=4)
                 x += col_widths[idx]
@@ -316,7 +384,7 @@ class _PdfReport:
         self.ensure(130)
         c = self.canvas
         c.setFillColor(BRAND_PRIMARY)
-        c.setFont("Helvetica-Bold", 10)
+        c.setFont(self.bold_font, 10)
         c.drawString(self.margin, self.y, title)
         self.y -= 18
         max_value = max_value or max([float(v) for v in values.values()] + [1.0])
@@ -325,7 +393,7 @@ class _PdfReport:
             self.ensure(28)
             v = float(value or 0)
             c.setFillColor(BRAND_MUTED)
-            c.setFont("Helvetica", 8)
+            c.setFont(self.body_font, 8)
             c.drawString(self.margin, self.y, str(label)[:28])
             bar_x = self.margin + 135
             bar_w = min(250, int(250 * (v / max_value))) if max_value else 0
@@ -369,6 +437,7 @@ def build_professional_report_pdf(
     *,
     client_name: str = "Not specified",
     report_title: str = "Contract Review Report",
+    language: str = "english",
 ) -> bytes:
     payload = report_payload or {}
     health = payload.get("health_evaluation", payload if isinstance(payload, dict) else {})
@@ -376,7 +445,8 @@ def build_professional_report_pdf(
     clauses = _extract_clauses(payload)
     dimensions = health.get("dimensions", []) if isinstance(health, dict) else []
 
-    pdf = _PdfReport(contract_title=contract_title, client_name=client_name, report_title=report_title)
+    language = _report_language(language)
+    pdf = _PdfReport(contract_title=contract_title, client_name=client_name, report_title=report_title, language=language)
     pdf.cover()
 
     score = health.get("health_score", "N/A") if isinstance(health, dict) else "N/A"
@@ -385,7 +455,7 @@ def build_professional_report_pdf(
         benchmark_score = benchmark.get("overall_position", {}).get("alignment_score", benchmark.get("overall_score", "N/A"))
     risk = titleize_key(health.get("risk_level", "Not available")) if isinstance(health, dict) else "Not available"
 
-    pdf.section("Executive Summary", "A short, simple-English view of what matters most.")
+    pdf.section(_label("executive_summary", language), "A short, simple-English view of what matters most.")
     pdf.card("Contract health score", f"{score}/100 — Risk level: {risk}", score_color=BRAND_ACCENT)
     pdf.card("Benchmark alignment score", f"{benchmark_score}/100. If no benchmark is available, run Benchmark Comparison first.", score_color=BRAND_SUCCESS)
     summary = health.get("reasoning") or health.get("executive_summary") or "This report highlights completeness, risk, benchmark alignment, and recommended next steps."
@@ -393,13 +463,13 @@ def build_professional_report_pdf(
 
     missing = health.get("missing_critical_clauses", []) if isinstance(health, dict) else []
     changes = health.get("required_changes", []) if isinstance(health, dict) else []
-    pdf.section("Recommended Actions", "Practical next steps before approval or signing.")
+    pdf.section(_label("recommended_actions", language), "Practical next steps before approval or signing.")
     if changes or missing:
         pdf.bullet_list(changes or [f"Add or clarify: {titleize_key(item)}" for item in missing], limit=10)
     else:
         pdf.paragraph("No critical recommended actions were found in the available analysis. Still review the evidence before signing.")
 
-    pdf.section("Contract Health", "How complete, balanced, and manageable the contract appears.")
+    pdf.section(_label("contract_health", language), "How complete, balanced, and manageable the contract appears.")
     if dimensions:
         rows = []
         chart_values: Dict[str, int] = {}
@@ -413,12 +483,12 @@ def build_professional_report_pdf(
                 simplify_text(item.get("reason") or item.get("explanation"), max_chars=180),
                 simplify_text(item.get("recommended_action"), max_chars=160),
             ])
-        pdf.bar_chart("Chart: Contract Health score by dimension", chart_values, max_value=100)
+        pdf.bar_chart(_label("health_chart", language), chart_values, max_value=100)
         pdf.table(["Dimension", "Score", "Simple explanation", "Recommended action"], rows, col_widths=[105, 55, 175, 175])
     else:
         pdf.paragraph("No dimension-level health data was available. Run Contract Health for a fuller review.")
 
-    pdf.section("Benchmark Comparison", "Benchmark is separate from Contract Health. It compares clauses against expected standards or peer data when available.")
+    pdf.section(_label("benchmark", language), "Benchmark is separate from Contract Health. It compares clauses against expected standards or peer data when available.")
     if isinstance(benchmark, dict) and benchmark:
         context = benchmark.get("benchmark_context", {})
         pdf.paragraph(f"Benchmark basis: {context.get('benchmark_basis', 'Not specified')}. Peer group size: {context.get('sample_size') or 'Not available'}.")
@@ -430,17 +500,17 @@ def build_professional_report_pdf(
                 row.get("result", "Not enough benchmark data"),
                 row.get("recommendation", "Review this area."),
             ])
-        pdf.bar_chart("Chart: Benchmark alignment by clause type", _benchmark_counts(benchmark))
+        pdf.bar_chart(_label("benchmark_chart", language), _benchmark_counts(benchmark))
         pdf.table(["Clause", "Your clause summary", "Benchmark result", "Suggested improvement"], rows, col_widths=[95, 180, 105, 130])
     else:
         pdf.paragraph("Benchmark data was not available in this report. Run Benchmark Comparison to add alignment results.")
-        pdf.bar_chart("Chart: Benchmark alignment by clause type", {"Aligned": 0, "Outlier": 0, "Not enough data": 1})
+        pdf.bar_chart(_label("benchmark_chart", language), {"Aligned": 0, "Outlier": 0, "Not enough data": 1})
 
-    pdf.section("Key Extracted Terms", "What was found, why it matters, confidence, and evidence.")
+    pdf.section(_label("key_terms", language), "What was found, why it matters, confidence, and evidence.")
     completeness = _completeness_counts(clauses)
     confidence = _confidence_counts(clauses)
-    pdf.bar_chart("Chart: Extracted clauses completeness", completeness)
-    pdf.bar_chart("Chart: Confidence levels by section", confidence)
+    pdf.bar_chart(_label("completeness_chart", language), completeness)
+    pdf.bar_chart(_label("confidence_chart", language), confidence)
     rows = []
     evidence_rows: List[Tuple[str, str, str]] = []
     for key, clause in list(clauses.items())[:14]:
@@ -458,8 +528,8 @@ def build_professional_report_pdf(
         ])
     pdf.table(["Clause", "Status", "What was found", "Why it matters", "Confidence"], rows, col_widths=[80, 65, 190, 145, 70])
 
-    pdf.section("Main Risks", "Simple risk view based on the available health analysis.")
-    pdf.bar_chart("Chart: Risk severity breakdown", _risk_counts(health if isinstance(health, dict) else {}))
+    pdf.section(_label("risks", language), "Simple risk view based on the available health analysis.")
+    pdf.bar_chart(_label("risk_chart", language), _risk_counts(health if isinstance(health, dict) else {}))
     issues = health.get("issues", []) if isinstance(health, dict) else []
     red_flags = health.get("red_flags", []) if isinstance(health, dict) else []
     risks = issues or red_flags or []
@@ -468,7 +538,7 @@ def build_professional_report_pdf(
     else:
         pdf.paragraph("No specific risk list was available. Review missing clauses, health dimensions, and benchmark gaps.")
 
-    pdf.section("Appendix: Evidence Snippets", "Short source quotes used in this report.")
+    pdf.section(_label("appendix", language), "Short source quotes used in this report.")
     if evidence_rows:
         rows = [[clause, quote, location] for clause, quote, location in evidence_rows[:18]]
         pdf.table(["Section", "Evidence from contract", "Location"], rows, col_widths=[100, 330, 80])

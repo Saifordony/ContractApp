@@ -113,3 +113,19 @@ def test_extracted_clause_records_include_plain_english_fields():
     assert "what_was_found" in termination
     assert "why_it_matters" in termination
     assert "missing_information" in termination
+
+
+def test_arabic_clause_classification_finds_key_terms():
+    arabic_contract = """
+    ينص العقد على أن المقابل المالي يدفع خلال ثلاثين يوماً.
+    يجوز إنهاء العقد بإشعار خطي مدته ثلاثون يوماً.
+    تخضع هذه الاتفاقية إلى القانون الواجب التطبيق في الأردن.
+    تتم تسوية النزاعات عن طريق التحكيم.
+    تعتبر المعلومات السرية محمية طوال مدة العقد.
+    """
+    data = extract_key_clauses(arabic_contract)
+    assert data["clauses"]["payment_terms"]["status"] == "found"
+    assert data["clauses"]["termination"]["status"] == "found"
+    assert data["clauses"]["governing_law"]["status"] == "found"
+    assert data["clauses"]["dispute_resolution"]["status"] == "found"
+    assert data["clauses"]["confidentiality"]["status"] == "found"

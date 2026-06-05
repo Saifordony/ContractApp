@@ -282,6 +282,117 @@ DEMO_REPORT_PAYLOAD: Dict[str, Any] = {
 init_session_state()
 
 
+UI_TEXT = {
+    "en": {
+        "language": "Language",
+        "theme": "Theme",
+        "light": "Light mode",
+        "dark": "Dark mode",
+        "signed_in_as": "Signed in as",
+        "logout": "Log out",
+        "dashboard": "Dashboard",
+        "demo_mode": "Demo Mode",
+        "presentation_mode": "Presentation Mode",
+        "clients": "Clients",
+        "contracts": "Contracts",
+        "analyze": "Analyze",
+        "benchmark": "Benchmark",
+        "ai_assistant": "AI Assistant",
+        "reports": "Reports",
+        "security_privacy": "Security & Privacy",
+        "settings": "Settings",
+        "ocr_toggle": "Enable OCR for scanned files (English + Arabic)",
+        "upload_contract": "Upload Contract File",
+        "upload_hint": "Supports PDF, scanned PDF, DOCX, TXT, PNG, JPG, and JPEG.",
+        "create_contract": "Create Contract",
+        "contract_title": "Contract Title",
+        "analysis_success": "Contract analyzed successfully!",
+    },
+    "ar": {
+        "language": "اللغة",
+        "theme": "النمط",
+        "light": "الوضع الفاتح",
+        "dark": "الوضع الداكن",
+        "signed_in_as": "تم تسجيل الدخول باسم",
+        "logout": "تسجيل الخروج",
+        "dashboard": "لوحة التحكم",
+        "demo_mode": "وضع العرض التجريبي",
+        "presentation_mode": "وضع العرض التقديمي",
+        "clients": "العملاء",
+        "contracts": "العقود",
+        "analyze": "التحليل",
+        "benchmark": "المقارنة المعيارية",
+        "ai_assistant": "المساعد الذكي",
+        "reports": "التقارير",
+        "security_privacy": "الأمان والخصوصية",
+        "settings": "الإعدادات",
+        "ocr_toggle": "تفعيل OCR للملفات الممسوحة ضوئياً (العربية + الإنجليزية)",
+        "upload_contract": "رفع ملف العقد",
+        "upload_hint": "يدعم PDF وPDF ممسوح وDOCX وTXT وPNG وJPG وJPEG.",
+        "create_contract": "إنشاء العقد",
+        "contract_title": "عنوان العقد",
+        "analysis_success": "تم تحليل العقد بنجاح!",
+    },
+}
+
+NAV_KEYS = [
+    "dashboard",
+    "demo_mode",
+    "presentation_mode",
+    "clients",
+    "contracts",
+    "analyze",
+    "benchmark",
+    "ai_assistant",
+    "reports",
+    "security_privacy",
+    "settings",
+]
+
+
+def current_language() -> str:
+    return "ar" if st.session_state.get("ui_language") == "ar" else "en"
+
+
+def is_arabic_ui() -> bool:
+    return current_language() == "ar"
+
+
+def tr(key: str) -> str:
+    lang = current_language()
+    return UI_TEXT.get(lang, UI_TEXT["en"]).get(key, UI_TEXT["en"].get(key, key))
+
+
+def nav_label(key: str) -> str:
+    return tr(key)
+
+
+def selected_response_language() -> str:
+    return "arabic" if is_arabic_ui() else "english"
+
+
+def read_uploaded_contract_text(uploaded_file) -> str:
+    """Extract readable text for contract storage before backend analysis."""
+    suffix = Path(uploaded_file.name).suffix.lower()
+    data = uploaded_file.read()
+    uploaded_file.seek(0)
+    if suffix == ".pdf":
+        return extract_text_from_uploaded_pdf(data)
+    if suffix == ".txt":
+        return data.decode("utf-8", errors="ignore")
+    if suffix == ".docx":
+        import importlib
+        import io
+        if importlib.util.find_spec("docx") is None:
+            raise ValueError("DOCX support requires python-docx. Install dependencies from requirements.txt.")
+        docx = importlib.import_module("docx")
+        document = docx.Document(io.BytesIO(data))
+        return "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+    if suffix in {".png", ".jpg", ".jpeg"}:
+        return "Image-based contract uploaded. Run analysis with OCR enabled so the backend can extract text."
+    raise ValueError("Unsupported file type. Please upload PDF, DOCX, TXT, PNG, JPG, or JPEG.")
+
+
 def apply_modern_theme(sidebar_compact: bool = False):
     sidebar_width = "5.2rem" if sidebar_compact else "19.5rem"
     sidebar_text_display = "none" if sidebar_compact else "block"
@@ -712,11 +823,13 @@ def render_contract_evaluation(evaluation: Dict):
 
 
 def build_pipeline_report_pdf(contract_title: str, report_payload: Dict[str, Any], client_name: str | None = None) -> bytes:
+    report_language = "arabic" if is_arabic_ui() else "english"
     return build_professional_report_pdf(
         contract_title,
         report_payload,
         client_name=client_name or st.session_state.get("selected_client_name", "Not specified"),
-        report_title="Contract Review Report",
+        report_title="تقرير مراجعة العقد" if report_language == "arabic" else "Contract Review Report",
+        language=report_language,
     )
 
 
@@ -1009,20 +1122,15 @@ def contract_analysis_page():
         # Create new contract
         st.subheader("Create New Contract")
         with st.form("contract_form"):
-            contract_title = st.text_input("Contract Title")
-            uploaded_file = st.file_uploader("Upload Contract PDF", type="pdf")
-            submit_contract = st.form_submit_button("Create Contract")
+            contract_title = st.text_input(tr("contract_title"))
+            uploaded_file = st.file_uploader(tr("upload_contract"), type=["pdf", "docx", "txt", "png", "jpg", "jpeg"], help=tr("upload_hint"))
+            submit_contract = st.form_submit_button(tr("create_contract"))
 
             if submit_contract and contract_title and uploaded_file:
-                # Validate file type
-                if not uploaded_file.name.lower().endswith('.pdf'):
-                    st.error("Please upload a PDF file")
-                    return
-                
-                # First, extract text from PDF
                 try:
-                    pdf_bytes = uploaded_file.read()
-                    contract_content = extract_text_from_uploaded_pdf(pdf_bytes)
+                    upload_bytes = uploaded_file.read()
+                    uploaded_file.seek(0)
+                    contract_content = read_uploaded_contract_text(uploaded_file)
 
                     # Create contract
                     response = make_api_request(
@@ -1043,7 +1151,11 @@ def contract_analysis_page():
 
                         # Store for analysis
                         st.session_state.current_contract_id = contract_id
-                        st.session_state.current_pdf_bytes = pdf_bytes
+                        st.session_state.current_upload_bytes = upload_bytes
+                        st.session_state.current_upload_name = uploaded_file.name
+                        st.session_state.current_upload_mime = uploaded_file.type or "application/octet-stream"
+                        if uploaded_file.name.lower().endswith(".pdf"):
+                            st.session_state.current_pdf_bytes = upload_bytes
                         st.session_state.current_contract_content = contract_content
                         st.session_state.current_contract_title = contract_title
                         st.rerun()
@@ -1057,12 +1169,12 @@ def contract_analysis_page():
                                 pass
                         st.error(error_msg)
                 except Exception as e:
-                    st.error(f"Error processing PDF: {str(e)}")
+                    st.error(f"Error processing file: {str(e)}")
             elif submit_contract:
                 if not contract_title:
                     st.error("Please enter a contract title")
                 if not uploaded_file:
-                    st.error("Please upload a PDF file")
+                    st.error("Please upload a supported contract file")
 
     else:
         st.info("Please create or select a client first to proceed with contract management")
@@ -1081,6 +1193,9 @@ def contract_analysis_page():
 
         contract_id = st.session_state.current_contract_id
         pdf_bytes = st.session_state.get("current_pdf_bytes")
+        upload_bytes = st.session_state.get("current_upload_bytes")
+        upload_name = st.session_state.get("current_upload_name", "contract.pdf")
+        upload_mime = st.session_state.get("current_upload_mime", "application/pdf")
         contract_content = st.session_state.get("current_contract_content", "")
         contract_title = st.session_state.get("current_contract_title", "Unknown")
         
@@ -1092,10 +1207,11 @@ def contract_analysis_page():
         response_language = st.selectbox(
             "Response Language / لغة الاستجابة",
             options=["english", "arabic"],
+            index=1 if is_arabic_ui() else 0,
             format_func=lambda x: "English" if x == "english" else "العربية",
             key="response_language_selector",
         )
-        use_ocr = st.toggle("Enable OCR for scanned PDFs (English + Arabic)", value=True)
+        use_ocr = st.toggle(tr("ocr_toggle"), value=True)
 
         col1, col2 = st.columns(2)
 
@@ -1103,8 +1219,9 @@ def contract_analysis_page():
             if st.button("Analyze Contract Clauses"):
                 st.session_state.pop("current_clauses", None)
                 with st.spinner("Analyzing contract clauses..."):
-                    if pdf_bytes:
-                        files = {"file": ("contract.pdf", pdf_bytes, "application/pdf")}
+                    if upload_bytes or pdf_bytes:
+                        file_bytes = upload_bytes or pdf_bytes
+                        files = {"file": (upload_name, file_bytes, upload_mime)}
                         response = make_api_request(
                             "/genai/analyze-contract",
                             "POST",
@@ -1126,8 +1243,12 @@ def contract_analysis_page():
                         structured = data.get("structured_clauses", {})
                         clauses = structured.get("clauses", {})
                         clause_explanations = data.get("clause_explanations", {})
+                        if data.get("contract_text"):
+                            st.session_state.current_contract_content = data.get("contract_text")
+                        if data.get("ocr_warning"):
+                            st.warning(data.get("ocr_warning"))
 
-                        st.success("Contract analyzed successfully!")
+                        st.success(tr("analysis_success"))
                         found_count = sum(1 for v in clauses.values() if isinstance(v, dict) and v.get("status") == "found")
                         not_found_count = sum(1 for v in clauses.values() if isinstance(v, dict) and v.get("status") in {"not_found", "missing"})
                         review_count = max(0, len(clauses) - found_count - not_found_count)
@@ -2003,7 +2124,7 @@ def demo_mode_page() -> None:
         st.markdown("### Professional PDF report")
         st.write("Download a consulting-style report with cover page, charts, health score, benchmark insights, risks, recommendations, and evidence appendix.")
         try:
-            pdf_bytes = build_pipeline_report_pdf(DEMO_CONTRACT_TITLE, DEMO_REPORT_PAYLOAD, DEMO_CLIENT_NAME)
+            pdf_bytes = build_professional_report_pdf(DEMO_CONTRACT_TITLE, DEMO_REPORT_PAYLOAD, client_name=DEMO_CLIENT_NAME, report_title="تقرير مراجعة العقد" if is_arabic_ui() else "Contract Review Report", language="arabic" if is_arabic_ui() else "english")
             st.download_button(
                 "Download Demo PDF Report",
                 data=pdf_bytes,
@@ -2142,6 +2263,47 @@ def ask_ai_page():
     empty_state("Use Ask AI inside Contract Analysis", "Select or upload a contract, then use the chat panel attached to that contract so history and evidence stay scoped correctly.", "Go to Contract Analysis → Ask AI About This Contract")
 
 
+
+def reports_page() -> None:
+    """Reports hub for downloading current or demo reports in the selected language."""
+    if is_arabic_ui():
+        page_header("التقارير", "أنشئ تقرير PDF واضحاً يتضمن صحة العقد، المقارنة المعيارية، المخاطر، التوصيات، وملحق الأدلة.", "مركز التقارير")
+        st.write("استخدم وضع العرض التجريبي للحصول على تقرير جاهز، أو حلّل عقداً ثم حمّل التقرير من صفحة التحليل.")
+        report_button = "تحميل تقرير العرض التجريبي PDF"
+    else:
+        page_header("Reports", "Generate polished PDF reports with contract health, benchmark insights, risks, recommendations, and evidence appendix.", "Report center")
+        st.write("Use Demo Mode for a ready-made report, or analyze a contract and download the report from the Analyze page.")
+        report_button = "Download Demo PDF Report"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        render_metric_card("Report language" if not is_arabic_ui() else "لغة التقرير", "العربية" if is_arabic_ui() else "English", "Uses the selected UI language")
+    with c2:
+        render_metric_card("Demo report", "Ready", "No upload required")
+    with c3:
+        render_metric_card("Evidence appendix", "Included", "Quotes and locations")
+
+    try:
+        pdf_bytes = build_professional_report_pdf(
+            DEMO_CONTRACT_TITLE,
+            DEMO_REPORT_PAYLOAD,
+            client_name=DEMO_CLIENT_NAME,
+            report_title="تقرير مراجعة العقد" if is_arabic_ui() else "Contract Review Report",
+            language="arabic" if is_arabic_ui() else "english",
+        )
+        st.download_button(
+            report_button,
+            data=pdf_bytes,
+            file_name="contract-intelligence-demo-report-ar.pdf" if is_arabic_ui() else "contract-intelligence-demo-report.pdf",
+            mime="application/pdf",
+        )
+    except Exception as exc:
+        friendly_error(
+            "تعذر إنشاء تقرير PDF في هذه البيئة." if is_arabic_ui() else "The PDF report could not be generated in this environment.",
+            "ثبّت المتطلبات من requirements.txt ثم حاول مرة أخرى." if is_arabic_ui() else "Install dependencies from requirements.txt, then try again.",
+            str(exc),
+        )
+
 def settings_diagnostics_page():
     page_header("Settings", "Check app, AI, and database readiness without exposing secrets.", "Diagnostics")
     health = make_api_request("/healthz", auth=False)
@@ -2167,9 +2329,17 @@ def main():
 
     if "sidebar_compact" not in st.session_state:
         st.session_state.sidebar_compact = False
+    if "ui_language" not in st.session_state:
+        st.session_state.ui_language = "en"
+    if "theme_mode" not in st.session_state:
+        st.session_state.theme_mode = "light"
 
     apply_modern_theme(st.session_state.sidebar_compact)
-    apply_global_css(st.session_state.sidebar_compact)
+    apply_global_css(
+        st.session_state.sidebar_compact,
+        theme_mode=st.session_state.theme_mode,
+        direction="rtl" if st.session_state.ui_language == "ar" else "ltr",
+    )
 
     # Check if user is logged in
     if not st.session_state.token:
@@ -2180,26 +2350,27 @@ def main():
     # Sidebar navigation
     with st.sidebar:
         render_brand_logo("Contract review workspace")
-        st.caption(f"Signed in as {st.session_state.username}")
+        st.caption(f"{tr('signed_in_as')} {st.session_state.username}")
+        language_choice = st.selectbox(
+            "Language / اللغة",
+            ["English", "العربية"],
+            index=1 if st.session_state.ui_language == "ar" else 0,
+        )
+        st.session_state.ui_language = "ar" if language_choice == "العربية" else "en"
+        theme_choice = st.selectbox(
+            tr("theme"),
+            [tr("light"), tr("dark")],
+            index=1 if st.session_state.theme_mode == "dark" else 0,
+        )
+        st.session_state.theme_mode = "dark" if theme_choice == tr("dark") else "light"
         st.toggle("Compact sidebar", key="sidebar_compact")
         st.markdown("---")
-        nav_items = [
-            "Dashboard",
-            "Demo Mode",
-            "Presentation Mode",
-            "Clients",
-            "Contracts",
-            "Analyze",
-            "Benchmark",
-            "AI Assistant",
-            "Security & Privacy",
-            "Settings",
-        ]
-        if not BENCHMARK_ENABLED:
-            nav_items.remove("Benchmark")
-        navigation = st.radio("Navigate", nav_items, label_visibility="collapsed")
+        nav_keys = [key for key in NAV_KEYS if BENCHMARK_ENABLED or key != "benchmark"]
+        nav_options = {nav_label(key): key for key in nav_keys}
+        navigation_label = st.radio("Navigate", list(nav_options.keys()), label_visibility="collapsed")
+        navigation = nav_options[navigation_label]
         st.markdown("---")
-        if st.button("Log out"):
+        if st.button(tr("logout")):
             clear_session()
             st.rerun()
 
@@ -2208,27 +2379,29 @@ def main():
     st.markdown("<div class='page-transition'>", unsafe_allow_html=True)
 
     # Main content
-    if navigation == "Dashboard":
+    if navigation == "dashboard":
         dashboard_page()
-    elif navigation == "Demo Mode":
+    elif navigation == "demo_mode":
         demo_mode_page()
         st.markdown("<div class='fab-chip'>🎬 Main Action: Load Demo Workspace</div>", unsafe_allow_html=True)
-    elif navigation == "Presentation Mode":
+    elif navigation == "presentation_mode":
         presentation_mode_page()
-    elif navigation in {"Clients", "Contracts"}:
+    elif navigation in {"clients", "contracts"}:
         clients_contracts_page()
         st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
-    elif navigation == "Analyze":
+    elif navigation == "analyze":
         contract_analysis_page()
         st.markdown("<div class='fab-chip'>✨ Main Action: Analyze Contract</div>", unsafe_allow_html=True)
-    elif navigation == "Benchmark":
+    elif navigation == "benchmark":
         benchmark_page()
         st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
-    elif navigation == "AI Assistant":
+    elif navigation == "ai_assistant":
         ask_ai_page()
-    elif navigation == "Security & Privacy":
+    elif navigation == "reports":
+        reports_page()
+    elif navigation == "security_privacy":
         security_privacy_page()
-    elif navigation == "Settings":
+    elif navigation == "settings":
         settings_diagnostics_page()
         st.markdown("---")
         admin_dashboard()

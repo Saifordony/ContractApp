@@ -187,3 +187,21 @@ def test_generic_contract_answer_is_rewritten_with_evidence(monkeypatch):
     )
     assert "Based on the provided context" not in result["answer"]
     assert "Payment is due within 30 days" in result["answer"]
+
+
+def test_arabic_chat_response_uses_arabic_structure_and_missing_phrase():
+    result = build_contract_chat_response(
+        message="هل توجد إجازة سنوية؟",
+        contract_text=CONTRACT_TEXT,
+        analysis_results=ANALYSIS_RESULTS,
+        response_language="arabic",
+    )
+    assert result["answer_type"] == "missing_evidence"
+    assert "الإجابة المختصرة" in result["answer"]
+    assert "لم أجد ذلك في العقد" in result["answer"]
+    assert "الدليل من العقد" in result["answer"]
+
+
+def test_arabic_clause_intent_detection():
+    assert classify_chat_intent("اشرح بند إنهاء العقد") == ("clause_explanation", "termination")
+    assert classify_chat_intent("ما هي المقارنة المعيارية؟")[0] == "benchmark_question"

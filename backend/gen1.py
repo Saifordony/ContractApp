@@ -1,6 +1,6 @@
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from io import BytesIO
 import json
 import asyncio
@@ -8,8 +8,9 @@ import ast
 import re
 from concurrent.futures import ThreadPoolExecutor
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import pytesseract
+import importlib
 
 from backend.services.contract_intelligence import answer_contract_question
 from backend.llm_config import (
@@ -813,6 +814,33 @@ async def contract_chat(
         response_language,
     )
 
+def extract_text_from_upload_bytes(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str | None = None,
+    use_ocr: bool = True,
+    response_language: str = "english",
+) -> Dict[str, Any]:
+    """Extract text from PDF, DOCX, TXT, or image uploads with OCR fallback."""
+    name = (filename or "").lower()
+    content_type = (content_type or "").lower()
+    if name.endswith(".pdf") or content_type == "application/pdf":
+        text = extract_text_from_pdf_bytes(file_bytes, use_ocr=use_ocr, response_language=response_language)
+        return {"text": text, "used_ocr": "[Page 1 OCR" in text or "OCR confidence" in text, "ocr_confidence": None}
+    if name.endswith(".txt") or content_type.startswith("text/"):
+        text = file_bytes.decode("utf-8", errors="ignore").strip()
+        if not text:
+            raise ValueError("No text could be extracted from this TXT file.")
+        return {"text": text, "used_ocr": False, "ocr_confidence": None}
+    if name.endswith(".docx"):
+        return extract_text_from_docx_bytes(file_bytes)
+    if name.endswith((".png", ".jpg", ".jpeg")) or content_type.startswith("image/"):
+        if not use_ocr:
+            raise ValueError("This image requires OCR. Enable OCR and try again.")
+        return extract_text_from_image_bytes(file_bytes, response_language=response_language)
+    raise ValueError("Unsupported file type. Upload PDF, DOCX, TXT, PNG, JPG, or JPEG.")
+
+
 
 class CorruptPDFError(Exception):
     """Raised when a PDF file is damaged, corrupt, or not a valid PDF."""
@@ -864,14 +892,70 @@ def extract_text_from_pdf(file_path: str) -> str:
         raise RuntimeError(f"Unexpected error during PDF extraction: {str(e)}")
 
 
-def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> str:
-    text = ""
+
+def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    """Prepare scans for clearer English/Arabic OCR."""
+    processed = ImageOps.grayscale(image)
+    width, height = processed.size
+    if max(width, height) < 1800:
+        processed = processed.resize((width * 2, height * 2))
+    processed = processed.filter(ImageFilter.MedianFilter(size=3))
+    processed = processed.point(lambda pixel: 255 if pixel > 170 else 0)
+    return processed
+
+
+def _ocr_image(image: Image.Image, ocr_languages: str = "eng+ara") -> Tuple[str, float]:
+    image = _preprocess_for_ocr(image)
+    data = pytesseract.image_to_data(image, lang=ocr_languages, output_type=pytesseract.Output.DICT)
+    words = [w for w in data.get("text", []) if str(w).strip()]
+    confidences = []
+    for raw in data.get("conf", []):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            confidences.append(value)
+    text = " ".join(words).strip()
+    confidence = (sum(confidences) / len(confidences) / 100) if confidences else 0.0
+    return text, round(confidence, 2)
+
+
+def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> Tuple[str, float]:
+    pages = []
+    scores = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
-        for page in pdf_doc:
+        for page_number, page in enumerate(pdf_doc, start=1):
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             image = Image.open(BytesIO(pix.tobytes("png")))
-            text += pytesseract.image_to_string(image, lang=ocr_languages) + "\n"
-    return text
+            page_text, confidence = _ocr_image(image, ocr_languages=ocr_languages)
+            if page_text:
+                pages.append(f"[Page {page_number} OCR confidence {confidence:.0%}]\n{page_text}")
+                scores.append(confidence)
+    average = round(sum(scores) / len(scores), 2) if scores else 0.0
+    return "\n\n".join(pages), average
+
+
+def extract_text_from_image_bytes(image_bytes: bytes, response_language: str = "english") -> Dict[str, Any]:
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        text, confidence = _ocr_image(image, ocr_languages=get_ocr_languages(response_language))
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError("OCR is not available because the Tesseract executable is missing. Install Tesseract with English and Arabic language packs.") from exc
+    if not text.strip():
+        raise ValueError("No text could be extracted from this image. Check scan quality and OCR language packs.")
+    return {"text": f"[Page 1 OCR confidence {confidence:.0%}]\n{text}", "ocr_confidence": confidence, "used_ocr": True}
+
+
+def extract_text_from_docx_bytes(docx_bytes: bytes) -> Dict[str, Any]:
+    if importlib.util.find_spec("docx") is None:
+        raise ValueError("DOCX support requires python-docx. Install dependencies from requirements.txt.")
+    docx = importlib.import_module("docx")
+    document = docx.Document(BytesIO(docx_bytes))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+    if not text.strip():
+        raise ValueError("No text could be extracted from this DOCX file.")
+    return {"text": text, "ocr_confidence": None, "used_ocr": False}
 
 
 def extract_text_from_pdf_bytes(
@@ -879,36 +963,32 @@ def extract_text_from_pdf_bytes(
     use_ocr: bool = True,
     response_language: str = "english",
 ) -> str:
-    """
-    Extracts text from PDF bytes.
-
-    Args:
-        pdf_bytes (bytes): PDF file content as bytes.
-
-    Returns:
-        str: The full extracted text from all pages.
-
-    Raises:
-        CorruptPDFError: If the bytes are not a valid PDF or are corrupted.
-        ValueError: If no text could be extracted.
-        RuntimeError: For unexpected failures in PDF processing.
-    """
+    """Extract text from PDF bytes with page numbers and OCR fallback."""
     try:
-        text = ""
+        pages = []
         with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
-            for page in pdf_doc:
-                text += page.get_text()
+            for page_number, page in enumerate(pdf_doc, start=1):
+                page_text = page.get_text().strip()
+                if page_text:
+                    pages.append(f"[Page {page_number}]\n{page_text}")
 
-        if text.strip():
+        text = "\n\n".join(pages).strip()
+        if len(text) >= 80:
             return text
 
         if use_ocr:
-            ocr_text = _ocr_text_from_pdf_bytes(
-                pdf_bytes, ocr_languages=get_ocr_languages(response_language)
-            )
+            try:
+                ocr_text, ocr_confidence = _ocr_text_from_pdf_bytes(
+                    pdf_bytes, ocr_languages=get_ocr_languages(response_language)
+                )
+            except pytesseract.TesseractNotFoundError as exc:
+                raise RuntimeError("OCR is not available because the Tesseract executable is missing. Install Tesseract with English and Arabic language packs.") from exc
             if ocr_text.strip():
-                return ocr_text
+                warning = "[OCR warning: low scan quality, some extracted text may be inaccurate.]\n" if ocr_confidence and ocr_confidence < 0.45 else ""
+                return (warning + ocr_text).strip()
 
+        if text:
+            return text
         raise ValueError("No text could be extracted from the PDF.")
 
     except fitz.FileDataError as exc:
