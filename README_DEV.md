@@ -12,6 +12,27 @@
 6. **Self-test mode** supports offline deterministic checks even when API is unavailable; if API is reachable, it additionally runs full API flow tests.
 7. Existing environment variable behavior is preserved (`SECRET_KEY` remains required at startup with clear runtime error if missing).
 
+## Ollama troubleshooting (Docker backend on Windows host)
+
+Required environment variables for Docker Compose backend:
+- `AI_PROVIDER=ollama`
+- `OLLAMA_BASE_URL=http://host.docker.internal:11434/v1`
+- `OLLAMA_MODEL=llama3.1:8b`
+- `OLLAMA_TEMPERATURE=0.1`
+- `OLLAMA_NUM_CTX=8192`
+- `OLLAMA_TIMEOUT=120`
+- `OPENAI_API_KEY=ollama`
+
+Recommended local model setup:
+- `ollama pull llama3.1:8b` (safe default)
+- Optional stronger local models if your machine has enough RAM/VRAM: `ollama pull qwen2.5:14b`, `ollama pull llama3.1:70b`, `ollama pull deepseek-r1:14b`, or `ollama pull mistral-nemo`
+
+From Windows host (PowerShell):
+- `curl.exe http://localhost:11434/v1/models`
+
+From inside backend container:
+- `python -c "import requests; print(requests.get('http://host.docker.internal:11434/v1/models', timeout=10).text)"`
+
 
 ## Benchmark Comparison feature
 

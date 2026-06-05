@@ -28,9 +28,12 @@ def test_extraction_schema_has_required_fields():
     assert isinstance(data["clauses"], dict)
     for key in ["payment_terms", "governing_law", "termination", "parties"]:
         assert key in data["clauses"]
-        assert "value" in data["clauses"][key]
-        assert "evidence" in data["clauses"][key]
         assert "status" in data["clauses"][key]
+        assert "confidence" in data["clauses"][key]
+        assert "extracted_text" in data["clauses"][key]
+        assert "evidence_snippets" in data["clauses"][key]
+        assert "issues" in data["clauses"][key]
+        assert "recommended_action" in data["clauses"][key]
 
 
 def test_retrieval_returns_relevant_chunk():
@@ -86,3 +89,18 @@ def test_arabic_response_language_returns_arabic_not_found_text():
 def test_arabic_out_of_scope_returns_arabic_scope_message():
     result = answer_contract_question(SAMPLE_CONTRACT, "لا اريد الذهاب للعمل غدا ماذا افعل؟", response_language="arabic")
     assert "العقد" in result["answer"]
+
+
+def test_parties_rejects_job_description_noise():
+    noisy_text = """
+Experience with version control Git and agile development methodologies.
+Strong problem-solving and communication skills.
+Probation Period: 3 months.
+Confidentiality: Employees must keep company information confidential.
+"""
+    data = extract_key_clauses(noisy_text)
+    parties = data["clauses"]["parties"]
+    assert parties["status"] == "not_found"
+    assert parties["extracted_text"] is None
+    assert parties["evidence_snippets"] == []
+    assert any("skills/job-description" in issue for issue in parties["issues"])
