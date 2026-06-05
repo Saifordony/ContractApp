@@ -104,3 +104,12 @@ Confidentiality: Employees must keep company information confidential.
     assert parties["extracted_text"] is None
     assert parties["evidence_snippets"] == []
     assert any("skills/job-description" in issue for issue in parties["issues"])
+
+
+def test_extracted_clause_records_include_plain_english_fields():
+    result = extract_key_clauses("This Agreement may be terminated by either party with 30 days written notice.")
+    termination = result["clauses"]["termination"]
+    assert "plain_english_summary" in termination
+    assert "what_was_found" in termination
+    assert "why_it_matters" in termination
+    assert "missing_information" in termination

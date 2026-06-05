@@ -248,6 +248,10 @@ def build_benchmark_comparison(
             "evidence": evidence,
             "recommendation": recommendation,
             "why_this_matters": rule["user_friendly_explanation"],
+            "clause_summary": (text[:220] + "...") if len(text or "") > 220 else (text or "Not found — comparison unavailable."),
+            "peer_group_size": None,
+            "confidence_label": "Medium" if text else "Low",
+            "outlier_label": "Outlier" if result in {"Not found", "Below benchmark"} else "Slightly different" if result == "Partially aligned" else "Aligned",
         })
 
     total_weight = max(total_weight, 1)

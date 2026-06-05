@@ -225,6 +225,30 @@ def _is_skills_noise(text: str) -> bool:
     return any(h in t for h in SKILLS_NOISE_HINTS)
 
 
+
+CLAUSE_PLAIN_ENGLISH = {
+    "parties": "Identifies who is bound by the contract.",
+    "effective_date": "Shows when the contract starts or becomes binding.",
+    "termination": "Explains how the contract can end and what notice is required.",
+    "compensation": "Explains pay, fees, salary, or other payment terms.",
+    "leave_policy": "Explains vacation, sick leave, holidays, or time-off rights.",
+    "working_hours": "Explains expected work hours, schedule, or overtime terms.",
+    "confidentiality": "Explains how private information must be protected.",
+    "governing_law": "Shows which law applies to the contract.",
+    "dispute_resolution": "Explains how disagreements will be handled.",
+    "renewal": "Explains whether and how the contract continues after the first term.",
+}
+
+
+def _clause_plain_summary(clause_name: str, text: str | None) -> str:
+    if not text:
+        return "No reliable wording was found for this clause."
+    return f"This section appears to cover {clause_name.replace('_', ' ')}. Review the evidence to confirm it matches the business deal."
+
+
+def _clause_why_it_matters(clause_name: str) -> str:
+    return CLAUSE_PLAIN_ENGLISH.get(clause_name, "This clause helps clarify rights, duties, timing, or risk in the contract.")
+
 def _validated_clause_record(clause_name: str, matches: list[dict], source_text: str = "") -> Dict[str, Any]:
     issues: List[str] = []
     if not matches:
@@ -235,7 +259,11 @@ def _validated_clause_record(clause_name: str, matches: list[dict], source_text:
                 "extracted_text": None,
                 "evidence_snippets": [],
                 "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
-                "recommended_action": "Look for party-identification language (e.g., 'between X and Y', legal entity names, or defined party terms).",
+                "plain_english_summary": _clause_plain_summary(clause_name, None),
+                "what_was_found": "No reliable evidence found.",
+                "why_it_matters": _clause_why_it_matters(clause_name),
+                "missing_information": ["Clear party-identification wording."],
+                "recommended_action": "Look for party-identification language (for example, 'between X and Y', legal entity names, or defined party terms).",
             }
         return {
             "status": "not_found",
@@ -243,7 +271,11 @@ def _validated_clause_record(clause_name: str, matches: list[dict], source_text:
             "extracted_text": None,
             "evidence_snippets": [],
             "issues": ["No reliable evidence found for this clause."],
-            "recommended_action": "Request explicit clause text or perform manual legal review.",
+            "plain_english_summary": _clause_plain_summary(clause_name, None),
+            "what_was_found": "No reliable evidence found.",
+            "why_it_matters": _clause_why_it_matters(clause_name),
+            "missing_information": [f"Clear {clause_name.replace('_', ' ')} wording."],
+            "recommended_action": "Add clear wording for this clause or ask a reviewer to confirm whether it exists elsewhere in the contract.",
         }
 
     top = matches[0]
@@ -256,7 +288,11 @@ def _validated_clause_record(clause_name: str, matches: list[dict], source_text:
             "extracted_text": None,
             "evidence_snippets": [],
             "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
-            "recommended_action": "Look for party-identification language (e.g., 'between X and Y', legal entity names, or defined party terms).",
+            "plain_english_summary": _clause_plain_summary(clause_name, None),
+            "what_was_found": "No reliable evidence found.",
+            "why_it_matters": _clause_why_it_matters(clause_name),
+            "missing_information": ["Clear party-identification wording."],
+            "recommended_action": "Look for party-identification language (for example, 'between X and Y', legal entity names, or defined party terms).",
         }
 
     ev=[{"quote":m.get("quote",""),"location":m.get("location",""),"chunk_id":m.get("chunk_id","")} for m in matches[:2]]
@@ -265,9 +301,13 @@ def _validated_clause_record(clause_name: str, matches: list[dict], source_text:
         "status": "found",
         "confidence": confidence,
         "extracted_text": top_quote,
+        "what_was_found": top_quote,
+        "plain_english_summary": _clause_plain_summary(clause_name, top_quote),
+        "why_it_matters": _clause_why_it_matters(clause_name),
         "evidence_snippets": ev,
         "issues": issues,
-        "recommended_action": "No immediate action required.",
+        "missing_information": [],
+        "recommended_action": "No immediate action required. Confirm the wording matches the intended business agreement.",
     }
 
 

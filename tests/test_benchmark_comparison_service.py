@@ -73,3 +73,13 @@ def test_missing_benchmark_baseline_raises_when_baselines_unavailable(monkeypatc
     monkeypatch.setitem(svc.BASELINES, "general", None)
     with pytest.raises(ValueError):
         build_benchmark_comparison(contract_id="c1", validated_clauses={}, contract_type="weird")
+
+
+def test_benchmark_rows_include_business_friendly_reporting_fields():
+    result = build_benchmark_comparison(contract_id="c1", validated_clauses=VALIDATED_CLAUSES, contract_type="employment")
+    row = result["your_contract_vs_benchmark"][0]
+    assert "clause_summary" in row
+    assert "why_this_matters" in row
+    assert "confidence_label" in row
+    assert "outlier_label" in row
+    assert "peer_group_size" in row
