@@ -60,6 +60,224 @@ def render_next_step(title: str, body: str) -> None:
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 
+
+DEMO_CLIENT_NAME = "Atlas Engineering LLC"
+DEMO_CONTRACT_TITLE = "Computer Engineer Employment Agreement"
+DEMO_CONTRACT_ID = "demo-contract"
+DEMO_CONTRACT_TEXT = """
+This Employment Agreement is made between Atlas Engineering LLC and Dana Khaled.
+Dana will work as Computer Engineer in Amman, Jordan starting 1 March 2026.
+The employee will receive a monthly salary of 2,500 JOD, payable at the end of each month.
+The first three months are a probation period. Either party may terminate with 30 days' written notice.
+The employee must keep company and client information confidential during and after employment.
+The agreement does not clearly state annual leave, sick leave, governing law, or dispute resolution.
+""".strip()
+
+DEMO_STRUCTURED_CLAUSES: Dict[str, Dict[str, Any]] = {
+    "parties": {
+        "status": "found",
+        "confidence": 0.94,
+        "confidence_label": "High",
+        "plain_english_summary": "The contract clearly identifies the employer and employee.",
+        "what_was_found": "Atlas Engineering LLC and Dana Khaled are named as the contracting parties.",
+        "why_it_matters": "Clear parties make it easier to enforce responsibilities and avoid confusion.",
+        "extracted_text": "This Employment Agreement is made between Atlas Engineering LLC and Dana Khaled.",
+        "evidence_snippets": [{"quote": "This Employment Agreement is made between Atlas Engineering LLC and Dana Khaled.", "location": "Demo contract, opening paragraph"}],
+        "issues": [],
+        "recommended_action": "No immediate change needed.",
+        "missing_information": [],
+    },
+    "role_position": {
+        "status": "found",
+        "confidence": 0.9,
+        "confidence_label": "High",
+        "plain_english_summary": "The employee role is stated.",
+        "what_was_found": "Dana will work as Computer Engineer.",
+        "why_it_matters": "The role defines the work expected from the employee.",
+        "extracted_text": "Dana will work as Computer Engineer in Amman, Jordan starting 1 March 2026.",
+        "evidence_snippets": [{"quote": "Dana will work as Computer Engineer in Amman, Jordan starting 1 March 2026.", "location": "Demo contract, role paragraph"}],
+        "issues": [],
+        "recommended_action": "Add a short list of core duties for better clarity.",
+        "missing_information": ["Detailed responsibilities"],
+    },
+    "compensation": {
+        "status": "found",
+        "confidence": 0.92,
+        "confidence_label": "High",
+        "plain_english_summary": "Salary and payment timing are stated.",
+        "what_was_found": "Monthly salary of 2,500 JOD, payable at the end of each month.",
+        "why_it_matters": "Clear pay terms reduce payroll and employee expectation disputes.",
+        "extracted_text": "The employee will receive a monthly salary of 2,500 JOD, payable at the end of each month.",
+        "evidence_snippets": [{"quote": "monthly salary of 2,500 JOD, payable at the end of each month", "location": "Demo contract, compensation paragraph"}],
+        "issues": ["Benefits and allowances are not described."],
+        "recommended_action": "Add benefits, allowances, deductions, and salary review wording.",
+        "missing_information": ["Benefits", "Allowances", "Deductions", "Salary review"],
+    },
+    "probation": {
+        "status": "found",
+        "confidence": 0.88,
+        "confidence_label": "High",
+        "plain_english_summary": "The probation period is clear.",
+        "what_was_found": "The first three months are a probation period.",
+        "why_it_matters": "Probation terms help both sides understand the early review period.",
+        "extracted_text": "The first three months are a probation period.",
+        "evidence_snippets": [{"quote": "The first three months are a probation period.", "location": "Demo contract, probation paragraph"}],
+        "issues": ["Probation evaluation process is not described."],
+        "recommended_action": "Add how performance is reviewed during probation.",
+        "missing_information": ["Probation review process"],
+    },
+    "termination": {
+        "status": "partially_found",
+        "confidence": 0.76,
+        "confidence_label": "Medium",
+        "plain_english_summary": "Notice is stated, but the full termination process is incomplete.",
+        "what_was_found": "Either party may terminate with 30 days' written notice.",
+        "why_it_matters": "Termination language explains how the relationship can end and reduces exit disputes.",
+        "extracted_text": "Either party may terminate with 30 days' written notice.",
+        "evidence_snippets": [{"quote": "Either party may terminate with 30 days' written notice.", "location": "Demo contract, termination paragraph"}],
+        "issues": ["No final settlement wording.", "No termination grounds."],
+        "recommended_action": "Add termination grounds, final pay, handover, and end-of-service wording.",
+        "missing_information": ["Termination grounds", "Final settlement", "Handover process"],
+    },
+    "leave_policy": {
+        "status": "not_found",
+        "confidence": 0.2,
+        "confidence_label": "Low",
+        "plain_english_summary": "No reliable leave policy was found.",
+        "what_was_found": "No reliable evidence was found for annual leave, sick leave, or public holidays.",
+        "why_it_matters": "Leave rules help employees and managers understand time-off rights and approvals.",
+        "extracted_text": "",
+        "evidence_snippets": [],
+        "issues": ["Annual leave not found.", "Sick leave not found.", "Public holidays not found."],
+        "recommended_action": "Add annual leave, sick leave, public holidays, and approval process.",
+        "missing_information": ["Annual leave", "Sick leave", "Public holidays", "Approval process"],
+    },
+    "governing_law": {
+        "status": "not_found",
+        "confidence": 0.18,
+        "confidence_label": "Low",
+        "plain_english_summary": "The governing law is not clearly stated.",
+        "what_was_found": "No reliable governing law or court jurisdiction clause was found.",
+        "why_it_matters": "Governing law tells both parties which rules apply if there is a dispute.",
+        "extracted_text": "",
+        "evidence_snippets": [],
+        "issues": ["Applicable law not found.", "Courts or jurisdiction not found."],
+        "recommended_action": "Add applicable law and court or arbitration forum.",
+        "missing_information": ["Applicable law", "Jurisdiction"],
+    },
+    "confidentiality": {
+        "status": "found",
+        "confidence": 0.85,
+        "confidence_label": "High",
+        "plain_english_summary": "Confidentiality is covered at a basic level.",
+        "what_was_found": "The employee must keep company and client information confidential.",
+        "why_it_matters": "This protects sensitive business, client, and technical information.",
+        "extracted_text": "The employee must keep company and client information confidential during and after employment.",
+        "evidence_snippets": [{"quote": "keep company and client information confidential during and after employment", "location": "Demo contract, confidentiality paragraph"}],
+        "issues": ["Permitted disclosures and return of information are not described."],
+        "recommended_action": "Add permitted disclosures, return of information, and remedies.",
+        "missing_information": ["Permitted disclosure", "Return of information"],
+    },
+}
+
+DEMO_ANALYSIS_RESULTS: Dict[str, Any] = {
+    "contract_type": "Employment Contract",
+    "confidence_label": "Medium",
+    "raw_text": DEMO_CONTRACT_TEXT,
+    "structured_clauses": {"clauses": DEMO_STRUCTURED_CLAUSES},
+    "health_evaluation": {
+        "health_score": 64,
+        "overall_result": "Requires Review Before Approval",
+        "risk_level": "Medium",
+        "contract_type": "Employment Contract",
+        "confidence": "Medium",
+        "executive_summary": "The contract covers the basic employment relationship, salary, probation, notice, and confidentiality. It needs review because leave, governing law, dispute resolution, benefits, and final settlement language are missing or incomplete.",
+        "score_breakdown": [
+            {"area": "Risk Exposure", "impact": "High", "severity": "Medium", "explanation": "Some key protections are missing, especially governing law and dispute handling."},
+            {"area": "Commercial Clarity", "impact": "Medium", "severity": "Medium", "explanation": "Salary is clear, but benefits and deductions are not described."},
+            {"area": "Termination & Renewal", "impact": "High", "severity": "Medium", "explanation": "Notice is clear, but termination grounds and final settlement are incomplete."},
+        ],
+        "dimensions": [
+            {"name": "Risk Exposure", "score": 58, "reason": "Key legal protections are incomplete.", "evidence": "Governing law and dispute resolution are not clearly stated.", "recommended_action": "Add governing law, dispute resolution, and final settlement wording."},
+            {"name": "Commercial Clarity", "score": 72, "reason": "Salary is clear, but benefits are missing.", "evidence": "Monthly salary of 2,500 JOD is stated.", "recommended_action": "Add benefits, allowances, and deductions."},
+            {"name": "Termination & Renewal", "score": 65, "reason": "Notice exists, but termination process is incomplete.", "evidence": "Either party may terminate with 30 days' written notice.", "recommended_action": "Add termination grounds and handover steps."},
+            {"name": "Obligations & SLA", "score": 60, "reason": "Role is stated, but duties are light.", "evidence": "Computer Engineer role is stated.", "recommended_action": "Add core duties and performance expectations."},
+            {"name": "Dispute & Governing Law", "score": 35, "reason": "No reliable governing law or dispute process was found.", "evidence": "No evidence found.", "recommended_action": "Add applicable law and dispute resolution forum."},
+        ],
+        "required_clauses_not_found": ["Governing Law", "Dispute Resolution", "Leave Policy"],
+        "recommended_protections_not_found": ["Benefits details", "Final settlement", "IP assignment"],
+        "key_review_findings": [
+            "Salary and payment timing are clear.",
+            "Leave, governing law, and dispute handling need attention.",
+            "Termination language should explain final settlement and handover.",
+        ],
+        "recommended_next_steps": [
+            "Add leave and holiday wording.",
+            "Add governing law and dispute resolution.",
+            "Clarify benefits, allowances, deductions, and final settlement.",
+        ],
+    },
+}
+
+DEMO_BENCHMARK_RESULT: Dict[str, Any] = {
+    "benchmark_title": "Benchmark Comparison",
+    "benchmark_context": {
+        "contract_type": "Employment Contract",
+        "region": "MENA",
+        "jurisdiction": "Not clearly detected",
+        "benchmark_basis": "Rule-based employment contract standard",
+        "sample_size": None,
+        "confidence_label": "Medium",
+        "limitations": ["No live market dataset was used. This demo uses internal rule-based benchmark expectations."],
+    },
+    "overall_position": {
+        "alignment_score": 62,
+        "position_label": "Partially Aligned",
+        "executive_summary": "This contract covers core employment details, salary, probation, notice, and confidentiality. It is below a stronger benchmark because leave, governing law, dispute resolution, benefits, and final settlement language are incomplete or missing.",
+        "top_reasons_for_score": [
+            "Core salary and role terms are present.",
+            "Leave and governing law are not found.",
+            "Termination is only partially complete.",
+        ],
+    },
+    "your_contract_vs_benchmark": [
+        {"review_area": "Compensation", "your_contract": "Monthly salary of 2,500 JOD payable at month end.", "benchmark_expectation": "Salary, currency, frequency, benefits, allowances, deductions, and salary review should be clear.", "result": "Partially aligned", "severity": "Medium", "recommendation": "Add benefits, deductions, allowances, and salary review wording.", "clause_summary": "Salary is clear, but supporting compensation terms are incomplete.", "peer_group_size": None, "confidence_label": "High", "outlier_label": "Slightly different", "evidence": [{"quote": "monthly salary of 2,500 JOD, payable at the end of each month", "location": "Demo contract"}]},
+        {"review_area": "Leave Policy", "your_contract": "Not found — comparison unavailable.", "benchmark_expectation": "Annual leave, sick leave, public holidays, and approval process should be stated.", "result": "Not found", "severity": "High", "recommendation": "Add clear leave entitlements and approval process.", "clause_summary": "No reliable leave clause was found.", "peer_group_size": None, "confidence_label": "Low", "outlier_label": "Outlier", "evidence": []},
+        {"review_area": "Termination", "your_contract": "Either party may terminate with 30 days' written notice.", "benchmark_expectation": "Notice period, grounds, process, final settlement, and handover should be stated.", "result": "Partially aligned", "severity": "High", "recommendation": "Add termination grounds, handover, and final settlement language.", "clause_summary": "Notice is clear, but termination is not complete.", "peer_group_size": None, "confidence_label": "Medium", "outlier_label": "Slightly different", "evidence": [{"quote": "Either party may terminate with 30 days' written notice.", "location": "Demo contract"}]},
+        {"review_area": "Governing Law", "your_contract": "Not found — comparison unavailable.", "benchmark_expectation": "Applicable law and court or arbitration forum should be stated.", "result": "Not found", "severity": "High", "recommendation": "Add governing law and dispute resolution wording.", "clause_summary": "No governing law clause was found.", "peer_group_size": None, "confidence_label": "Low", "outlier_label": "Outlier", "evidence": []},
+    ],
+    "market_terms_comparison": [
+        {"term": "Monthly salary", "your_contract": "2,500 JOD", "benchmark_average": "No salary benchmark dataset available", "benchmark_range": "Not available", "difference": "Salary stated; market comparison unavailable", "interpretation": "Salary exists, but no market average is shown.", "limitations": "Rule-based benchmark, not live market data."},
+        {"term": "Probation period", "your_contract": "3 months", "benchmark_average": "3 to 6 months where legally applicable", "benchmark_range": "3 to 6 months", "difference": "Within expected range", "interpretation": "Aligned", "limitations": "Rule-based expectation."},
+        {"term": "Notice period", "your_contract": "30 days", "benchmark_average": "Clear notice period should be stated", "benchmark_range": "Not numeric", "difference": "Stated", "interpretation": "Aligned", "limitations": "Rule-based expectation."},
+        {"term": "Annual leave", "your_contract": "Not found — comparison unavailable", "benchmark_average": "Annual leave should be stated", "benchmark_range": "Not available", "difference": "N/A", "interpretation": "Comparison unavailable because the term was not found", "limitations": "No evidence found in the demo contract."},
+    ],
+    "strengths": ["Parties, role, salary, probation, notice, and confidentiality are visible."],
+    "gaps": ["Leave policy not found.", "Governing law not found.", "Dispute resolution not found.", "Benefits and final settlement are incomplete."],
+    "priority_recommendations": {
+        "priority_1_must_fix": ["Add governing law and dispute resolution.", "Add annual leave, sick leave, and public holidays.", "Clarify final settlement and handover on termination."],
+        "priority_2_recommended": ["Add benefits, allowances, deductions, and salary review wording.", "Add detailed role responsibilities."],
+    },
+    "ai_commentary": "In simple terms: this is a workable employment contract draft, but it should not be approved until missing leave, governing law, dispute, and termination details are added. This is not legal advice.",
+}
+
+DEMO_REPORT_PAYLOAD: Dict[str, Any] = {
+    **DEMO_ANALYSIS_RESULTS,
+    "benchmark_result": DEMO_BENCHMARK_RESULT,
+    "risk_analysis": {
+        "risks": [
+            {"title": "Missing governing law", "severity": "high", "reason": "The contract does not clearly say which law applies.", "evidence": "No governing law clause found."},
+            {"title": "Leave policy not stated", "severity": "medium", "reason": "Employees and managers may not know time-off rules.", "evidence": "No annual leave or sick leave clause found."},
+            {"title": "Termination process incomplete", "severity": "medium", "reason": "Notice exists, but final settlement and handover are not explained.", "evidence": "Either party may terminate with 30 days' written notice."},
+        ]
+    },
+    "recommended_actions": [
+        "Add governing law and dispute resolution wording.",
+        "Add leave, benefits, allowances, and deductions.",
+        "Complete termination, handover, and final settlement terms.",
+    ],
+}
+
 # Initialize session state
 init_session_state()
 
@@ -1661,9 +1879,226 @@ def admin_dashboard():
 
 
 
+def render_guided_onboarding() -> None:
+    """Guide first-time users through the fastest successful product path."""
+    if st.session_state.get("onboarding_complete"):
+        return
+
+    st.markdown("### Guided onboarding")
+    st.caption("Follow these steps to complete a full contract review without guessing what to do next.")
+    steps = [
+        ("1", "Create client", "Add the organization or person the contract belongs to."),
+        ("2", "Upload contract", "Upload a PDF or use Demo Mode if you want to explore first."),
+        ("3", "Run analysis", "Extract key clauses and evidence from the contract."),
+        ("4", "Review health", "Check completeness, risk, and approval readiness."),
+        ("5", "Benchmark", "Compare the contract against rule-based expectations."),
+        ("6", "Ask AI / PDF", "Ask questions and download a polished report."),
+    ]
+    cols = st.columns(3)
+    for idx, (number, title, body) in enumerate(steps):
+        with cols[idx % 3]:
+            st.markdown(
+                f"""
+                <div class='feature-card'>
+                    <div class='feature-icon'>{html.escape(number)}</div>
+                    <h4>{html.escape(title)}</h4>
+                    <p>{html.escape(body)}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        if st.button("Mark onboarding complete"):
+            st.session_state.onboarding_complete = True
+            st.rerun()
+    with c2:
+        st.caption("Tip: Use Demo Mode for a two-minute examiner walkthrough before uploading your own contract.")
+
+
+def load_demo_workspace() -> None:
+    """Preload a realistic local demo workspace without backend calls."""
+    st.session_state.demo_mode = True
+    st.session_state.selected_client_id = "demo-client"
+    st.session_state.selected_client_name = DEMO_CLIENT_NAME
+    st.session_state.selected_contract_id = DEMO_CONTRACT_ID
+    st.session_state.current_contract_title = DEMO_CONTRACT_TITLE
+    st.session_state.current_contract_content = DEMO_CONTRACT_TEXT
+    st.session_state.current_clauses = {
+        key: payload.get("extracted_text") or payload.get("what_was_found")
+        for key, payload in DEMO_STRUCTURED_CLAUSES.items()
+    }
+    st.session_state[f"analysis_results_{DEMO_CONTRACT_ID}"] = DEMO_REPORT_PAYLOAD
+    st.session_state[f"benchmark_comparison_{DEMO_CONTRACT_ID}"] = DEMO_BENCHMARK_RESULT
+    st.session_state.chat_messages_by_contract = st.session_state.get("chat_messages_by_contract", {})
+    st.session_state.chat_messages_by_contract[DEMO_CONTRACT_ID] = [
+        {
+            "role": "assistant",
+            "content": "Demo workspace loaded. You can ask about risks, missing clauses, salary, leave, termination, benchmark results, or report recommendations.",
+            "suggested_followups": ["What should I fix first?", "Why is the benchmark score 62?", "Is leave mentioned?"],
+        }
+    ]
+
+
+def demo_mode_page() -> None:
+    """Polished, preloaded examiner demo that works without uploads."""
+    page_header("Demo Mode", "Explore a complete sample contract review in two minutes without uploading anything.", "Grading-ready demo")
+    render_brand_logo("Preloaded sample workspace")
+    render_next_step("Fast demo path", "Click Load Demo Workspace, review the health and benchmark sections, then download the PDF report.")
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        if st.button("Load Demo Workspace", type="primary"):
+            load_demo_workspace()
+            st.success("Demo workspace loaded. You can now open Dashboard, Benchmark, AI Assistant, or download the report below.")
+    with c2:
+        st.info("This demo uses sample data only. It does not call the backend, does not use live market data, and does not send contract text outside the app.")
+
+    workflow_stepper(["Client", "Contract", "Analysis", "Health", "Benchmark", "PDF report"], active_index=5)
+
+    cols = st.columns(5)
+    with cols[0]:
+        render_metric_card("Client", DEMO_CLIENT_NAME, "Sample workspace")
+    with cols[1]:
+        render_metric_card("Health Score", "64/100", "Requires review")
+    with cols[2]:
+        render_metric_card("Benchmark", "62/100", "Partially aligned")
+    with cols[3]:
+        render_metric_card("Clauses Found", "6", "Validated evidence")
+    with cols[4]:
+        render_metric_card("Must Fix", "3", "Before approval")
+
+    tab_analysis, tab_benchmark, tab_chat, tab_report, tab_script = st.tabs([
+        "Analysis Preview", "Benchmark Preview", "AI Preview", "PDF Report", "Grading Script"
+    ])
+
+    with tab_analysis:
+        st.markdown("### Executive summary")
+        st.write(DEMO_ANALYSIS_RESULTS["health_evaluation"]["executive_summary"])
+        render_contract_evaluation(DEMO_ANALYSIS_RESULTS["health_evaluation"])
+        st.markdown("### Extracted clauses with evidence")
+        for clause_type, payload in DEMO_STRUCTURED_CLAUSES.items():
+            render_clause_card(clause_type, payload, payload.get("why_it_matters"))
+
+    with tab_benchmark:
+        render_benchmark_comparison(DEMO_BENCHMARK_RESULT)
+
+    with tab_chat:
+        st.markdown("### Sample AI assistant exchange")
+        demo_chat = [
+            {"role": "user", "content": "What should I fix first?"},
+            {
+                "role": "assistant",
+                "content": "Fix the governing law, dispute resolution, and leave policy first. These are high-impact gaps because the contract does not clearly explain which rules apply, how disputes are handled, or what leave the employee receives. This is not legal advice.",
+                "evidence_snippets": [
+                    {"clause_name": "Governing Law", "relevance": "Missing evidence", "quote": "No reliable governing law or dispute resolution clause was found.", "location": "Demo analysis"},
+                    {"clause_name": "Leave Policy", "relevance": "Missing evidence", "quote": "No reliable evidence was found for annual leave, sick leave, or public holidays.", "location": "Demo analysis"},
+                ],
+            },
+        ]
+        render_chat_history(demo_chat)
+        st.caption("In the live app, chat history stays scoped to the selected contract so it does not mix clients or contracts.")
+
+    with tab_report:
+        st.markdown("### Professional PDF report")
+        st.write("Download a consulting-style report with cover page, charts, health score, benchmark insights, risks, recommendations, and evidence appendix.")
+        try:
+            pdf_bytes = build_pipeline_report_pdf(DEMO_CONTRACT_TITLE, DEMO_REPORT_PAYLOAD, DEMO_CLIENT_NAME)
+            st.download_button(
+                "Download Demo PDF Report",
+                data=pdf_bytes,
+                file_name="contract-intelligence-demo-report.pdf",
+                mime="application/pdf",
+            )
+        except Exception as exc:
+            friendly_error(
+                "The demo PDF could not be generated in this environment.",
+                "Install report dependencies from requirements.txt, then try again.",
+                str(exc),
+            )
+
+    with tab_script:
+        st.markdown("### Two-minute grading demo script")
+        st.write("1. Open **Demo Mode** and click **Load Demo Workspace**.")
+        st.write("2. Show the sample client, contract, health score, benchmark score, and must-fix count.")
+        st.write("3. Open **Analysis Preview** and explain confidence, evidence, and why each clause matters.")
+        st.write("4. Open **Benchmark Preview** and show that the basis is rule-based, not fake market data.")
+        st.write("5. Open **AI Preview** and show evidence-backed answers.")
+        st.write("6. Download the PDF report and explain it is suitable for a manager or examiner.")
+
+
+def presentation_mode_page() -> None:
+    """Examiner-facing project explanation page."""
+    page_header("Presentation Mode", "A clear walkthrough of the problem, solution, AI pipeline, architecture, and future work.", "Examiner briefing")
+    render_brand_logo("Graduation project presentation")
+
+    sections = [
+        ("Problem", "Contract review is slow, inconsistent, and hard for non-lawyers to understand. Teams need faster answers, clearer risks, and evidence they can trust."),
+        ("Solution", "Contract Intelligence extracts clauses, checks contract health, compares benchmark expectations, answers questions, and creates a polished PDF report."),
+        ("User journey", "Login → create client → upload contract → run analysis → review health → compare benchmark → ask AI → download PDF report."),
+        ("AI pipeline", "The platform uses local Ollama configuration, validated extraction, evidence snippets, deterministic fallbacks, confidence labels, and simple-English outputs."),
+        ("Architecture", "FastAPI handles APIs and analysis services, MongoDB stores users/clients/contracts, Streamlit provides the SaaS interface, and Docker Compose runs the stack."),
+        ("Key features", "Authentication, client management, upload, clause extraction, contract health, benchmark comparison, AI assistant, diagnostics, demo mode, and PDF reporting."),
+        ("Limitations", "This is not legal advice. Benchmarking is rule-based unless a real benchmark corpus is provided. Local model quality depends on the installed Ollama model."),
+        ("Future improvements", "Add role-based permissions, larger benchmark datasets, OCR queues, evaluator dashboards, document redlining, and automated regression reports."),
+    ]
+    cols = st.columns(2)
+    for idx, (title, body) in enumerate(sections):
+        with cols[idx % 2]:
+            st.markdown(
+                f"""
+                <div class='feature-card'>
+                    <div class='feature-icon'>{'⚖️' if idx % 2 == 0 else '✨'}</div>
+                    <h4>{html.escape(title)}</h4>
+                    <p>{html.escape(body)}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("### Recommended presentation flow")
+    st.write("Use Demo Mode first, then show Presentation Mode, then briefly open Security & Privacy and the PDF report.")
+
+
+def security_privacy_page() -> None:
+    """Plain-English security and privacy explanation for users and examiners."""
+    page_header("Security & Privacy", "How the platform handles contracts, user data, local AI, and sensitive information.", "Trust center")
+    render_brand_logo("Local-first contract intelligence")
+
+    cards = [
+        ("Local AI processing", "The app is designed to use Ollama locally. Contract text is processed by your local model configuration instead of being sent to a public AI service by default."),
+        ("No fake data", "Benchmark results clearly say when they are rule-based. The app does not invent live market numbers or salary averages."),
+        ("Evidence-based answers", "Contract-specific AI answers should include evidence quotes. If evidence is weak or missing, the app says so in simple English."),
+        ("User accounts", "Users sign in before using the workspace. Keep deployment secrets and API keys in environment variables, not in source code."),
+        ("Sensitive contract text", "Only upload contracts you are allowed to process. Avoid sharing reports outside your organization unless approved."),
+        ("Not legal advice", "The platform helps review and explain contracts, but final decisions should be checked by a qualified legal professional."),
+    ]
+    cols = st.columns(2)
+    for idx, (title, body) in enumerate(cards):
+        with cols[idx % 2]:
+            st.markdown(
+                f"""
+                <div class='feature-card'>
+                    <div class='feature-icon'>{'🔒' if idx % 2 == 0 else '🛡️'}</div>
+                    <h4>{html.escape(title)}</h4>
+                    <p>{html.escape(body)}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    with st.expander("Security checklist for deployment"):
+        st.write("- Use a strong SECRET_KEY and private environment files.")
+        st.write("- Restrict database and admin access to trusted users.")
+        st.write("- Review logs so sensitive contract text is not exposed unnecessarily.")
+        st.write("- Confirm Ollama model and base URL before a demo or production run.")
+        st.write("- Back up MongoDB if stored contracts are important.")
+
+
 def dashboard_page():
     render_brand_logo("Professional contract review workspace")
     page_header("Dashboard", "Your contract review command center. Start with a client, upload a contract, then run analysis.", "Overview")
+    render_guided_onboarding()
     stats = get_dashboard_stats()
     contracts = get_contracts_list()
     analyzed_contracts = sum(1 for contract in contracts if contract.get("status") == "analyzed")
@@ -1750,11 +2185,14 @@ def main():
         st.markdown("---")
         nav_items = [
             "Dashboard",
+            "Demo Mode",
+            "Presentation Mode",
             "Clients",
             "Contracts",
             "Analyze",
             "Benchmark",
             "AI Assistant",
+            "Security & Privacy",
             "Settings",
         ]
         if not BENCHMARK_ENABLED:
@@ -1772,6 +2210,11 @@ def main():
     # Main content
     if navigation == "Dashboard":
         dashboard_page()
+    elif navigation == "Demo Mode":
+        demo_mode_page()
+        st.markdown("<div class='fab-chip'>🎬 Main Action: Load Demo Workspace</div>", unsafe_allow_html=True)
+    elif navigation == "Presentation Mode":
+        presentation_mode_page()
     elif navigation in {"Clients", "Contracts"}:
         clients_contracts_page()
         st.markdown("<div class='fab-chip'>➕ Main Action: Create Client / Contract</div>", unsafe_allow_html=True)
@@ -1783,6 +2226,8 @@ def main():
         st.markdown("<div class='fab-chip'>📚 Main Action: Run Benchmark</div>", unsafe_allow_html=True)
     elif navigation == "AI Assistant":
         ask_ai_page()
+    elif navigation == "Security & Privacy":
+        security_privacy_page()
     elif navigation == "Settings":
         settings_diagnostics_page()
         st.markdown("---")
