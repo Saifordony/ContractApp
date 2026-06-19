@@ -2,9 +2,9 @@ from pathlib import Path
 
 
 def _chat_endpoint_source() -> str:
-    source = Path("backend/main.py").read_text()
-    start = source.index('@app.post("/contracts/{contract_id}/chat")')
-    end = source.index('@app.post("/benchmark/compare/{contract_id}")', start)
+    source = Path("backend/routers/contracts.py").read_text()
+    start = source.index('@router.post("/contracts/{contract_id}/chat")')
+    end = source.index('@router.post("/contracts/compare")', start)
     return source[start:end]
 
 
