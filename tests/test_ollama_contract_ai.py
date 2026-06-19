@@ -106,6 +106,64 @@ def test_confidence_scoring_requires_evidence_and_reviewer_approval():
     assert no_evidence < rejected < approved
 
 
+def test_compute_confidence_zero_evidence():
+    assert compute_confidence(evidence_count=0, best_relevance=0.9) == 0.05
+
+
+def test_compute_confidence_max_evidence():
+    capped = compute_confidence(evidence_count=50, best_relevance=1.0, reviewer_approved=True)
+    assert capped == 0.95
+
+
+def test_reviewer_verification_missing_evidence_key():
+    # Payload deliberately omits the "evidence" key entirely.
+    review = reviewer_verification(
+        {"answer": "Payment is due within 30 days."},
+        [{"quote": "within 30 days", "location": "section:Payment"}],
+    )
+    assert isinstance(review, dict)
+    assert "approved" in review
+    # No citations in the payload -> not approved, but no crash.
+    assert review["approved"] is False
+
+
+def test_json_repair_path_activated():
+    calls = []
+
+    def fake_llm(prompt: str) -> str:
+        calls.append(prompt)
+        if len(calls) <= 3:  # all 3 attempts (MAX_RETRIES + 1) fail
+            return "definitely not json"
+        return (
+            '{"answer":"Payment is due within 30 days.","confidence":0.7,'
+            '"evidence":[{"quote":"within 30 days","location":"section:Payment"}],'
+            '"risks":[],"missing_information":[]}'
+        )
+
+    result = run_contract_reasoning_pipeline(
+        question="payment terms", contract_text=CONTRACT_TEXT, llm_callable=fake_llm, debug=True
+    )
+    assert len(calls) == 4  # 3 failed attempts + 1 repair call
+    assert result["answer"].startswith("Payment")
+    assert result["debug"]["json_repaired_or_fallback"] is True
+
+
+def test_retry_loop_exhausted_falls_back():
+    calls = []
+
+    def always_bad(prompt: str) -> str:
+        calls.append(prompt)
+        return "still not json"
+
+    result = run_contract_reasoning_pipeline(
+        question="payment terms", contract_text=CONTRACT_TEXT, llm_callable=always_bad, debug=True
+    )
+    # 3 attempts + 1 repair attempt, then deterministic fallback.
+    assert len(calls) == 4
+    assert result["evidence"], "deterministic fallback still surfaces grounded evidence"
+    assert result["debug"]["json_repaired_or_fallback"] is True
+
+
 def test_contract_health_and_benchmark_outputs_remain_separate():
     clauses = {
         "payment_terms": "The Client will pay monthly within 30 days after invoice.",

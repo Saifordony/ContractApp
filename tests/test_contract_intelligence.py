@@ -1,7 +1,11 @@
 from backend.services.contract_intelligence import (
+    CHUNK_OVERLAP_MARKER,
     answer_contract_question,
+    arabic_normalize,
     chunk_contract_text,
+    detect_contract_language,
     extract_key_clauses,
+    is_heading,
     retrieve_relevant_chunks,
     classify_question_intent,
 )
@@ -129,3 +133,62 @@ def test_arabic_clause_classification_finds_key_terms():
     assert data["clauses"]["governing_law"]["status"] == "found"
     assert data["clauses"]["dispute_resolution"]["status"] == "found"
     assert data["clauses"]["confidentiality"]["status"] == "found"
+
+
+def test_arabic_normalize():
+    # Alef variants (أ إ آ) fold to bare alef.
+    assert arabic_normalize("أإآا") == "اااا"
+    # Harakat / diacritics are stripped.
+    assert arabic_normalize("سَلَام") == "سلام"
+    # Teh marbuta (ة) maps to heh (ه).
+    assert arabic_normalize("سيارة") == "سياره"
+    # Yeh variant (ى) folds to yeh (ي).
+    assert arabic_normalize("مستشفى") == "مستشفي"
+    # Latin text passes through unchanged (case preserved).
+    assert arabic_normalize("Payment Terms") == "Payment Terms"
+
+
+def test_heading_detection_arabic():
+    assert is_heading("المادة الخامسة: إنهاء العقد")
+    assert is_heading("المادة الخامسة")
+    assert is_heading("Article 5: Termination")
+    assert is_heading("Section 3 Confidentiality")
+    assert not is_heading("This is an ordinary sentence of contract body text.")
+
+
+def test_chunk_arabic_only_text():
+    arabic_contract = """اتفاقية عمل
+المادة الأولى: الأطراف
+هذه الاتفاقية مبرمة بين الشركة والموظف.
+المادة الثانية: الأجر
+يتقاضى الموظف راتباً شهرياً قدره ألف دينار.
+المادة الثالثة: الإنهاء
+يجوز إنهاء العقد بإشعار خطي مدته ثلاثون يوماً.
+"""
+    chunks = chunk_contract_text(arabic_contract)
+    assert chunks, "Arabic-only text must produce at least one chunk"
+    joined = "\n".join(c.text for c in chunks)
+    assert "المادة" in joined
+    assert "راتب" in joined
+
+
+def test_chunk_overlap_present():
+    # Body lines must not look like headings (no leading article/section/clause,
+    # no trailing colon) so they accumulate into size-based chunks.
+    body = "\n".join(f"the parties agree that obligation number {i} shall be performed in full." for i in range(60))
+    text = "MASTER AGREEMENT\n" + body
+    chunks = chunk_contract_text(text)
+    assert len(chunks) >= 2, "text should span multiple chunks"
+    # Overlap continuation marker appears in a downstream chunk.
+    assert any(CHUNK_OVERLAP_MARKER in c.text for c in chunks[1:])
+    # The last 2 non-empty lines of chunk N appear at the start of chunk N+1.
+    prev_tail = [ln for ln in chunks[0].text.splitlines() if ln.strip()][-2:]
+    for line in prev_tail:
+        assert line in chunks[1].text
+
+
+def test_detect_contract_language():
+    assert detect_contract_language("This Agreement is governed by the laws of Jordan.") == "english"
+    assert detect_contract_language("هذه الاتفاقية تخضع للقانون الأردني وكل أحكامه.") == "arabic"
+    assert detect_contract_language("Governing Law: القانون الأردني applies to this Agreement fully.") == "bilingual"
+    assert detect_contract_language("") == "english"

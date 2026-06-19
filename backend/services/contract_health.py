@@ -83,9 +83,11 @@ CLAUSE_KEYWORDS: Dict[str, List[str]] = {
     "security_deposit": ["security deposit"],
     "renewal": ["renewal", "auto renew", "تجديد"],
     "insurance": ["insurance"],
-    "force_majeure": ["force majeure"],
+    "force_majeure": ["force majeure", "force-majeure", "القوة القاهرة"],
     "notice": ["notice"],
     "compensation": ["salary", "compensation"],
+    "probation": ["probation", "trial period", "تجربة", "فترة التجربة"],
+    "benefits": ["benefits", "allowance", "insurance", "مزايا", "بدلات", "تأمين"],
 }
 
 

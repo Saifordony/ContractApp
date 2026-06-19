@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 import asyncio
 import ast
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 import fitz  # PyMuPDF
@@ -523,6 +524,13 @@ def normalize_response_language(response_language: str) -> str:
 
 
 def get_ocr_languages(response_language: str) -> str:
+    # MENA contracts routinely mix Arabic and Latin scripts in the same document,
+    # so both scripts are always passed to Tesseract. TESSERACT_LANG (default
+    # "eng+ara") lets operators pin a single language string for every document;
+    # when it is unset we keep the UI-language-driven ordering for compatibility.
+    override = os.getenv("TESSERACT_LANG", "").strip()
+    if override:
+        return override
     if normalize_response_language(response_language) == "Arabic":
         return "ara+eng"
     return "eng+ara"

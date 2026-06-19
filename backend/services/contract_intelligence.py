@@ -2,8 +2,31 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
+
+
+# ---------------------------------------------------------------------------
+# Chunking configuration
+# ---------------------------------------------------------------------------
+# Token math (calibrated for the local llama3.1:8b context window of 8,192):
+#   - Average English/Arabic legal text runs ~4 characters per token.
+#   - CHUNK_SIZE_CHARS = 900 chars  ->  ~225 tokens per chunk.
+#   - A summary with top_k=8 chunks  ->  ~1,800 evidence tokens.
+#   - Plus system prompt (~400 tokens) + schema (~200 tokens)  ->  ~2,400 tokens.
+#   - contract_health uses top_k=10 (~2,250 evidence tokens) which, combined
+#     with a verbose system prompt, can approach the limit; the reasoning
+#     pipeline guards against this with a token-budget check, but keeping the
+#     chunk size tunable here lets us shrink it if the model truncates.
+CHUNK_SIZE_CHARS = 900
+
+# Continuation marker prepended to overlap lines so the model knows the leading
+# lines of a chunk were carried over from the previous section.
+CHUNK_OVERLAP_MARKER = "# [continued from previous section]"
+
+# Marks for tagging continued-text overlap lines.
+CONTINUATION_PREFIX = CHUNK_OVERLAP_MARKER
 
 
 @dataclass
@@ -59,8 +82,53 @@ class RetrievalHit:
     semantic_score: float
 
 
+# Arabic diacritics (harakat / tashkeel) ranges that should be stripped so that
+# vocalised and unvocalised spellings of the same word compare equal.
+_ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]")
+
+
+def arabic_normalize(text: str) -> str:
+    """Normalise Arabic script so keyword lookups are robust to spelling variants.
+
+    Strips harakat, folds the alef variants (\u0623 \u0625 \u0622) to bare alef (\u0627), maps teh
+    marbuta (\u0629) to heh (\u0647), and folds the yeh variants (\u0649) to yeh (\u064A).  Latin
+    text passes through unchanged, so this is safe to apply to mixed content.
+    """
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFC", text)
+    text = _ARABIC_DIACRITICS.sub("", text)
+    text = re.sub(r"[\u0623\u0625\u0622]", "\u0627", text)
+    text = text.replace("\u0629", "\u0647")
+    text = text.replace("\u0649", "\u064A")
+    return text.strip()
+
+
+def detect_contract_language(contract_text: str) -> str:
+    """Classify the dominant script of a contract as arabic / bilingual / english.
+
+    Counts Arabic-block characters (\u0600-\u06FF) against Latin letters.  More
+    than 30% Arabic -> "arabic"; a meaningful mix of both -> "bilingual"; any
+    other case (including empty text) -> "english".
+    """
+    text = contract_text or ""
+    arabic = sum(1 for ch in text if "\u0600" <= ch <= "\u06FF")
+    latin = sum(1 for ch in text if ("a" <= ch.lower() <= "z"))
+    total = arabic + latin
+    if total == 0:
+        return "english"
+    arabic_ratio = arabic / total
+    if arabic_ratio > 0.30:
+        # A document that is overwhelmingly Arabic is "arabic"; one that still
+        # carries a substantial Latin share is treated as "bilingual".
+        return "bilingual" if latin / total > 0.20 else "arabic"
+    if arabic_ratio > 0.05:
+        return "bilingual"
+    return "english"
+
+
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", (text or "").lower())
+    return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", arabic_normalize((text or "").lower()))
 
 
 def _expand_query_tokens(tokens: set[str]) -> set[str]:
@@ -71,19 +139,54 @@ def _expand_query_tokens(tokens: set[str]) -> set[str]:
     return expanded
 
 
-def chunk_contract_text(contract_text: str, chunk_size: int = 900) -> List[TextChunk]:
+def is_heading(line: str) -> bool:
+    """Detect a section/clause heading across English and Arabic contract styles."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    # Numbered headings: "1", "1.2", "3.4.5 ..."
+    if re.match(r"^\d+(\.\d+)*\s+", stripped):
+        return True
+    # Article/section/clause labels (English + Arabic "المادة"/"البند"), e.g.
+    # "Article 5: Termination" or "المادة الخامسة".
+    if re.match(r"^(article|section|clause|المادة|البند)\b", stripped, re.IGNORECASE):
+        return True
+    # Arabic-only heading line (optionally ending with a colon),
+    # e.g. "المادة الخامسة: إنهاء العقد".
+    if re.match(r"^[؀-ۿ\s]+:?$", stripped) and any("؀" <= ch <= "ۿ" for ch in stripped):
+        return True
+    # Short label lines that end with a colon, e.g. "Confidentiality:".
+    if len(stripped) < 60 and stripped.endswith(":") and not stripped.startswith("#"):
+        return True
+    # ALL-CAPS heading line.
+    if len(stripped) <= 90 and stripped.upper() == stripped and any(ch.isalpha() for ch in stripped):
+        return True
+    return False
+
+
+def chunk_contract_text(contract_text: str, chunk_size: int | None = None) -> List[TextChunk]:
     text = (contract_text or "").strip()
     if not text:
         return []
 
+    chunk_size = CHUNK_SIZE_CHARS if chunk_size is None else chunk_size
+
     lines = [line.rstrip() for line in text.splitlines()]
     chunks: List[TextChunk] = []
 
-    current = []
+    current: List[str] = []
     current_heading = "Document"
     current_start = 0
     cursor = 0
     chunk_index = 1
+    overlap_seed = 0  # number of leading carried-over (non-original) lines in `current`
+
+    def _overlap_lines(previous: List[str]) -> List[str]:
+        """Last 2 non-empty lines of the previous chunk, tagged as continuation."""
+        tail = [ln for ln in previous if ln.strip()][-2:]
+        if not tail:
+            return []
+        return [CHUNK_OVERLAP_MARKER, *tail]
 
     def flush_chunk(end_cursor: int):
         nonlocal chunk_index, current, current_start
@@ -101,35 +204,32 @@ def chunk_contract_text(contract_text: str, chunk_size: int = 900) -> List[TextC
         )
         chunk_index += 1
 
-    def is_heading(line: str) -> bool:
-        stripped = line.strip()
-        if not stripped:
-            return False
-        if re.match(r"^\d+(\.\d+)*\s+", stripped):
-            return True
-        if len(stripped) <= 90 and stripped.upper() == stripped and any(ch.isalpha() for ch in stripped):
-            return True
-        return False
-
     for line in lines:
         line_len = len(line) + 1
         if is_heading(line):
             if current:
                 flush_chunk(cursor)
                 current = []
+                overlap_seed = 0
             current_heading = line.strip()
             current_start = cursor
 
         current.append(line)
         joined_len = sum(len(l) + 1 for l in current)
         if joined_len >= chunk_size:
+            flushed = list(current)
             flush_chunk(cursor + line_len)
-            current = []
+            # Carry the last 2 non-empty lines into the next chunk so a clause
+            # that spans the boundary is not seen only in its second half.
+            current = _overlap_lines(flushed)
+            overlap_seed = len(current)
             current_start = cursor + line_len
 
         cursor += line_len
 
-    if current:
+    # Only flush a trailing chunk if it holds original content beyond any
+    # carried-over overlap lines (avoids emitting a duplicate overlap-only chunk).
+    if len(current) > overlap_seed:
         flush_chunk(cursor)
 
     return chunks

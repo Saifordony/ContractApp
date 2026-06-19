@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.services.contract_intelligence import (
+    arabic_normalize,
     chunk_contract_text,
     retrieve_relevant_chunks_with_scores,
 )
@@ -173,9 +174,17 @@ def classify_chat_intent(message: str, use_history: bool = True) -> Tuple[str, O
         return "app_help", None
     if _is_small_talk(q):
         return "small_talk", None
+    # Normalised query for diacritic/spelling-tolerant Arabic synonym matching.
+    qn = arabic_normalize(q)
+
+    def _clause_in_query(synonyms: List[str], clause_key: str) -> bool:
+        if arabic_normalize(clause_key.replace("_", " ")) in qn:
+            return True
+        return any(arabic_normalize(s) in qn for s in synonyms)
+
     if any(word in q for word in ["rewrite", "redraft", "draft", "wording", "make this clause", "improve wording", "أعد صياغة", "صياغة", "مسودة"]):
         for clause_key, synonyms in CLAUSE_SYNONYMS.items():
-            if clause_key.replace("_", " ") in q or any(s in q for s in synonyms):
+            if _clause_in_query(synonyms, clause_key):
                 return "rewrite_drafting", clause_key
         return "rewrite_drafting", None
     if any(word in q for word in ["summarize", "summary", "overview", "what is this contract", "executive summary", "لخص", "ملخص", "ما هو هذا العقد"]):
@@ -192,7 +201,7 @@ def classify_chat_intent(message: str, use_history: bool = True) -> Tuple[str, O
         return "contract_health_question", None
 
     for clause_key, synonyms in CLAUSE_SYNONYMS.items():
-        if clause_key.replace("_", " ") in q or any(s in q for s in synonyms):
+        if _clause_in_query(synonyms, clause_key):
             return "clause_explanation", clause_key
 
     tokens = set(_tokenize(q))
@@ -205,11 +214,22 @@ def classify_chat_intent(message: str, use_history: bool = True) -> Tuple[str, O
     return "business_legal_interpretation", None
 
 
+# Approximate numeric confidence for textual buckets so the UI can render a
+# consistent confidence badge even for deterministic (non-LLM) responses.
+_CONFIDENCE_SCORE_MAP = {"high": 0.85, "medium": 0.5, "low": 0.2}
+
+
+def _confidence_to_score(confidence: str) -> float:
+    return _CONFIDENCE_SCORE_MAP.get(str(confidence or "").strip().lower(), 0.2)
+
+
 def _empty_response(answer: str, answer_type: str, confidence: str = "Low", followups: Optional[List[str]] = None) -> Dict[str, Any]:
     return {
         "answer": answer,
         "answer_type": answer_type,
         "confidence": confidence,
+        "confidence_score": _confidence_to_score(confidence),
+        "risks": [],
         "evidence_snippets": [],
         "suggested_followups": followups or DEFAULT_FOLLOWUPS,
         "limitations": DISCLAIMER,
@@ -647,6 +667,8 @@ def build_contract_chat_response(
                 "answer": answer,
                 "answer_type": "grounded_answer",
                 "confidence": "High" if reasoning.get("confidence", 0) >= 0.75 else quality_confidence,
+                "confidence_score": reasoning.get("confidence", 0.0),
+                "risks": reasoning.get("risks", []),
                 "evidence_snippets": evidence,
                 "suggested_followups": DEFAULT_FOLLOWUPS,
                 "limitations": DISCLAIMER,
@@ -658,6 +680,12 @@ def build_contract_chat_response(
                 "missing_evidence",
                 "Low",
             )
+
+    # Surface confidence (numeric), evidence, and risks consistently so the chat
+    # UI can render a confidence badge and evidence/risk blocks (1.4 Problem D).
+    response.setdefault("risks", [])
+    if "confidence_score" not in response or response.get("confidence_score") is None:
+        response["confidence_score"] = _confidence_to_score(response.get("confidence", "Low"))
 
     response["limitations"] = _localized_disclaimer(response_language)
     response["answer"] = _apply_response_mode(str(response.get("answer", "")), response_mode)
