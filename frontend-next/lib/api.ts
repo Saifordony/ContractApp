@@ -4,7 +4,7 @@
 // screen gets the same behaviour: a failed call throws an ApiError with a
 // human-readable message (never a raw {"detail": ...} blob leaked to the UI).
 
-import type { GroundedAnalysis, LoginResponse } from "./types";
+import type { ChatResponse, ChatTurn, GroundedAnalysis, LoginResponse } from "./types";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "http://localhost:8000";
@@ -86,6 +86,25 @@ export async function analyzeContractText(
   return request<GroundedAnalysis>("/genai/analyze", {
     method: "POST",
     body: JSON.stringify({ contract_text: contractText, response_language: responseLanguage }),
+  });
+}
+
+export async function chatWithContract(args: {
+  message: string;
+  contractText: string;
+  analysisResults?: unknown;
+  history: ChatTurn[];
+  responseLanguage?: string;
+}): Promise<ChatResponse> {
+  return request<ChatResponse>("/genai/contract-chat", {
+    method: "POST",
+    body: JSON.stringify({
+      message: args.message,
+      contract_text: args.contractText,
+      analysis_results: args.analysisResults ?? {},
+      chat_history: args.history.map((t) => ({ role: t.role, content: t.content })),
+      response_language: args.responseLanguage ?? "english",
+    }),
   });
 }
 

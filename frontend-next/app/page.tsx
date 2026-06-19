@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, analyzeContractText, getToken, login, setToken } from "@/lib/api";
 import type { GroundedAnalysis } from "@/lib/types";
 import { AnalysisResult } from "@/components/AnalysisResult";
+import { ContractChat } from "@/components/ContractChat";
 
 const ANALYSIS_STEPS = [
   "Retrieving relevant clauses",
@@ -166,7 +167,12 @@ export default function Home() {
 
           {error && <div className="banner error">{error}</div>}
           {busy && <AnalyzingSkeleton step={step} />}
-          {!busy && result && <AnalysisResult data={result} />}
+          {!busy && result && (
+            <>
+              <AnalysisResult data={result} />
+              <ContractChat contractText={text} analysis={result} />
+            </>
+          )}
         </div>
       )}
     </main>

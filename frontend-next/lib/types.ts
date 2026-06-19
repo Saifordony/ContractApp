@@ -29,3 +29,26 @@ export interface LoginResponse {
   access_token: string;
   token_type: string;
 }
+
+export interface ChatEvidence {
+  quote: string;
+  clause_name?: string;
+  location?: string;
+  relevance?: string;
+}
+
+export interface ChatResponse {
+  answer: string;
+  answer_type: string;
+  /** Coarse "High" | "Medium" | "Low" band from the chat service. */
+  confidence: string;
+  evidence_snippets: ChatEvidence[];
+  suggested_followups: string[];
+  limitations?: string;
+  debug?: unknown;
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}

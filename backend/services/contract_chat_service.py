@@ -453,6 +453,13 @@ def build_contract_chat_response(
     analysis_results = analysis_results or {}
     benchmark_result = benchmark_result or {}
     chat_history = chat_history or []
+    # Wire the real model into the grounded pipeline so chat answers get the same
+    # reviewer-verified, model-reasoned treatment as /genai/analyze. Resolves to
+    # None (explicit deterministic mode) when the model is unreachable. Computed
+    # once per request to avoid a health check on every pipeline call.
+    from backend.services.grounded_analysis import make_llm_callable
+
+    llm_callable = make_llm_callable()
     resolved_message = _resolve_followup_message(message, chat_history)
     intent, clause_key = classify_chat_intent(resolved_message)
     normalized_mode = (response_mode or "ask_anything").strip().lower()
@@ -519,6 +526,7 @@ def build_contract_chat_response(
             reasoning = run_contract_reasoning_pipeline(
                 question=resolved_message,
                 contract_text=contract_text,
+                llm_callable=llm_callable,
                 debug=debug,
             )
             raw_evidence = [
@@ -554,7 +562,7 @@ def build_contract_chat_response(
         if target_key:
             _, evidence = _search_clause(clauses, target_key)
         if not evidence:
-            reasoning = run_contract_reasoning_pipeline(question=resolved_message, contract_text=contract_text, debug=debug)
+            reasoning = run_contract_reasoning_pipeline(question=resolved_message, contract_text=contract_text, llm_callable=llm_callable, debug=debug)
             evidence = [
                 {
                     "quote": item.get("quote", ""),
@@ -646,6 +654,7 @@ def build_contract_chat_response(
         reasoning = run_contract_reasoning_pipeline(
             question=resolved_message,
             contract_text=contract_text,
+            llm_callable=llm_callable,
             debug=debug,
         )
         evidence = [
