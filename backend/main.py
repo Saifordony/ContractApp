@@ -138,6 +138,20 @@ class PipelineAnalysisRequest(BaseModel):
     stage_probabilities: Optional[Dict[str, float]] = None
 
 
+class PasswordResetRequest(BaseModel):
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+
+class ContractCompareRequest(BaseModel):
+    contract_id_a: str
+    contract_id_b: str
+
+
 # Database setup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -152,6 +166,12 @@ async def lifespan(app: FastAPI):
         print("Database connections established")
     except Exception as e:
         print(f"Database connection failed: {e}")
+
+    # Password-reset tokens auto-expire after 1 hour via a TTL index on created_at.
+    try:
+        await db.password_reset_tokens.create_index("created_at", expireAfterSeconds=3600)
+    except Exception as e:
+        print(f"Could not create password_reset_tokens TTL index: {e}")
     print(
         f"LLM startup config: provider={AI_PROVIDER}, "
         f"model={selected_model()}, base_url={selected_base_url()}"
@@ -1264,6 +1284,231 @@ async def benchmark_analyze_endpoint(
             }
         )
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _score_bucket(score: Any) -> Optional[str]:
+    """Bucket a 0-100 health score into high/medium/low (None if not numeric)."""
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return None
+    if value >= 75:
+        return "high"
+    if value >= 50:
+        return "medium"
+    return "low"
+
+
+@app.get("/stats/summary")
+async def stats_summary(current_user: dict = Depends(get_current_user)):
+    """Dashboard KPIs for the authenticated user, computed from saved analyses.
+
+    Returns total contracts analysed, last analysis date, average health score,
+    a high/medium/low health distribution, the most common missing clause, and a
+    breakdown of contracts by detected type.
+    """
+    analyses = await db.contract_analyses.find(
+        {"created_by": current_user["username"]}
+    ).sort("created_at", -1).to_list(1000)
+
+    scores: list[float] = []
+    distribution = {"high": 0, "medium": 0, "low": 0}
+    missing_counter: Dict[str, int] = {}
+    type_counter: Dict[str, int] = {}
+    last_analysis_date: Optional[str] = None
+
+    for analysis in analyses:
+        if last_analysis_date is None and analysis.get("created_at"):
+            created = analysis["created_at"]
+            last_analysis_date = created.isoformat() if hasattr(created, "isoformat") else str(created)
+        results = analysis.get("results", {}) if isinstance(analysis, dict) else {}
+        health = results.get("health_evaluation", {}) if isinstance(results, dict) else {}
+
+        score = health.get("health_score")
+        bucket = _score_bucket(score)
+        if bucket:
+            scores.append(float(score))
+            distribution[bucket] += 1
+
+        contract_type = health.get("contract_type") or results.get("contract_type")
+        if contract_type:
+            type_counter[str(contract_type)] = type_counter.get(str(contract_type), 0) + 1
+
+        for clause in health.get("missing_critical_clauses", []) or []:
+            missing_counter[str(clause)] = missing_counter.get(str(clause), 0) + 1
+
+    average_health_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+    most_common_missing_clause = (
+        max(missing_counter, key=missing_counter.get) if missing_counter else ""
+    )
+
+    return {
+        "total_contracts": len(analyses),
+        "last_analysis_date": last_analysis_date,
+        "average_health_score": average_health_score,
+        "health_distribution": distribution,
+        "most_common_missing_clause": most_common_missing_clause,
+        "contracts_by_type": type_counter,
+    }
+
+
+@app.post("/auth/reset-password")
+async def request_password_reset(payload: PasswordResetRequest):
+    """Start a password reset.
+
+    Generates a 32-character token, stores it in the ``password_reset_tokens``
+    collection (auto-expiring after 1 hour via a TTL index), and returns it in
+    the response. In production this token would be emailed; it is returned here
+    for the graduation-project demo. Always responds 200 so the endpoint does not
+    reveal whether an email is registered.
+    """
+    import secrets
+
+    user = await db.users.find_one({"email": payload.email})
+    response = {
+        "message": "If the email is registered, a reset token has been generated.",
+        "note": "Demo mode: the token is returned in this response instead of being emailed.",
+    }
+    if not user:
+        return response
+
+    token = secrets.token_urlsafe(24)[:32]
+    await db.password_reset_tokens.insert_one(
+        {
+            "token": token,
+            "username": user["username"],
+            "created_at": datetime.utcnow(),
+        }
+    )
+    response["token"] = token
+    return response
+
+
+@app.post("/auth/reset-password/confirm")
+async def confirm_password_reset(payload: PasswordResetConfirm):
+    """Complete a password reset using a token from /auth/reset-password.
+
+    Verifies the token exists (the TTL index removes expired tokens), hashes the
+    new password, updates the user document, and deletes the used token.
+    """
+    record = await db.password_reset_tokens.find_one({"token": payload.token})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    if len(payload.new_password or "") < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    await db.users.update_one(
+        {"username": record["username"]},
+        {"$set": {"password": get_password_hash(payload.new_password)}},
+    )
+    await db.password_reset_tokens.delete_one({"token": payload.token})
+    return {"message": "Password updated successfully"}
+
+
+def _clause_difference_summary(
+    clause_type: str, status_a: str, text_a: str, status_b: str, text_b: str
+) -> str:
+    """Plain-English description of how a clause differs between two contracts.
+
+    Deterministic by design so comparison never depends on a reachable LLM; an
+    Ollama-backed summary can be layered on top where configured.
+    """
+    label = clause_type.replace("_", " ")
+    if status_a == "found" and status_b != "found":
+        return f"Contract A defines {label}, but Contract B does not."
+    if status_b == "found" and status_a != "found":
+        return f"Contract B defines {label}, but Contract A does not."
+    if status_a != "found" and status_b != "found":
+        return f"Neither contract clearly defines {label}."
+    a_norm = " ".join((text_a or "").split())
+    b_norm = " ".join((text_b or "").split())
+    if a_norm == b_norm:
+        return f"Both contracts define {label} with effectively identical wording."
+    return f"Both contracts define {label}, but the wording differs and should be compared clause by clause."
+
+
+@app.post("/contracts/compare")
+async def compare_contracts(
+    payload: ContractCompareRequest, current_user: dict = Depends(get_current_user)
+):
+    """Compare the latest analyses of two of the user's contracts clause by clause.
+
+    Returns each contract's title and health score, a per-clause status/text diff
+    with a plain-English difference summary, and an overall recommendation.
+    """
+    async def _load(contract_id: str):
+        object_id = parse_object_id(contract_id, "contract ID")
+        contract = await db.contracts.find_one({"_id": object_id})
+        if not contract:
+            raise HTTPException(status_code=404, detail="Contract not found")
+        if contract.get("created_by") != current_user["username"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+        analysis = await db.contract_analyses.find_one(
+            {"contract_id": contract_id}, sort=[("created_at", -1)]
+        )
+        results = (analysis or {}).get("results", {}) if isinstance(analysis, dict) else {}
+        return contract, results
+
+    contract_a, results_a = await _load(payload.contract_id_a)
+    contract_b, results_b = await _load(payload.contract_id_b)
+
+    def _clauses(results: Dict[str, Any]) -> Dict[str, Any]:
+        structured = results.get("structured_clauses", {}) if isinstance(results, dict) else {}
+        clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
+        return clauses if isinstance(clauses, dict) else {}
+
+    clauses_a = _clauses(results_a)
+    clauses_b = _clauses(results_b)
+
+    clause_diff = []
+    for clause_type in sorted(set(clauses_a) | set(clauses_b)):
+        a = clauses_a.get(clause_type, {}) if isinstance(clauses_a.get(clause_type), dict) else {}
+        b = clauses_b.get(clause_type, {}) if isinstance(clauses_b.get(clause_type), dict) else {}
+        status_a = str(a.get("status", "missing"))
+        status_b = str(b.get("status", "missing"))
+        text_a = str(a.get("extracted_text") or "")
+        text_b = str(b.get("extracted_text") or "")
+        clause_diff.append(
+            {
+                "clause_type": clause_type,
+                "status_a": status_a,
+                "status_b": status_b,
+                "text_a": text_a,
+                "text_b": text_b,
+                "difference_summary": _clause_difference_summary(
+                    clause_type, status_a, text_a, status_b, text_b
+                ),
+            }
+        )
+
+    def _health_score(results: Dict[str, Any]) -> int:
+        health = results.get("health_evaluation", {}) if isinstance(results, dict) else {}
+        try:
+            return int(health.get("health_score") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    score_a = _health_score(results_a)
+    score_b = _health_score(results_b)
+    if score_a == score_b:
+        recommendation = "Both contracts score similarly; review the clause differences before deciding."
+    else:
+        stronger = contract_a if score_a > score_b else contract_b
+        recommendation = (
+            f"'{stronger.get('title', 'the higher-scoring contract')}' is the stronger contract "
+            f"({max(score_a, score_b)} vs {min(score_a, score_b)} health score), but confirm the "
+            "clause-level differences match your priorities."
+        )
+
+    return {
+        "contract_a_title": contract_a.get("title", ""),
+        "contract_b_title": contract_b.get("title", ""),
+        "clause_diff": clause_diff,
+        "health_score_a": score_a,
+        "health_score_b": score_b,
+        "recommendation": recommendation,
+    }
 
 
 if __name__ == "__main__":

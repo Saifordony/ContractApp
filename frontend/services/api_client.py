@@ -75,3 +75,77 @@ def request_api(
     if response.status_code >= 400:
         return response, friendly_error_from_response(response)
     return response, None
+
+
+def request_json(
+    base_url: str,
+    endpoint: str,
+    method: str = "GET",
+    token: Optional[str] = None,
+    data: Optional[Dict[str, Any]] = None,
+    files: Optional[Dict[str, Any]] = None,
+    timeout: int = 60,
+    retry_on_timeout: bool = True,
+) -> Dict[str, Any]:
+    """Call the backend and return parsed JSON, or a structured error dict.
+
+    Adds granular handling for the failure modes the UI cares about and, when
+    ``retry_on_timeout`` is set, retries once with double the timeout before
+    giving up. Error dicts have the shape ``{"error": <code>, "message": <text>}``.
+    """
+    headers: Dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    url = f"{base_url}{endpoint}"
+
+    def _call(call_timeout: int) -> requests.Response:
+        if method == "GET":
+            return requests.get(url, headers=headers, timeout=call_timeout)
+        if method == "POST":
+            if files:
+                return requests.post(url, headers=headers, files=files, data=data, timeout=call_timeout)
+            post_headers = {**headers, "Content-Type": "application/json"}
+            return requests.post(url, headers=post_headers, json=data, timeout=call_timeout)
+        if method == "PUT":
+            put_headers = {**headers, "Content-Type": "application/json"}
+            return requests.put(url, headers=put_headers, json=data, timeout=call_timeout)
+        if method == "DELETE":
+            return requests.delete(url, headers=headers, timeout=call_timeout)
+        raise ValueError(f"Unsupported method: {method}")
+
+    try:
+        try:
+            response = _call(timeout)
+        except requests.exceptions.Timeout:
+            if not retry_on_timeout:
+                raise
+            response = _call(timeout * 2)
+    except requests.exceptions.ConnectionError:
+        return {
+            "error": "backend_unreachable",
+            "message": "Cannot connect to the application backend. Make sure the services are running.",
+        }
+    except requests.exceptions.Timeout:
+        return {
+            "error": "timeout",
+            "message": "The request timed out. The AI model may be busy — please try again in a moment.",
+        }
+    except requests.exceptions.RequestException as exc:
+        return {"error": "request_failed", "message": str(exc)}
+
+    if response.status_code == 503:
+        return {
+            "error": "llm_unavailable",
+            "message": "AI model is not reachable. Check Ollama is running, then retry.",
+        }
+    if response.status_code >= 400:
+        err = friendly_error_from_response(response)
+        return {"error": "http_error", "message": err.friendly_message, "status_code": response.status_code}
+
+    try:
+        return response.json()
+    except requests.exceptions.JSONDecodeError:
+        return {
+            "error": "invalid_response",
+            "message": "The backend returned an unexpected (non-JSON) response.",
+        }
