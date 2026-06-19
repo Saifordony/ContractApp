@@ -1,246 +1,95 @@
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from io import BytesIO
 import json
 import asyncio
 import ast
 import re
 from concurrent.futures import ThreadPoolExecutor
-import os
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageOps, ImageFilter
 import pytesseract
+import importlib
+
+from backend.services.contract_intelligence import answer_contract_question
+from backend.llm_config import (
+    AI_PROVIDER,
+    OPENAI_BASE_URL,
+    OPENAI_MODEL,
+    OLLAMA_BASE_URL,
+    OLLAMA_MODEL,
+    OLLAMA_NUM_CTX,
+    OLLAMA_TEMPERATURE,
+    OLLAMA_TIMEOUT,
+    selected_api_key,
+)
 
 executor = ThreadPoolExecutor()
 
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+model_name = OLLAMA_MODEL if AI_PROVIDER == "ollama" else OPENAI_MODEL
+base_url = OLLAMA_BASE_URL if AI_PROVIDER == "ollama" else (OPENAI_BASE_URL or None)
 
-if not OLLAMA_MODEL:
-    print("WARNING: OLLAMA_MODEL is not set. GenAI features will be disabled.")
+if not model_name:
+    print("WARNING: selected LLM model is not set. GenAI features may be disabled.")
 
-llm_model = ChatOllama(
-    model=OLLAMA_MODEL,
-    base_url=OLLAMA_BASE_URL,
-    temperature=0.2,
-)
+llm_kwargs = {
+    "model": model_name,
+    "base_url": base_url,
+    "api_key": selected_api_key(),
+    "temperature": OLLAMA_TEMPERATURE if AI_PROVIDER == "ollama" else 0.2,
+}
+if AI_PROVIDER == "ollama":
+    llm_kwargs["request_timeout"] = OLLAMA_TIMEOUT
+    llm_kwargs["model_kwargs"] = {"num_ctx": OLLAMA_NUM_CTX}
 
-analysis_system_prompt = """ 
-    
-You are a professional and intelligent contract analyzer specialized in extracting key clause types and their contents from a contract text.
+llm_model = ChatOpenAI(**llm_kwargs)
 
-Your responsibilities include:
-1. Reading contracts carefully.
-2. Identifying and classifying key legal clauses.
-3. Returning a structured JSON object where each key is the clause type and the value is its full content as found in the contract.
-
----
+analysis_system_prompt = """
+You are a professional contract clause extraction engine.
 
 You are given this contract text:
-
 {contract_text}
-
----
 
 Response language requirement: {response_language}.
 
-Your task is to read the contract text carefully, analyze it, and extract the key legal clauses to return a structured JSON object containing the clause types and their contents.
-
-Let’s break your task into steps:
-
----
-
-## Step 1: Reading  
-Carefully read the contract text, make sure you understand every word, heading, and statement.
-
----
-
-## Step 2: Identification & Classification  
-Identify and classify the key legal clauses found in the contract text.
-
-### Focus on these clause types (normalize variations as instructed):
-
-- Definitions Clause: Establishes the meaning of specific terms used throughout the contract to ensure consistent interpretation and avoid misunderstandings.
-
-- Scope of Work Clause: Clearly defines the services, deliverables, or obligations expected from each party, specifying what is included and excluded.
-
-- Payment Terms Clause: Specifies the payment schedule, amounts, methods, and consequences of late or missed payments.
-
-- Confidentiality Clause: Protects sensitive or proprietary information from unauthorized disclosure during and after the contract.
-
-- Termination Clause: Outlines the conditions, procedures, and notice requirements under which the contract may be ended before its natural expiration.
-
-- Force Majeure Clause: Relieves parties from liability or obligation when unforeseeable and uncontrollable events prevent contract performance.
-
-- Dispute Resolution Clause: Specifies how disputes will be handled, including methods such as negotiation, mediation, arbitration, and applicable jurisdiction.
-
-- Governing Law / Choice of Law Clause: Determines which jurisdiction’s laws will govern the interpretation and enforcement of the contract.
-
-- Limitation of Liability Clause: Caps the amount or types of damages a party may be liable for, helping allocate and limit risk.
-
-- Entire Agreement Clause: Confirms that the written contract constitutes the full agreement between the parties, superseding prior agreements or oral understandings.
-
-- Indemnification Clause: Describes each party’s obligation to protect the other from specified claims or damages.
-
-- Notices Clause: Specifies how and where legal notices or formal communications must be sent.
-
-- Amendment Clause: Explains how the contract may be modified or amended.
-
-- Assignment Clause: Defines whether rights or obligations can be assigned or transferred to another party.
-
-- Severability Clause: Ensures the rest of the contract remains enforceable even if one provision is invalid.
-
-- Non-Waiver Clause: States that failure to enforce a provision does not waive the right to enforce it later.
-
----
-
-### IMPORTANT:
-Map clause titles that are similar to the correct type.
-
-Examples of acceptable mappings:
-- Term and Termination = Termination Clause
-- Termination and Renewal = Termination Clause
-- Governing Law = Governing Law / Choice of Law Clause
-- Limitation of Liability and Disclaimer = Limitation of Liability Clause
-- Dispute Resolution and Arbitration = Dispute Resolution Clause
-- Assignment and Subcontracting = Assignment Clause
-
-If the contract contains a clause with a different heading but a similar meaning to the description, map it to the appropriate type.
-
-Do not skip clauses that match or map to these types, even if the title is written slightly different.
-
-In addition to the specific clause types listed above, if the contract contains any other legal clauses not mentioned in the list, you must also extract and include them in the output using their exact title as it appears in the contract.
-
----
-
-## Step 3: Output  
-Present the results of your analysis as a valid JSON object where:
-- Each key is the exact clause type.
-- Each value is the full content of the clause as found in the contract text (keep the same wording, punctuation, and formatting).
-
-The output must be valid JSON with no extra text, notes, or comments — only the JSON object.
-
-Do not fabricate clauses that do not exist.
-
-Do not leave empty keys or placeholders for missing clauses — simply omit them.
-
----
-
-### The JSON format should be like this:
-{{
-  "ClauseType": "Clause content here...",
-  "ClauseType": "Clause content here..."
-}}
-
----
-
-Here is an example to help you :
-
-
-contract text :
-"
-MASTER SERVICE AGREEMENT
-
-This Master Service Agreement (“Agreement”) is entered into by and between Omega Corp (“Contractor”) and Delta Ltd (“Client”) effective as of July 1, 2025.
-
-1. Definitions  
-For the purposes of this Agreement, “Confidential Information” includes but is not limited to trade secrets, business plans, and customer data.
-
-2. Scope and Deliverables  
-Contractor shall provide IT consulting, cloud migration, and cybersecurity services pursuant to statements of work (“SOWs”) issued under this Agreement.
-
-3. Payment and Invoicing  
-Client shall remit payment net 45 days upon receipt of invoice. Invoices are issued monthly and must be disputed within 15 days or deemed accepted.
-
-4. Change Orders  
-Any modifications to the scope require written change orders signed by authorized representatives of both parties.
-
-5. Confidentiality and Data Protection  
-Parties agree to maintain strict confidentiality, comply with applicable data protection laws (including GDPR), and implement reasonable security measures.
-
-6. Intellectual Property Rights  
-Contractor retains all pre-existing IP. Deliverables created under this Agreement shall be owned by Client upon full payment, subject to Contractor’s moral rights.
-
-7. Representations and Warranties  
-Contractor represents it has all necessary licenses and will perform work in accordance with industry standards. Client warrants that data provided is accurate and lawful.
-
-8. Limitation of Liability and Disclaimer  
-Neither party shall be liable for incidental, punitive, or consequential damages. Liability caps at the total fees paid in the prior 12 months.
-
-9. Indemnification and Defense  
-Each party agrees to indemnify, defend, and hold harmless the other against third-party claims arising from negligence or breach of this Agreement.
-
-10. Force Majeure  
-Events beyond reasonable control, including acts of government, pandemics, or cyberattacks, excuse non-performance for the duration of the event plus reasonable recovery time.
-
-11. Term, Termination, and Renewal  
-Initial term of two years, automatically renewing for one-year periods unless either party gives 90 days prior written notice. Termination for material breach requires 60 days cure.
-
-12. Transition Assistance  
-Upon termination, Contractor will provide up to 30 days transition support at standard rates.
-
-13. Dispute Resolution and Arbitration  
-Disputes not resolved by good faith negotiation shall proceed to mediation, then final and binding arbitration under ICC rules in New York.
-
-14. Governing Law and Jurisdiction  
-Agreement governed by New York law. Jurisdiction exclusive to courts in New York County.
-
-15. Assignment and Subcontracting  
-Client may assign rights with consent. Contractor may subcontract duties but remains liable for subcontractor performance.
-
-16. Compliance with Laws  
-Both parties shall comply with all applicable laws, regulations, and export controls.
-
-17. Notices  
-All communications must be in writing and sent by registered mail or courier.
-
-18. Entire Agreement and Amendments  
-This Agreement supersedes all prior agreements and may be amended only by written document signed by authorized representatives.
-
-19. Severability  
-If any provision is invalid, remaining provisions shall remain enforceable.
-
-20. Non-Waiver  
-Failure to exercise any right shall not constitute waiver.
-
-21. Counterparts  
-This Agreement may be executed in counterparts, each considered an original.
-
-22. Further Assurances  
-Parties agree to take further actions as necessary to effectuate the Agreement.
-
-IN WITNESS WHEREOF, the parties have caused this Agreement to be duly executed.
-
-
-Output:
-{{
-  "Definitions": "For the purposes of this Agreement, “Confidential Information” includes but is not limited to trade secrets, business plans, and customer data.",
-  "Scope and Deliverables": "Contractor shall provide IT consulting, cloud migration, and cybersecurity services pursuant to statements of work (“SOWs”) issued under this Agreement.",
-  "Payment and Invoicing": "Client shall remit payment net 45 days upon receipt of invoice. Invoices are issued monthly and must be disputed within 15 days or deemed accepted.",
-  "Change Orders": "Any modifications to the scope require written change orders signed by authorized representatives of both parties.",
-  "Confidentiality and Data Protection": "Parties agree to maintain strict confidentiality, comply with applicable data protection laws (including GDPR), and implement reasonable security measures.",
-  "Intellectual Property Rights": "Contractor retains all pre-existing IP. Deliverables created under this Agreement shall be owned by Client upon full payment, subject to Contractor’s moral rights.",
-  "Representations and Warranties": "Contractor represents it has all necessary licenses and will perform work in accordance with industry standards. Client warrants that data provided is accurate and lawful.",
-  "Limitation of Liability and Disclaimer": "Neither party shall be liable for incidental, punitive, or consequential damages. Liability caps at the total fees paid in the prior 12 months.",
-  "Indemnification and Defense": "Each party agrees to indemnify, defend, and hold harmless the other against third-party claims arising from negligence or breach of this Agreement.",
-  "Force Majeure": "Events beyond reasonable control, including acts of government, pandemics, or cyberattacks, excuse non-performance for the duration of the event plus reasonable recovery time.",
-  "Term, Termination, and Renewal": "Initial term of two years, automatically renewing for one-year periods unless either party gives 90 days prior written notice. Termination for material breach requires 60 days cure.",
-  "Transition Assistance": "Upon termination, Contractor will provide up to 30 days transition support at standard rates.",
-  "Dispute Resolution and Arbitration": "Disputes not resolved by good faith negotiation shall proceed to mediation, then final and binding arbitration under ICC rules in New York.",
-  "Governing Law and Jurisdiction": "Agreement governed by New York law. Jurisdiction exclusive to courts in New York County.",
-  "Assignment and Subcontracting": "Client may assign rights with consent. Contractor may subcontract duties but remains liable for subcontractor performance.",
-  "Compliance with Laws": "Both parties shall comply with all applicable laws, regulations, and export controls.",
-  "Notices": "All communications must be in writing and sent by registered mail or courier.",
-  "Entire Agreement and Amendments": "This Agreement supersedes all prior agreements and may be amended only by written document signed by authorized representatives.",
-  "Severability": "If any provision is invalid, remaining provisions shall remain enforceable.",
-  "Non-Waiver": "Failure to exercise any right shall not constitute waiver.",
-  "Counterparts": "This Agreement may be executed in counterparts, each considered an original.",
-  "Further Assurances": "Parties agree to take further actions as necessary to effectuate the Agreement."
-}}
-
- """
+Extract clauses into a flat JSON object using ONLY these clause keys and meanings:
+- parties: Names, roles, and identifying information of the parties entering the agreement.
+- effective_date: The date the contract starts or becomes legally binding.
+- scope_of_work: The specific services, deliverables, or job responsibilities defined in the contract.
+- compensation: Salary, fees, payment amounts, currency, frequency, and any bonuses or commissions.
+- working_hours: Hours per day/week, shift arrangements, overtime policy.
+- leave_policy: Annual leave, sick leave, public holidays, and unpaid leave entitlements.
+- probation: Trial/probation period duration and conditions.
+- termination: Notice periods, grounds for termination, resignation process, end-of-service entitlements.
+- confidentiality: Non-disclosure obligations, definition of confidential information, duration.
+- non_compete: Restrictions on working for competitors after the contract ends.
+- intellectual_property: Ownership of work produced during the engagement.
+- governing_law: Which country or jurisdiction's law governs this contract.
+- dispute_resolution: How disputes are handled — courts, arbitration, mediation.
+- force_majeure: Unforeseeable events that excuse a party from performance.
+- limitation_of_liability: Caps on damages or excluded liability types.
+- indemnification: Who bears costs if a third party makes a claim.
+- payment_terms: Invoice schedules, due dates, late payment penalties.
+- renewal: Automatic or manual renewal terms and conditions.
+- miscellaneous: Any other important clauses not covered above.
+
+For each clause key, include ONLY content that directly and specifically belongs
+to that clause type. Do not put content from one clause type into another.
+If a clause is not present in the contract, omit that key entirely from the JSON.
+Do not invent or summarize — extract the actual contract text verbatim for each clause.
+
+Output requirements:
+- Return a valid JSON object only.
+- Every key must be one of the clause names above.
+- Every value must be the exact extracted contract text for that clause.
+- No extra keys, no nested objects, no arrays.
+
+Before returning the JSON, review each key-value pair and ask yourself:
+does this content actually describe what this clause type means?
+If the answer is no, move the content to the correct clause key or remove it.
+"""
 
 prompt1 = PromptTemplate.from_template(analysis_system_prompt)
 
@@ -433,20 +282,24 @@ prompt2 = PromptTemplate.from_template(evaluation_system_prompt)
 
 layman_clause_explainer_prompt = PromptTemplate.from_template(
     """
-You are a legal explainer for non-lawyers.
-
-Given contract clauses in JSON, return JSON with the EXACT SAME KEYS where each value is:
-- a short, plain-English (or requested language) explanation of what that clause means in practice
-- max 2 short sentences
-- avoid legal jargon as much as possible
-- do not invent details beyond the clause text
+You are explaining contract clauses to someone who has never read a contract before.
 
 Response language requirement: {response_language}.
 
-Clauses JSON:
+Given this input JSON of clauses:
 {clauses_json}
 
-Return valid JSON only.
+Return valid JSON only, with the EXACT SAME KEYS.
+Each value must follow this exact format:
+[CLAUSE_NAME]
+What it means: One or two sentences in simple everyday language explaining what this clause means for the person signing.
+What to watch out for: One sentence flagging anything that could be risky or unfair for the signing party (or say "Nothing unusual here." if it looks standard).
+
+Strict rules:
+- Do NOT repeat or copy the original clause text in your explanation.
+- Do NOT use legal jargon. Write as if explaining to a friend over a phone call.
+- Your explanation must be shorter than the original clause text.
+- If a clause is short and standard (for example governing law), keep the explanation to one sentence maximum.
 """
 )
 
@@ -916,11 +769,35 @@ def contract_chat_sync(
             user_style_guide=infer_user_style_guide(question, response_language),
         )
         result = llm_model.invoke(prompt_text).content
-        if not isinstance(result, str) or not result.strip():
-            raise ValueError("Model returned an empty answer")
-        return result.strip()
-    except Exception as e:
-        raise RuntimeError(f"Failed to answer contract question: {str(e)}")
+        response_text = _coerce_llm_content(result).strip()
+        if response_text:
+            return response_text
+    except Exception:
+        pass
+
+    fallback = answer_contract_question(
+        contract_text=contract_text,
+        question=question,
+        response_language=response_language,
+    )
+
+    if isinstance(fallback, dict):
+        answer = str(fallback.get("answer", "")).strip()
+        evidence = fallback.get("evidence", [])
+        if answer:
+            if isinstance(evidence, list) and evidence:
+                quotes = []
+                for item in evidence[:2]:
+                    if isinstance(item, dict):
+                        q = str(item.get("quote", "")).strip()
+                        if q:
+                            quotes.append(q)
+                if quotes:
+                    return answer + "\n\nEvidence:\n- " + "\n- ".join(quotes)
+            return answer
+
+    # Hard fallback for resilience: return a safe, deterministic message instead of raising.
+    return "I couldn't generate a reliable AI response right now. Please ask a contract-specific question and I will answer from the provided contract text."
 
 
 async def contract_chat(
@@ -936,6 +813,33 @@ async def contract_chat(
         question,
         response_language,
     )
+
+def extract_text_from_upload_bytes(
+    file_bytes: bytes,
+    filename: str,
+    content_type: str | None = None,
+    use_ocr: bool = True,
+    response_language: str = "english",
+) -> Dict[str, Any]:
+    """Extract text from PDF, DOCX, TXT, or image uploads with OCR fallback."""
+    name = (filename or "").lower()
+    content_type = (content_type or "").lower()
+    if name.endswith(".pdf") or content_type == "application/pdf":
+        text = extract_text_from_pdf_bytes(file_bytes, use_ocr=use_ocr, response_language=response_language)
+        return {"text": text, "used_ocr": "[Page 1 OCR" in text or "OCR confidence" in text, "ocr_confidence": None}
+    if name.endswith(".txt") or content_type.startswith("text/"):
+        text = file_bytes.decode("utf-8", errors="ignore").strip()
+        if not text:
+            raise ValueError("No text could be extracted from this TXT file.")
+        return {"text": text, "used_ocr": False, "ocr_confidence": None}
+    if name.endswith(".docx"):
+        return extract_text_from_docx_bytes(file_bytes)
+    if name.endswith((".png", ".jpg", ".jpeg")) or content_type.startswith("image/"):
+        if not use_ocr:
+            raise ValueError("This image requires OCR. Enable OCR and try again.")
+        return extract_text_from_image_bytes(file_bytes, response_language=response_language)
+    raise ValueError("Unsupported file type. Upload PDF, DOCX, TXT, PNG, JPG, or JPEG.")
+
 
 
 class CorruptPDFError(Exception):
@@ -988,14 +892,70 @@ def extract_text_from_pdf(file_path: str) -> str:
         raise RuntimeError(f"Unexpected error during PDF extraction: {str(e)}")
 
 
-def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> str:
-    text = ""
+
+def _preprocess_for_ocr(image: Image.Image) -> Image.Image:
+    """Prepare scans for clearer English/Arabic OCR."""
+    processed = ImageOps.grayscale(image)
+    width, height = processed.size
+    if max(width, height) < 1800:
+        processed = processed.resize((width * 2, height * 2))
+    processed = processed.filter(ImageFilter.MedianFilter(size=3))
+    processed = processed.point(lambda pixel: 255 if pixel > 170 else 0)
+    return processed
+
+
+def _ocr_image(image: Image.Image, ocr_languages: str = "eng+ara") -> Tuple[str, float]:
+    image = _preprocess_for_ocr(image)
+    data = pytesseract.image_to_data(image, lang=ocr_languages, output_type=pytesseract.Output.DICT)
+    words = [w for w in data.get("text", []) if str(w).strip()]
+    confidences = []
+    for raw in data.get("conf", []):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value >= 0:
+            confidences.append(value)
+    text = " ".join(words).strip()
+    confidence = (sum(confidences) / len(confidences) / 100) if confidences else 0.0
+    return text, round(confidence, 2)
+
+
+def _ocr_text_from_pdf_bytes(pdf_bytes: bytes, ocr_languages: str = "eng+ara") -> Tuple[str, float]:
+    pages = []
+    scores = []
     with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
-        for page in pdf_doc:
+        for page_number, page in enumerate(pdf_doc, start=1):
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             image = Image.open(BytesIO(pix.tobytes("png")))
-            text += pytesseract.image_to_string(image, lang=ocr_languages) + "\n"
-    return text
+            page_text, confidence = _ocr_image(image, ocr_languages=ocr_languages)
+            if page_text:
+                pages.append(f"[Page {page_number} OCR confidence {confidence:.0%}]\n{page_text}")
+                scores.append(confidence)
+    average = round(sum(scores) / len(scores), 2) if scores else 0.0
+    return "\n\n".join(pages), average
+
+
+def extract_text_from_image_bytes(image_bytes: bytes, response_language: str = "english") -> Dict[str, Any]:
+    try:
+        image = Image.open(BytesIO(image_bytes))
+        text, confidence = _ocr_image(image, ocr_languages=get_ocr_languages(response_language))
+    except pytesseract.TesseractNotFoundError as exc:
+        raise RuntimeError("OCR is not available because the Tesseract executable is missing. Install Tesseract with English and Arabic language packs.") from exc
+    if not text.strip():
+        raise ValueError("No text could be extracted from this image. Check scan quality and OCR language packs.")
+    return {"text": f"[Page 1 OCR confidence {confidence:.0%}]\n{text}", "ocr_confidence": confidence, "used_ocr": True}
+
+
+def extract_text_from_docx_bytes(docx_bytes: bytes) -> Dict[str, Any]:
+    if importlib.util.find_spec("docx") is None:
+        raise ValueError("DOCX support requires python-docx. Install dependencies from requirements.txt.")
+    docx = importlib.import_module("docx")
+    document = docx.Document(BytesIO(docx_bytes))
+    text = "\n".join(paragraph.text for paragraph in document.paragraphs if paragraph.text.strip())
+    if not text.strip():
+        raise ValueError("No text could be extracted from this DOCX file.")
+    return {"text": text, "ocr_confidence": None, "used_ocr": False}
 
 
 def extract_text_from_pdf_bytes(
@@ -1003,36 +963,32 @@ def extract_text_from_pdf_bytes(
     use_ocr: bool = True,
     response_language: str = "english",
 ) -> str:
-    """
-    Extracts text from PDF bytes.
-
-    Args:
-        pdf_bytes (bytes): PDF file content as bytes.
-
-    Returns:
-        str: The full extracted text from all pages.
-
-    Raises:
-        CorruptPDFError: If the bytes are not a valid PDF or are corrupted.
-        ValueError: If no text could be extracted.
-        RuntimeError: For unexpected failures in PDF processing.
-    """
+    """Extract text from PDF bytes with page numbers and OCR fallback."""
     try:
-        text = ""
+        pages = []
         with fitz.open(stream=pdf_bytes, filetype="pdf") as pdf_doc:
-            for page in pdf_doc:
-                text += page.get_text()
+            for page_number, page in enumerate(pdf_doc, start=1):
+                page_text = page.get_text().strip()
+                if page_text:
+                    pages.append(f"[Page {page_number}]\n{page_text}")
 
-        if text.strip():
+        text = "\n\n".join(pages).strip()
+        if len(text) >= 80:
             return text
 
         if use_ocr:
-            ocr_text = _ocr_text_from_pdf_bytes(
-                pdf_bytes, ocr_languages=get_ocr_languages(response_language)
-            )
+            try:
+                ocr_text, ocr_confidence = _ocr_text_from_pdf_bytes(
+                    pdf_bytes, ocr_languages=get_ocr_languages(response_language)
+                )
+            except pytesseract.TesseractNotFoundError as exc:
+                raise RuntimeError("OCR is not available because the Tesseract executable is missing. Install Tesseract with English and Arabic language packs.") from exc
             if ocr_text.strip():
-                return ocr_text
+                warning = "[OCR warning: low scan quality, some extracted text may be inaccurate.]\n" if ocr_confidence and ocr_confidence < 0.45 else ""
+                return (warning + ocr_text).strip()
 
+        if text:
+            return text
         raise ValueError("No text could be extracted from the PDF.")
 
     except fitz.FileDataError as exc:

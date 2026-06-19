@@ -19,10 +19,10 @@ SYNONYM_MAP: Dict[str, List[str]] = {
     "law": ["governing law", "jurisdiction", "laws"],
     "governs": ["governing", "jurisdiction"],
     "jurisdiction": ["governing law", "law", "governed"],
-    "payment": ["invoice", "fee", "price", "compensation", "pay"],
-    "terminate": ["termination", "end", "cancel"],
-    "confidential": ["non-disclosure", "nda", "privacy"],
-    "liability": ["damages", "cap", "indemnity"],
+    "payment": ["invoice", "fee", "price", "compensation", "pay", "الدفع", "الرسوم", "المقابل", "الراتب"],
+    "terminate": ["termination", "end", "cancel", "إنهاء", "فسخ", "مدة العقد"],
+    "confidential": ["non-disclosure", "nda", "privacy", "سرية", "المعلومات السرية"],
+    "liability": ["damages", "cap", "indemnity", "مسؤولية", "حدود المسؤولية"],
 }
 
 
@@ -42,13 +42,13 @@ PERSONAL_NONLEGAL_HINTS = {
 
 
 INTENT_KEYWORDS: Dict[str, set[str]] = {
-    "leave_policy": {"leave", "vacation", "sick", "absence", "day off", "time off"},
-    "working_hours": {"hours", "schedule", "shift", "overtime", "week"},
-    "compensation": {"salary", "payment", "invoice", "bonus", "compensation", "pay"},
-    "termination": {"terminate", "termination", "resign", "notice", "end"},
-    "confidentiality": {"confidential", "nda", "non-disclosure", "disclose"},
-    "governing_law": {"law", "jurisdiction", "court", "arbitration", "dispute"},
-    "obligations": {"must", "obligation", "required", "responsibility", "deliverable"},
+    "leave_policy": {"leave", "vacation", "sick", "absence", "day off", "time off", "إجازة", "اجازة", "مرضية", "عطلة"},
+    "working_hours": {"hours", "schedule", "shift", "overtime", "week", "ساعات", "دوام", "إضافي"},
+    "compensation": {"salary", "payment", "invoice", "bonus", "compensation", "pay", "راتب", "الدفع", "الرسوم", "المقابل المالي"},
+    "termination": {"terminate", "termination", "resign", "notice", "end", "إنهاء", "فسخ", "إشعار", "مدة العقد"},
+    "confidentiality": {"confidential", "nda", "non-disclosure", "disclose", "سرية", "المعلومات السرية"},
+    "governing_law": {"law", "jurisdiction", "court", "arbitration", "dispute", "القانون", "النظام", "المحكمة", "تحكيم", "المنازعات"},
+    "obligations": {"must", "obligation", "required", "responsibility", "deliverable", "التزامات", "مسؤوليات", "الخدمة"},
 }
 
 @dataclass
@@ -60,7 +60,7 @@ class RetrievalHit:
 
 
 def _tokenize(text: str) -> List[str]:
-    return re.findall(r"[a-zA-Z0-9_\-']+", (text or "").lower())
+    return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", (text or "").lower())
 
 
 def _expand_query_tokens(tokens: set[str]) -> set[str]:
@@ -215,22 +215,118 @@ def _extract_sentences_with_keywords(text: str, question_tokens: set[str], limit
     return picked
 
 
+
+
+SKILLS_NOISE_HINTS = {"git", "agile", "problem-solving", "communication skills", "version control", "probation period", "job description", "requirements", "experience with"}
+
+
+def _is_skills_noise(text: str) -> bool:
+    t=(text or "").lower()
+    return any(h in t for h in SKILLS_NOISE_HINTS)
+
+
+
+CLAUSE_PLAIN_ENGLISH = {
+    "parties": "Identifies who is bound by the contract.",
+    "effective_date": "Shows when the contract starts or becomes binding.",
+    "termination": "Explains how the contract can end and what notice is required.",
+    "compensation": "Explains pay, fees, salary, or other payment terms.",
+    "leave_policy": "Explains vacation, sick leave, holidays, or time-off rights.",
+    "working_hours": "Explains expected work hours, schedule, or overtime terms.",
+    "confidentiality": "Explains how private information must be protected.",
+    "governing_law": "Shows which law applies to the contract.",
+    "dispute_resolution": "Explains how disagreements will be handled.",
+    "renewal": "Explains whether and how the contract continues after the first term.",
+}
+
+
+def _clause_plain_summary(clause_name: str, text: str | None) -> str:
+    if not text:
+        return "No reliable wording was found for this clause."
+    return f"This section appears to cover {clause_name.replace('_', ' ')}. Review the evidence to confirm it matches the business deal."
+
+
+def _clause_why_it_matters(clause_name: str) -> str:
+    return CLAUSE_PLAIN_ENGLISH.get(clause_name, "This clause helps clarify rights, duties, timing, or risk in the contract.")
+
+def _validated_clause_record(clause_name: str, matches: list[dict], source_text: str = "") -> Dict[str, Any]:
+    issues: List[str] = []
+    if not matches:
+        if clause_name == "parties" and _is_skills_noise(source_text):
+            return {
+                "status": "not_found",
+                "confidence": 0.0,
+                "extracted_text": None,
+                "evidence_snippets": [],
+                "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
+                "plain_english_summary": _clause_plain_summary(clause_name, None),
+                "what_was_found": "No reliable evidence found.",
+                "why_it_matters": _clause_why_it_matters(clause_name),
+                "missing_information": ["Clear party-identification wording."],
+                "recommended_action": "Look for party-identification language (for example, 'between X and Y', legal entity names, or defined party terms).",
+            }
+        return {
+            "status": "not_found",
+            "confidence": 0.0,
+            "extracted_text": None,
+            "evidence_snippets": [],
+            "issues": ["No reliable evidence found for this clause."],
+            "plain_english_summary": _clause_plain_summary(clause_name, None),
+            "what_was_found": "No reliable evidence found.",
+            "why_it_matters": _clause_why_it_matters(clause_name),
+            "missing_information": [f"Clear {clause_name.replace('_', ' ')} wording."],
+            "recommended_action": "Add clear wording for this clause or ask a reviewer to confirm whether it exists elsewhere in the contract.",
+        }
+
+    top = matches[0]
+    top_quote = str(top.get("quote", ""))
+
+    if clause_name == "parties" and _is_skills_noise(top_quote):
+        return {
+            "status": "not_found",
+            "confidence": 0.0,
+            "extracted_text": None,
+            "evidence_snippets": [],
+            "issues": ["Rejected because text appears to be skills/job-description content, not contracting party evidence."],
+            "plain_english_summary": _clause_plain_summary(clause_name, None),
+            "what_was_found": "No reliable evidence found.",
+            "why_it_matters": _clause_why_it_matters(clause_name),
+            "missing_information": ["Clear party-identification wording."],
+            "recommended_action": "Look for party-identification language (for example, 'between X and Y', legal entity names, or defined party terms).",
+        }
+
+    ev=[{"quote":m.get("quote",""),"location":m.get("location",""),"chunk_id":m.get("chunk_id","")} for m in matches[:2]]
+    confidence = 0.86 if len(matches) > 1 else 0.72
+    return {
+        "status": "found",
+        "confidence": confidence,
+        "extracted_text": top_quote,
+        "what_was_found": top_quote,
+        "plain_english_summary": _clause_plain_summary(clause_name, top_quote),
+        "why_it_matters": _clause_why_it_matters(clause_name),
+        "evidence_snippets": ev,
+        "issues": issues,
+        "missing_information": [],
+        "recommended_action": "No immediate action required. Confirm the wording matches the intended business agreement.",
+    }
+
+
 def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
     chunks = chunk_contract_text(contract_text)
     clause_map = {
-        "parties": ["party", "parties", "between"],
-        "effective_date": ["effective", "date"],
-        "term": ["term", "duration"],
-        "renewal": ["renew", "automatic renewal"],
-        "termination": ["termination", "terminate"],
-        "payment_terms": ["payment", "invoice", "fees"],
-        "liability": ["liability", "damages", "limit"],
-        "confidentiality": ["confidential", "confidentiality"],
-        "governing_law": ["governing law", "law", "jurisdiction"],
-        "dispute_resolution": ["dispute", "arbitration", "mediation"],
-        "sla_obligations": ["service level", "sla", "obligation", "deliverable"],
-        "penalties": ["penalty", "liquidated damages", "late fee"],
-        "change_control": ["change", "amendment", "change order"],
+        "parties": ["party", "parties", "between", "الأطراف", "طرف", "بين"],
+        "effective_date": ["effective", "date", "تاريخ", "سريان", "نافذ"],
+        "term": ["term", "duration", "مدة العقد", "المدة"],
+        "renewal": ["renew", "automatic renewal", "تجديد", "يتجدد"],
+        "termination": ["termination", "terminate", "إنهاء", "انهاء", "فسخ", "مدة العقد"],
+        "payment_terms": ["payment", "invoice", "fees", "الدفع", "الرسوم", "المقابل المالي", "راتب", "الأجر"],
+        "liability": ["liability", "damages", "limit", "مسؤولية", "حدود المسؤولية", "تعويض"],
+        "confidentiality": ["confidential", "confidentiality", "سرية", "المعلومات السرية"],
+        "governing_law": ["governing law", "law", "jurisdiction", "القانون الواجب التطبيق", "النظام المطبق", "القانون"],
+        "dispute_resolution": ["dispute", "arbitration", "mediation", "المنازعات", "تسوية النزاعات", "تحكيم", "وساطة"],
+        "sla_obligations": ["service level", "sla", "obligation", "deliverable", "التزامات", "مستوى الخدمة", "الخدمات"],
+        "penalties": ["penalty", "liquidated damages", "late fee", "غرامة", "جزاء", "تعويضات"],
+        "change_control": ["change", "amendment", "change order", "تعديل", "أمر تغيير"],
     }
 
     extracted: Dict[str, Dict[str, Any]] = {}
@@ -249,19 +345,7 @@ def extract_key_clauses(contract_text: str) -> Dict[str, Any]:
                     }
                 )
 
-        if not matches:
-            extracted[clause_name] = {
-                "value": "Not Found",
-                "evidence": [],
-                "status": "missing",
-            }
-            continue
-
-        extracted[clause_name] = {
-            "value": matches[0]["quote"],
-            "evidence": matches[:2],
-            "status": "found",
-        }
+        extracted[clause_name] = _validated_clause_record(clause_name, matches, contract_text)
 
         unique_quotes = {m["quote"] for m in matches[:3]}
         if len(unique_quotes) > 1 and clause_name in {"term", "renewal", "payment_terms", "termination"}:

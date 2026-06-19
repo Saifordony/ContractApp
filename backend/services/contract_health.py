@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 CONTRACT_TYPE_RULES: Dict[str, Dict[str, Any]] = {
@@ -56,21 +56,21 @@ CONTRACT_TYPE_RULES: Dict[str, Dict[str, Any]] = {
 
 CLAUSE_KEYWORDS: Dict[str, List[str]] = {
     "scope_of_work": ["scope", "deliverable", "services"],
-    "payment_terms": ["payment", "invoice", "fee", "price", "compensation"],
+    "payment_terms": ["payment", "invoice", "fee", "price", "compensation", "الدفع", "الرسوم", "المقابل المالي", "راتب"],
     "acceptance_criteria": ["acceptance", "milestone", "sign off"],
-    "termination": ["termination", "terminate", "expiry", "end of term"],
-    "limitation_of_liability": ["liability", "damages", "cap", "without limitation", "unlimited"],
-    "confidentiality": ["confidential", "non-disclosure"],
-    "governing_law": ["governing law", "laws of", "jurisdiction"],
-    "dispute_resolution": ["dispute", "arbitration", "mediation", "court"],
+    "termination": ["termination", "terminate", "expiry", "end of term", "إنهاء", "انهاء", "فسخ", "مدة العقد"],
+    "limitation_of_liability": ["liability", "damages", "cap", "without limitation", "unlimited", "مسؤولية", "حدود المسؤولية"],
+    "confidentiality": ["confidential", "non-disclosure", "سرية", "المعلومات السرية"],
+    "governing_law": ["governing law", "laws of", "jurisdiction", "القانون الواجب التطبيق", "النظام المطبق", "القانون"],
+    "dispute_resolution": ["dispute", "arbitration", "mediation", "court", "المنازعات", "تسوية النزاعات", "تحكيم"],
     "change_control": ["change order", "amendment", "modification"],
-    "sla": ["sla", "service level", "uptime", "response time"],
+    "sla": ["sla", "service level", "uptime", "response time", "مستوى الخدمة"],
     "indemnification": ["indemnif"],
     "audit_rights": ["audit", "inspection rights"],
     "working_hours": ["working hours", "hours per week"],
     "non_compete": ["non-compete", "non solicitation", "non-solicitation"],
     "ip_assignment": ["intellectual property", "work product", "assign"],
-    "leave_policy": ["leave", "vacation", "sick leave"],
+    "leave_policy": ["leave", "vacation", "sick leave", "إجازة", "اجازة", "مرضية"],
     "term": ["term", "duration", "effective date"],
     "permitted_use": ["permitted use", "purpose"],
     "remedies": ["remedies", "injunctive"],
@@ -81,7 +81,7 @@ CLAUSE_KEYWORDS: Dict[str, List[str]] = {
     "maintenance": ["maintenance", "repair"],
     "default": ["default", "breach"],
     "security_deposit": ["security deposit"],
-    "renewal": ["renewal", "auto renew"],
+    "renewal": ["renewal", "auto renew", "تجديد"],
     "insurance": ["insurance"],
     "force_majeure": ["force majeure"],
     "notice": ["notice"],
@@ -137,12 +137,24 @@ def _pretty_clause_name(name: str, response_language: str) -> str:
     return arabic_map.get(name, name) if _is_arabic_response(response_language) else name
 
 
-def _dimension(name: str, score: int, explanation: str, evidence: List[Dict[str, str]]) -> Dict[str, Any]:
+def _dimension(
+    name: str,
+    score: int,
+    explanation: str,
+    evidence: List[Dict[str, str]],
+    missing_information: Optional[List[str]] = None,
+    recommended_action: Optional[str] = None,
+) -> Dict[str, Any]:
+    bounded_score = max(0, min(100, score))
     return {
         "name": name,
-        "score": max(0, min(100, score)),
+        "score": bounded_score,
         "explanation": explanation,
+        "reason": explanation,
         "evidence": evidence,
+        "supporting_evidence": evidence,
+        "missing_information": missing_information or [],
+        "recommended_action": recommended_action or "Review this area against the cited contract evidence before approval.",
     }
 
 
