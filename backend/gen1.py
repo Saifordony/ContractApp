@@ -368,11 +368,6 @@ def infer_user_style_guide(question: str, response_language: str) -> str:
         else "Keep a friendly professional tone and provide a clear answer with short practical points."
     )
 
-# Backward-compatible sentinel; pipeline is handled manually in sync helper.
-full_pipeline_chain = None
-
-
-
 
 def _coerce_llm_content(raw_content: Any) -> str:
     """Normalize LangChain response content into plain text."""
@@ -674,7 +669,7 @@ def evaluate_contract_sync(
 
 def analyze_and_evaluate_contract_sync(
     contract_text: str,
-    pipeline_chain: Any = full_pipeline_chain,
+    pipeline_chain: Any = None,
     response_language: str = "english",
 ) -> Dict[str, Any]:
     """

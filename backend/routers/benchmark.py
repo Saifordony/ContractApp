@@ -8,7 +8,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from backend import main as _main
 from backend.llm_config import llm_health_check
-from backend.services.benchmark_baselines import run_benchmark
 from backend.services.benchmark_comparison_service import build_benchmark_comparison
 from backend.services.benchmark_service import (
     ingest_seed_dataset,
@@ -63,47 +62,6 @@ async def compare_contract_benchmark(contract_id: str, current_user: dict = Depe
         "alignment_score": benchmark.get("overall_position", {}).get("alignment_score"),
     })
     return benchmark
-
-
-@router.post("/contracts/{contract_id}/benchmark")
-async def run_contract_benchmark(contract_id: str, current_user: dict = Depends(_main.get_current_user)):
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-    contract = await _main.db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    analysis = await _main.db.contract_analyses.find_one({"contract_id": contract_id}, sort=[("created_at", -1)])
-    clauses = ((analysis or {}).get("results") or {}).get("clauses")
-    if not isinstance(clauses, dict):
-        raise HTTPException(status_code=404, detail="No extracted clauses found. Run analysis first.")
-    contract_type = (((analysis or {}).get("results") or {}).get("health_evaluation") or {}).get("contract_type", "general_commercial")
-    analysis_results = (analysis or {}).get("results", {})
-    structured = analysis_results.get("structured_clauses", {}) if isinstance(analysis_results, dict) else {}
-    validated_clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
-    if validated_clauses:
-        result = build_benchmark_comparison(
-            contract_id=contract_id,
-            validated_clauses=validated_clauses,
-            raw_contract_text=contract.get("content", ""),
-            contract_type=contract_type,
-            readiness_review=analysis_results.get("health_evaluation", {}),
-            ai_commentary_fn=_main.generate_benchmark_ai_commentary if llm_health_check().get("reachable") else None,
-        )
-    else:
-        result = run_benchmark(clauses, contract_type)
-    await _main.db.contracts.update_one({"_id": object_id}, {"$set": {"benchmark_result": result, "updated_at": datetime.utcnow()}})
-    return result
-
-
-@router.get("/contracts/{contract_id}/benchmark")
-async def get_contract_benchmark(contract_id: str, current_user: dict = Depends(_main.get_current_user)):
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-    contract = await _main.db.contracts.find_one({"_id": object_id, "created_by": current_user["username"]})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    result = contract.get("benchmark_result")
-    if not result:
-        raise HTTPException(status_code=404, detail="Benchmark has not been run yet.")
-    return result
 
 
 @router.post("/benchmark/ingest")
