@@ -192,3 +192,22 @@ def test_detect_contract_language():
     assert detect_contract_language("هذه الاتفاقية تخضع للقانون الأردني وكل أحكامه.") == "arabic"
     assert detect_contract_language("Governing Law: القانون الأردني applies to this Agreement fully.") == "bilingual"
     assert detect_contract_language("") == "english"
+
+
+def test_clause_readability_ratings():
+    from backend.services.contract_intelligence import clause_readability
+
+    clear = clause_readability("Pay within 30 days. Notice is 30 days.")
+    assert clear["rating"] == "Clear"
+    assert clear["badge"].endswith("Clear")
+
+    complex_clause = clause_readability(" ".join(["word"] * 30) + ".")
+    assert complex_clause["rating"] == "Complex"
+    assert complex_clause["words_per_sentence"] > 25
+
+    moderate = clause_readability(" ".join(["word"] * 20) + ".")
+    assert moderate["rating"] == "Moderate"
+
+    empty = clause_readability("")
+    assert empty["rating"] == "Clear"
+    assert empty["words"] == 0

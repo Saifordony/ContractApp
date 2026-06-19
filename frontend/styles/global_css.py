@@ -98,3 +98,67 @@ def apply_global_css(sidebar_compact: bool = False, theme_mode: str = "light", d
         """,
         unsafe_allow_html=True,
     )
+
+    apply_premium_components_css()
+
+
+def apply_premium_components_css() -> None:
+    """Premium "legal intelligence" component classes (Dimension 2.1).
+
+    Injected in addition to the base theme so the redesigned components
+    (stat cards, severity-coded clause cards, gradient chat bubbles, confidence
+    badges, styled evidence quotes) are available on every page without
+    disturbing the base design tokens.
+    """
+    st.markdown(
+        """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+        <style>
+        :root {
+            --card-hover:#172038; --accent-light:#6B97FF; --accent-2:#8B6CF0; --accent-3:#2DD4BF;
+            --subtle:#344263;
+            --glow-blue:rgba(79,127,239,0.20); --glow-purple:rgba(139,108,240,0.20); --glow-teal:rgba(45,212,191,0.15);
+            --shadow-sm:0 2px 8px rgba(0,0,0,0.3); --shadow-md:0 8px 24px rgba(0,0,0,0.4); --shadow-lg:0 16px 48px rgba(0,0,0,0.5);
+            --radius-sm:8px; --radius-md:14px; --radius-lg:20px;
+        }
+        @keyframes fadeInUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes ringDraw { from { stroke-dashoffset:326.7; } }
+        .stat-card, .clause-card, .section-card { animation: fadeInUp 0.3s ease both; }
+        .stat-card:nth-child(1) { animation-delay:0.05s; }
+        .stat-card:nth-child(2) { animation-delay:0.10s; }
+        .stat-card:nth-child(3) { animation-delay:0.15s; }
+        .stat-card {
+            background:var(--card); border:1px solid var(--subtle); border-radius:var(--radius-md);
+            padding:1.25rem 1.5rem; position:relative; overflow:hidden;
+            transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+        }
+        .stat-card::before {
+            content:''; position:absolute; top:0; left:0; right:0; height:3px;
+            background:linear-gradient(90deg, var(--accent), var(--accent-2));
+            border-radius:var(--radius-md) var(--radius-md) 0 0;
+        }
+        .stat-card:hover { transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--accent); }
+        .stat-card .stat-value { font-family:'Playfair Display',serif; font-size:1.9rem; font-weight:700; }
+        .stat-card .stat-label { font-family:'DM Sans',sans-serif; color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
+        .clause-card { border-left:4px solid var(--subtle); padding:.85rem 1rem; border-radius:var(--radius-sm); background:var(--card); margin:.5rem 0; }
+        .clause-card.found { border-left-color:var(--success); }
+        .clause-card.partial { border-left-color:var(--warning); }
+        .clause-card.missing { border-left-color:var(--danger); }
+        .clause-card.low-confidence { border-left-color:var(--accent-2); }
+        .chat-bubble.user { background:linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow:0 4px 16px var(--glow-blue); }
+        .chat-bubble.assistant { background:var(--card); border:1px solid var(--subtle); }
+        .confidence-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:.72rem; font-weight:600; }
+        .confidence-high { background:rgba(34,214,143,0.15); color:var(--success); }
+        .confidence-medium { background:rgba(245,158,11,0.15); color:var(--warning); }
+        .confidence-low { background:rgba(239,68,68,0.15); color:var(--danger); }
+        .evidence-quote {
+            background:rgba(79,127,239,0.08); border-left:3px solid var(--accent);
+            border-radius:0 var(--radius-sm) var(--radius-sm) 0; padding:.75rem 1rem;
+            font-family:'DM Mono',monospace; font-size:.85rem; color:var(--primary); margin:.5rem 0; line-height:1.6;
+        }
+        .display-heading { font-family:'Playfair Display',serif; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )

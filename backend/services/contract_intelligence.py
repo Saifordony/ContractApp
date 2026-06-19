@@ -127,6 +127,35 @@ def detect_contract_language(contract_text: str) -> str:
     return "english"
 
 
+def clause_readability(text: str) -> Dict[str, Any]:
+    """Lightweight readability metric for a clause.
+
+    Counts sentences and average words per sentence, then classifies:
+    < 15 words/sentence = "Clear", 15-25 = "Moderate", > 25 = "Complex".
+    Returns the rating plus a short badge string for the UI.
+    """
+    body = (text or "").strip()
+    if not body:
+        return {"sentences": 0, "words": 0, "words_per_sentence": 0.0, "rating": "Clear", "badge": "\U0001F4D6 Clear"}
+    sentences = [s for s in re.split(r"(?<=[.!?\u061F])\s+", body) if s.strip()]
+    sentence_count = max(len(sentences), 1)
+    word_count = len(re.findall(r"\S+", body))
+    words_per_sentence = round(word_count / sentence_count, 1)
+    if words_per_sentence > 25:
+        rating = "Complex"
+    elif words_per_sentence >= 15:
+        rating = "Moderate"
+    else:
+        rating = "Clear"
+    return {
+        "sentences": sentence_count,
+        "words": word_count,
+        "words_per_sentence": words_per_sentence,
+        "rating": rating,
+        "badge": f"\U0001F4D6 {rating}",
+    }
+
+
 def _tokenize(text: str) -> List[str]:
     return re.findall(r"[\u0600-\u06FFa-zA-Z0-9_\-']+", arabic_normalize((text or "").lower()))
 

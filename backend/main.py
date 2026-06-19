@@ -152,6 +152,17 @@ class ContractCompareRequest(BaseModel):
     contract_id_b: str
 
 
+class ContractChatTextRequest(BaseModel):
+    message: Optional[str] = None
+    question: Optional[str] = None
+    contract_text: str = ""
+    analysis_results: Optional[Dict[str, Any]] = None
+    chat_history: list[ChatHistoryMessage] = []
+    response_language: str = "english"
+    response_mode: str = "ask_anything"
+    debug: bool = False
+
+
 # Database setup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -1509,6 +1520,32 @@ async def compare_contracts(
         "health_score_b": score_b,
         "recommendation": recommendation,
     }
+
+
+@app.post("/genai/contract-chat")
+async def contract_chat_text_endpoint(
+    request: ContractChatTextRequest, current_user: dict = Depends(get_current_user)
+):
+    """Stateless contract chat that takes contract text directly in the request.
+
+    Powers the multipage Chat page (which holds the contract in session rather
+    than a saved record). Surfaces the answer with numeric confidence, evidence,
+    risks, and suggested follow-ups from the chat service.
+    """
+    message = (request.message or request.question or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Please enter a message for the contract assistant.")
+
+    chat_history = [item.dict() for item in request.chat_history]
+    return build_contract_chat_response(
+        message=message,
+        contract_text=request.contract_text or "",
+        analysis_results=request.analysis_results or {},
+        chat_history=chat_history,
+        response_language=request.response_language,
+        response_mode=request.response_mode,
+        debug=request.debug,
+    )
 
 
 if __name__ == "__main__":

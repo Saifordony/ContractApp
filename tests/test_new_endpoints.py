@@ -246,3 +246,25 @@ def test_contracts_compare_builds_clause_diff(app_module):
     assert termination["status_a"] == "found"
     assert termination["status_b"] == "not_found"
     assert "Contract A defines termination" in termination["difference_summary"]
+
+
+def test_contract_chat_text_endpoint_returns_answer(app_module):
+    client = TestClient(app_module.app)
+    resp = client.post(
+        "/genai/contract-chat",
+        json={
+            "message": "hello",
+            "contract_text": "Either party may terminate with 30 days notice.",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer_type"] == "small_talk"
+    assert "confidence_score" in data
+    assert "risks" in data
+
+
+def test_contract_chat_text_endpoint_rejects_empty_message(app_module):
+    client = TestClient(app_module.app)
+    resp = client.post("/genai/contract-chat", json={"message": "  ", "contract_text": "x"})
+    assert resp.status_code == 400
