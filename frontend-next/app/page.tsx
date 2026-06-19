@@ -1,15 +1,48 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, analyzeContractText, getToken, login, setToken } from "@/lib/api";
 import type { GroundedAnalysis } from "@/lib/types";
-import { AnalysisResult } from "@/components/AnalysisResult";
 import { ContractChat } from "@/components/ContractChat";
 
-const ANALYSIS_STEPS = [
-  "Retrieving relevant clauses",
-  "Grounding the answer in evidence",
-  "Verifying citations & confidence",
+type ContractRecord = {
+  id: string;
+  name: string;
+  counterparty: string;
+  status: "Needs review" | "In review" | "Ready";
+  risk: "Low" | "Medium" | "High" | "Critical";
+  updated: string;
+  tags: string[];
+  text: string;
+};
+
+type ClauseHit = { name: string; pattern: RegExp; summary: string; severity: ContractRecord["risk"] };
+
+const SAMPLE_CONTRACT = `MASTER SERVICES AGREEMENT
+
+This Master Services Agreement is entered into by Acme Robotics, Inc. and Northstar Supply LLC. Northstar will provide logistics, warehousing, and procurement services for an initial term of twelve months beginning July 1, 2026.
+
+Fees are payable net 45 days from receipt of invoice. Late payments accrue interest at 1.5% per month. Either party may terminate for uncured material breach after thirty days written notice. Northstar may terminate for convenience upon sixty days notice.
+
+Each party will keep confidential information secret for three years after termination. Liability is capped at fees paid in the prior three months, except for confidentiality breaches and payment obligations. The agreement does not include an indemnity for third-party intellectual property claims.
+
+The agreement automatically renews for successive one-year terms unless either party gives notice at least ninety days before the end of the then-current term. Disputes will be resolved by binding arbitration in New York, and New York law governs.`;
+
+const CLAUSE_MAP: ClauseHit[] = [
+  { name: "Termination", pattern: /terminat(e|ion)|material breach|convenience/i, summary: "Exit rights, cure periods, and convenience termination.", severity: "Medium" },
+  { name: "Liability", pattern: /liabilit|cap|damages|limitation/i, summary: "Caps, exclusions, and uncapped exposure.", severity: "High" },
+  { name: "Confidentiality", pattern: /confidential|non-disclosure|secret/i, summary: "Protection period and handling of sensitive information.", severity: "Medium" },
+  { name: "Payment", pattern: /payment|invoice|fees|net \d+|late/i, summary: "Fees, due dates, and late-payment mechanics.", severity: "Low" },
+  { name: "Renewal", pattern: /renew|extension|successive/i, summary: "Auto-renewal and notice window.", severity: "High" },
+  { name: "IP", pattern: /intellectual property|work product|ip |copyright|patent/i, summary: "Ownership and third-party IP protection.", severity: "High" },
+  { name: "Governing law", pattern: /governing law|law governs|jurisdiction/i, summary: "Applicable law and forum assumptions.", severity: "Low" },
+  { name: "Dispute resolution", pattern: /dispute|arbitration|mediation|court/i, summary: "Escalation path and binding forum.", severity: "Medium" },
+];
+
+const DEFAULT_CONTRACTS: ContractRecord[] = [
+  { id: "msa-northstar", name: "Northstar MSA", counterparty: "Northstar Supply LLC", status: "Needs review", risk: "High", updated: "Today", tags: ["MSA", "Operations"], text: SAMPLE_CONTRACT },
+  { id: "dpa-aurelia", name: "Aurelia DPA", counterparty: "Aurelia Cloud", status: "In review", risk: "Medium", updated: "Yesterday", tags: ["Privacy", "DPA"], text: "Data Processing Addendum with confidentiality, subprocessors, security controls, audit rights, and termination assistance." },
+  { id: "sow-q3", name: "Q3 Implementation SOW", counterparty: "Brightline Systems", status: "Ready", risk: "Low", updated: "Jun 12", tags: ["SOW", "Services"], text: "Statement of work covering deliverables, milestones, fees, acceptance criteria, and payment terms." },
 ];
 
 function LoginPanel({ onSuccess }: { onSuccess: () => void }) {
@@ -17,164 +50,118 @@ function LoginPanel({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    try {
-      await login(username, password);
-      onSuccess();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Login failed");
-    } finally {
-      setBusy(false);
-    }
+    try { await login(username, password); onSuccess(); }
+    catch (err) { setError(err instanceof ApiError ? err.message : "Login failed"); }
+    finally { setBusy(false); }
   }
-
   return (
-    <form className="panel" onSubmit={submit} style={{ maxWidth: 380 }}>
-      <h2 style={{ marginTop: 0 }}>Sign in</h2>
-      {error && <div className="banner error">{error}</div>}
-      <label htmlFor="u">Username</label>
-      <input id="u" type="text" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
-      <label htmlFor="p">Password</label>
-      <input id="p" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-      <div style={{ marginTop: "1rem" }}>
-        <button type="submit" disabled={busy || !username || !password}>
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
-      </div>
-    </form>
+    <main className="login-shell">
+      <section className="login-hero">
+        <div className="eyebrow">Contract Intelligence Platform</div>
+        <h1>Review contracts with evidence-grounded AI.</h1>
+        <p>Upload an agreement, identify risky clauses, ask questions with cited answers, and export decision-ready reports in one premium workspace.</p>
+        <div className="hero-grid">
+          <span>Clause analysis</span><span>Risk intelligence</span><span>Source citations</span><span>Negotiation edits</span>
+        </div>
+      </section>
+      <form className="login-card" onSubmit={submit}>
+        <h2>Welcome back</h2>
+        <p className="muted">Sign in to your legal AI workspace.</p>
+        {error && <div className="banner error">{error}</div>}
+        <label htmlFor="u">Username</label><input id="u" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
+        <label htmlFor="p">Password</label><input id="p" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
+        <button className="primary wide" disabled={busy || !username || !password}>{busy ? "Signing in…" : "Enter workspace"}</button>
+      </form>
+    </main>
   );
 }
 
-function AnalyzingSkeleton({ step }: { step: number }) {
-  return (
-    <div className="panel">
-      <strong>Analyzing contract…</strong>
-      <ul className="steps">
-        {ANALYSIS_STEPS.map((label, i) => (
-          <li key={label} className={i < step ? "done" : i === step ? "active" : ""}>
-            {i < step ? "✓ " : i === step ? "• " : "  "}
-            {label}
-          </li>
-        ))}
-      </ul>
-      <div className="skeleton" style={{ height: 18, width: "70%", margin: "1rem 0 0.6rem" }} />
-      <div className="skeleton" style={{ height: 14, width: "95%", marginBottom: "0.4rem" }} />
-      <div className="skeleton" style={{ height: 14, width: "88%" }} />
-    </div>
-  );
+function getHits(text: string) {
+  return CLAUSE_MAP.map((c) => ({ ...c, found: c.pattern.test(text), excerpt: text.split(/\n+/).find((p) => c.pattern.test(p))?.trim() ?? "Not found in current text." }));
 }
+
+function riskScore(risk: ContractRecord["risk"]) { return { Low: 22, Medium: 48, High: 76, Critical: 94 }[risk]; }
 
 export default function Home() {
   const [authed, setAuthed] = useState(false);
-  const [text, setText] = useState("");
+  const [activeId, setActiveId] = useState(DEFAULT_CONTRACTS[0].id);
+  const [contracts, setContracts] = useState(DEFAULT_CONTRACTS);
+  const [text, setText] = useState(SAMPLE_CONTRACT);
   const [result, setResult] = useState<GroundedAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [step, setStep] = useState(0);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setAuthed(Boolean(getToken()));
-  }, []);
+  useEffect(() => setAuthed(Boolean(getToken())), []);
+  const active = contracts.find((c) => c.id === activeId) ?? contracts[0];
+  const hits = useMemo(() => getHits(text), [text]);
+  const found = hits.filter((h) => h.found);
+  const missing = hits.filter((h) => !h.found);
 
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
-
-  function startStepper() {
-    setStep(0);
-    timers.current.forEach(clearTimeout);
-    // Perceived-progress only; the real call resolves whenever the model does.
-    timers.current = [
-      setTimeout(() => setStep(1), 1200),
-      setTimeout(() => setStep(2), 3200),
-    ];
+  async function analyze(nextText = text) {
+    setBusy(true); setError(null);
+    try { setResult(await analyzeContractText(nextText)); }
+    catch (err) {
+      if (err instanceof ApiError && err.status === 401) { setToken(null); setAuthed(false); setError("Your session expired. Please sign in again."); }
+      else setError(err instanceof ApiError ? err.message : "Analysis failed");
+    } finally { setBusy(false); }
   }
 
-  async function analyze() {
-    setBusy(true);
-    setError(null);
-    setResult(null);
-    startStepper();
-    try {
-      const data = await analyzeContractText(text);
-      setResult(data);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setToken(null);
-        setAuthed(false);
-        setError("Your session expired. Please sign in again.");
-      } else {
-        setError(err instanceof ApiError ? err.message : "Analysis failed");
-      }
-    } finally {
-      timers.current.forEach(clearTimeout);
-      setBusy(false);
-    }
+  function selectContract(contract: ContractRecord) { setActiveId(contract.id); setText(contract.text); setResult(null); }
+  async function upload(file: File) {
+    const uploadedText = await file.text();
+    const contract: ContractRecord = { id: `${Date.now()}`, name: file.name.replace(/\.[^.]+$/, ""), counterparty: "New counterparty", status: "Needs review", risk: "High", updated: "Just now", tags: ["Uploaded"], text: uploadedText };
+    setContracts((all) => [contract, ...all]); selectContract(contract); await analyze(uploadedText);
   }
 
-  const tooShort = text.trim().length < 100;
+  if (!authed) return <LoginPanel onSuccess={() => setAuthed(true)} />;
 
   return (
-    <main className="container">
-      <div className="brand">
-        <div className="brand-mark">CI</div>
-        <div>
-          <div style={{ fontWeight: 700 }}>Contract Intelligence</div>
-          <div className="subtle" style={{ fontSize: "0.8rem" }}>
-            Evidence-grounded analysis — every claim cites the contract
-          </div>
-        </div>
-      </div>
+    <main className="app-shell">
+      <nav className="topbar">
+        <div className="brand"><div className="brand-mark">CI</div><div><strong>Contract Intelligence</strong><span>Evidence-first legal AI</span></div></div>
+        <div className="nav-links"><a>Contracts</a><a>Review Workspace</a><a>Reports</a><a>Settings</a></div>
+        <button className="ghost" onClick={() => { setToken(null); setAuthed(false); }}>Sign out</button>
+      </nav>
 
-      {!authed ? (
-        <div style={{ marginTop: "1.5rem" }}>
-          <LoginPanel onSuccess={() => setAuthed(true)} />
-        </div>
-      ) : (
-        <div style={{ marginTop: "1.5rem" }}>
-          <div className="panel" style={{ marginBottom: "1.5rem" }}>
-            <div className="row spread">
-              <strong>Contract text</strong>
-              <button
-                className="secondary"
-                onClick={() => {
-                  setToken(null);
-                  setAuthed(false);
-                }}
-              >
-                Sign out
-              </button>
-            </div>
-            <label htmlFor="contract">Paste the contract text to analyze</label>
-            <textarea
-              id="contract"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Paste the full contract text here…"
-            />
-            <div className="row spread" style={{ marginTop: "0.75rem" }}>
-              <span className="subtle" style={{ fontSize: "0.8rem" }}>
-                {tooShort ? "At least 100 characters needed to analyze." : `${text.trim().length} characters`}
-              </span>
-              <button onClick={analyze} disabled={busy || tooShort}>
-                {busy ? "Analyzing…" : "Analyze contract"}
-              </button>
-            </div>
-          </div>
+      <section className="overview">
+        <div><p className="eyebrow">Workspace overview</p><h1>Contracts requiring attention</h1><p className="muted">No vanity metrics — only active reviews, high-risk terms, recent findings, and outstanding actions.</p></div>
+        <div className="action-row"><button className="primary" onClick={() => fileRef.current?.click()}>Upload contract</button><button className="secondary" onClick={() => analyze()}>Run AI review</button><input ref={fileRef} type="file" accept=".txt,.md" hidden onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} /></div>
+      </section>
 
-          {error && <div className="banner error">{error}</div>}
-          {busy && <AnalyzingSkeleton step={step} />}
-          {!busy && result && (
-            <>
-              <AnalysisResult data={result} />
-              <ContractChat contractText={text} analysis={result} />
-            </>
-          )}
-        </div>
-      )}
+      {error && <div className="banner error">{error}</div>}
+
+      <section className="workspace">
+        <aside className="left-rail panel">
+          <div className="rail-head"><strong>Contracts</strong><span>{contracts.length}</span></div>
+          <input className="search" placeholder="Search contracts, tags, parties…" />
+          <div className="contract-list">{contracts.map((c) => <button key={c.id} className={`contract-item ${c.id === activeId ? "active" : ""}`} onClick={() => selectContract(c)}><span><b>{c.name}</b><small>{c.counterparty}</small></span><i className={`risk ${c.risk.toLowerCase()}`}>{c.risk}</i></button>)}</div>
+          <div className="activity"><strong>Recent AI findings</strong><p>Auto-renewal notice window found.</p><p>Liability cap may be unusually narrow.</p><p>IP indemnity appears missing.</p></div>
+        </aside>
+
+        <section className="document panel">
+          <div className="doc-toolbar"><div><p className="eyebrow">Review Workspace</p><h2>{active.name}</h2><span className="muted">{active.counterparty} · Updated {active.updated}</span></div><div className="score"><span>Risk score</span><b>{riskScore(active.risk)}</b></div></div>
+          <textarea className="doc-viewer" value={text} onChange={(e) => { setText(e.target.value); setResult(null); }} />
+          <div className="clause-strip">{hits.map((h) => <a key={h.name} className={h.found ? "found" : "missing"}>{h.name}</a>)}</div>
+          <div className="inline-findings">{found.slice(0, 3).map((h) => <article key={h.name}><span className={`dot ${h.severity.toLowerCase()}`} /><div><strong>{h.name}</strong><p>{h.summary}</p><blockquote>{h.excerpt}</blockquote></div></article>)}</div>
+        </section>
+
+        <aside className="right-panel panel">
+          <div className="panel-head"><p className="eyebrow">AI Intelligence</p><h3>Legal analyst panel</h3></div>
+          {busy && <div className="thinking">Retrieving clauses, ranking evidence, verifying citations…</div>}
+          {result?.degraded_mode && <div className="banner degraded">Model unavailable: showing deterministic, source-grounded fallback.</div>}
+          <div className="insight-card"><strong>Executive summary</strong><p>{result?.sections.summary?.answer || "Run AI review to generate a cited executive summary."}</p></div>
+          <div className="insight-card"><strong>Risk assessment</strong><p>{result?.sections.risks?.answer || `${found.length} key clause families detected; ${missing.length} require confirmation.`}</p></div>
+          <div className="risk-list">{missing.slice(0, 3).map((m) => <div key={m.name}><b>Missing protection</b><span>{m.name}: confirm whether this is intentionally omitted.</span></div>)}</div>
+          <ContractChat contractText={text} analysis={result} compact />
+        </aside>
+      </section>
+
+      <section className="reports panel"><div><p className="eyebrow">Reports</p><h2>Decision-ready exports</h2><p className="muted">Executive report, risk report, clause analysis, and review summary are structured for counsel, operators, and leadership.</p></div><div className="report-grid"><button>Executive Markdown</button><button>Risk PDF</button><button>Clause report</button><button>Review summary</button></div></section>
     </main>
   );
 }
