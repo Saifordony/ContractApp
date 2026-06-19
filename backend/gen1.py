@@ -656,15 +656,24 @@ def evaluate_contract_sync(
         if assessment.get("risk_level") not in {"low", "medium", "high"}:
             assessment["risk_level"] = "medium"
 
+        # Tag the source so the caller (and ultimately the UI) can tell a real
+        # model assessment apart from the deterministic fallback below. The audit
+        # flagged the previous silent degradation as a top correctness problem.
+        assessment["evaluation_source"] = "llm"
+        assessment["degraded_mode"] = False
         return assessment
 
     except Exception:
         from backend.services.contract_health import evaluate_contract_health_from_clauses
 
-        return evaluate_contract_health_from_clauses(
+        fallback = evaluate_contract_health_from_clauses(
             contract_clauses,
             response_language=response_language,
         )
+        # Never present a rule-based fallback as if it were the LLM's judgement.
+        fallback["evaluation_source"] = "rule_based_fallback"
+        fallback["degraded_mode"] = True
+        return fallback
 
 
 def analyze_and_evaluate_contract_sync(

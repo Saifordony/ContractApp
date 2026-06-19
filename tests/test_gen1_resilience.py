@@ -48,6 +48,18 @@ def test_evaluate_contract_sync_falls_back_to_rule_engine(monkeypatch):
     result = gen1.evaluate_contract_sync({"payment_terms": "Net 30", "termination": "30 days notice"})
     assert "approved" in result
     assert "health_score" in result
+    # The fallback must announce itself, not masquerade as an LLM verdict.
+    assert result["evaluation_source"] == "rule_based_fallback"
+    assert result["degraded_mode"] is True
+
+
+def test_evaluate_contract_sync_tags_llm_source_on_success(monkeypatch):
+    valid = '{"approved": true, "reasoning": "Looks balanced.", "risk_level": "low"}'
+    monkeypatch.setattr(gen1, "llm_model", _StubLLM([valid]))
+    result = gen1.evaluate_contract_sync({"payment_terms": "Net 30", "termination": "30 days notice"})
+    assert result["evaluation_source"] == "llm"
+    assert result["degraded_mode"] is False
+    assert result["approved"] is True
 
 
 def test_explain_clauses_falls_back_to_plain_language(monkeypatch):

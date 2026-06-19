@@ -171,16 +171,29 @@ async def evaluate_contract_endpoint(
         clauses = payload.get("clauses", payload)
         response_language = payload.get("response_language", "english")
 
+        # The rule engine is the deterministic, always-available scaffold: it owns
+        # the structured fields (health_score, dimensions, missing clauses) that must
+        # never depend on a reachable LLM. The LLM supplies the narrative verdict.
+        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
         llm_evaluation = await evaluate_contract(
             clauses,
             response_language=response_language,
         )
-        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
 
+        # If the LLM path itself fell back to the rule engine, evaluate_contract_sync
+        # tags it degraded -- surface that explicitly rather than blind-merging the
+        # two and silently presenting rule output as the model's judgement.
+        llm_degraded = bool(llm_evaluation.get("degraded_mode"))
         evaluation = {
-            **llm_evaluation,
+            # Deterministic structured scaffold (source of truth for scoring/clauses).
             **rule_evaluation,
+            # Narrative verdict from the model, only overriding when the LLM succeeded.
+            "approved": (rule_evaluation if llm_degraded else llm_evaluation).get("approved"),
+            "reasoning": (rule_evaluation if llm_degraded else llm_evaluation).get("reasoning"),
+            "risk_level": (rule_evaluation if llm_degraded else llm_evaluation).get("risk_level", "medium"),
             "llm_assessment": llm_evaluation,
+            "evaluation_source": "rule_based_fallback" if llm_degraded else "llm",
+            "degraded_mode": llm_degraded,
             "module": "contract_health",
         }
 
