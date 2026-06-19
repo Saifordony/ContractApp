@@ -1,0 +1,15 @@
+# Streamlit runtime config — primarily here to make the edit→see-change dev loop
+# actually work. Without this, Streamlit does NOT re-render on file save, and its
+# default inotify watcher does not receive events across a Docker bind mount on
+# Windows/macOS hosts, so edits silently never appear until a manual rerun/restart.
+[server]
+# Re-run the script automatically whenever a source file is saved.
+runOnSave = true
+# "poll" works across Docker bind mounts and network drives where inotify events
+# are not delivered (Docker Desktop on Windows/macOS). Slightly more CPU, but it
+# is the difference between edits showing up and not.
+fileWatcherType = "poll"
+headless = true
+
+[browser]
+gatherUsageStats = false

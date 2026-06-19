@@ -25,5 +25,10 @@ COPY .env* ./
 # Expose port
 EXPOSE 8501
 
-# Run the application
-CMD ["streamlit", "run", "frontend/streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run the application.
+# runOnSave + poll watcher are passed explicitly (not only via .streamlit/config.toml)
+# so the edit->reload loop works even when the config file is not mounted, and so
+# file-change events are seen across Docker bind mounts on Windows/macOS hosts.
+CMD ["streamlit", "run", "frontend/streamlit_app.py", \
+     "--server.port=8501", "--server.address=0.0.0.0", \
+     "--server.runOnSave=true", "--server.fileWatcherType=poll"]

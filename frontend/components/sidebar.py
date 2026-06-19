@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 import streamlit as st
 
 from frontend.auth import render_session_timer
+from frontend.build_info import APP_BUILD
 from frontend.components.health_ring import health_ring
 
 
@@ -60,3 +61,4 @@ def render_app_sidebar(*, llm_health: Optional[Dict[str, Any]] = None) -> None:
         st.markdown("---")
         st.caption(llm_status_indicator(llm_health))
         render_session_timer()
+        st.caption(f"build {APP_BUILD}")

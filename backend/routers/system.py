@@ -86,7 +86,12 @@ async def health_check():
         await _main.db_client.admin.command("ping")
     except Exception:
         mongo_ok = "unreachable"
-    return {"status": "ok", "mongodb": mongo_ok, "llm": llm_health_check()}
+    return {
+        "status": "ok",
+        "build": _main.APP_BUILD,
+        "mongodb": mongo_ok,
+        "llm": llm_health_check(),
+    }
 
 
 @router.get("/llm/health")

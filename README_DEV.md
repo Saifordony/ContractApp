@@ -46,10 +46,10 @@ From inside backend container:
   - `POST /benchmark/ingest` with JSON `{"use_repo_seed": true}`
 
 ### Run tests
-- `PYTHONPATH=contract-analysis-platform pytest -q contract-analysis-platform/tests`
+- From the repo root: `python -m pytest -q`
 
 ### Run self-test
-- `PYTHONPATH=contract-analysis-platform python -m backend.selftest`
+- From the repo root: `python -m backend.selftest`
 
 ### OCR setup for scanned English/Arabic contracts
 
