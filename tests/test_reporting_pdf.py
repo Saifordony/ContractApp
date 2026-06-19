@@ -124,3 +124,34 @@ def test_arabic_pdf_generation_does_not_crash_and_has_arabic_labels():
     text = _pdf_text(pdf)
     assert "Chart:" in text
     assert "Contract Intelligence" in text
+
+
+def test_benchmark_report_pdf_generates_with_sections():
+    from frontend.services.reporting import build_benchmark_report_pdf
+
+    comparison = {
+        "overall_position": {"alignment_score": 61, "position_label": "Partially Aligned"},
+        "clause_results": [
+            {"clause_type": "payment_terms", "clause_score": 70, "market_score": 65,
+             "result": "Aligned", "suggested_revision": "Specify a clear due period."},
+            {"clause_type": "termination", "clause_score": 40, "market_score": 68,
+             "result": "Below market", "suggested_revision": "Add mutual notice terms."},
+        ],
+        "mena_averages": {"payment_terms": 65, "termination": 68},
+    }
+    pdf = build_benchmark_report_pdf(comparison, contract_title="Employment Agreement", client_name="Alpha LLC")
+    assert pdf.startswith(b"%PDF")
+    text = pdf.decode("latin-1", errors="ignore")
+    assert "Benchmark" in text
+    assert "Clause-by-Clause Comparison" in text
+    assert "Suggested Revisions" in text
+    assert "Alpha LLC" in text
+
+
+def test_benchmark_report_pdf_handles_empty_data():
+    from frontend.services.reporting import build_benchmark_report_pdf
+
+    pdf = build_benchmark_report_pdf({}, contract_title="Empty")
+    assert pdf.startswith(b"%PDF")
+    text = pdf.decode("latin-1", errors="ignore")
+    assert "Empty" in text

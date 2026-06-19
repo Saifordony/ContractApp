@@ -546,3 +546,115 @@ def build_professional_report_pdf(
         pdf.paragraph("No evidence snippets were available. Run clause extraction before exporting the report.")
 
     return pdf.save()
+
+
+# Axes used by the benchmark radar in the UI; the PDF renders them as a labelled
+# bar chart so the export has no extra (plotly/kaleido) dependency.
+_BENCHMARK_AXES: List[Tuple[str, str]] = [
+    ("Payment Terms", "payment_terms"),
+    ("Termination", "termination"),
+    ("Liability", "liability"),
+    ("Confidentiality", "confidentiality"),
+    ("Governing Law", "governing_law"),
+    ("SLA", "sla"),
+]
+
+
+def _benchmark_clause_rows(comparison_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Normalise the several possible comparison shapes into a flat row list."""
+    rows: List[Dict[str, Any]] = []
+    results = (
+        comparison_data.get("clause_results")
+        or comparison_data.get("your_contract_vs_benchmark")
+        or comparison_data.get("clause_comparisons")
+        or []
+    )
+    for item in results if isinstance(results, list) else []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "clause": titleize_key(
+                    item.get("review_area") or item.get("clause_type") or item.get("clause") or "Clause"
+                ),
+                "contract_score": item.get("clause_score", item.get("your_score")),
+                "market_score": item.get("market_score", item.get("benchmark_score")),
+                "result": item.get("result") or item.get("status") or "",
+                "suggested_revision": item.get("suggested_revision") or item.get("recommendation") or "",
+            }
+        )
+    return rows
+
+
+def build_benchmark_report_pdf(
+    comparison_data: Dict[str, Any],
+    *,
+    contract_title: str = "Contract",
+    client_name: str = "Not specified",
+    language: str = "english",
+) -> bytes:
+    """Build a benchmark comparison PDF (cover, alignment, clause table, revisions).
+
+    Mirrors :func:`build_professional_report_pdf`'s ReportLab style. Uses ``.get()``
+    with defaults throughout so it never crashes on empty or partial comparison data.
+    """
+    comparison_data = comparison_data or {}
+    language = _report_language(language)
+    report_title = "تقرير المقارنة المعيارية" if language == "arabic" else "Benchmark Comparison Report"
+    pdf = _PdfReport(
+        contract_title=contract_title,
+        client_name=client_name,
+        report_title=report_title,
+        language=language,
+    )
+    pdf.cover()
+
+    overall = comparison_data.get("overall_position", {}) if isinstance(comparison_data, dict) else {}
+    alignment = overall.get("alignment_score", comparison_data.get("overall_score", "N/A"))
+    position = overall.get("position_label", "Not available")
+
+    pdf.section(_label("benchmark", language), "How this contract compares against MENA market expectations.")
+    pdf.card("Benchmark alignment score", f"{alignment}/100 — {titleize_key(position)}", score_color=BRAND_ACCENT)
+
+    rows = _benchmark_clause_rows(comparison_data)
+
+    # Radar axes rendered as a bar chart (contract score per clause axis).
+    chart_values: Dict[str, float] = {}
+    market_values: Dict[str, float] = {}
+    by_axis = {r["clause"].lower(): r for r in rows}
+    averages = comparison_data.get("mena_averages", {}) if isinstance(comparison_data, dict) else {}
+    for label_text, key in _BENCHMARK_AXES:
+        row = by_axis.get(label_text.lower())
+        contract_score = (row or {}).get("contract_score")
+        chart_values[label_text] = float(contract_score) if contract_score is not None else 0.0
+        market_values[label_text] = float(averages.get(key, 65))
+    pdf.bar_chart("Chart: Your contract score by clause axis", chart_values, max_value=100)
+    pdf.bar_chart("Chart: MENA market average by clause axis", market_values, max_value=100)
+
+    pdf.section("Clause-by-Clause Comparison", "Your contract against the benchmark, clause by clause.")
+    if rows:
+        table_rows = [
+            [
+                r["clause"],
+                "N/A" if r["contract_score"] is None else f"{r['contract_score']}",
+                "N/A" if r["market_score"] is None else f"{r['market_score']}",
+                simplify_text(r["result"], max_chars=120),
+            ]
+            for r in rows[:14]
+        ]
+        pdf.table(
+            ["Clause", "Your score", "Market avg", "Result"],
+            table_rows,
+            col_widths=[150, 80, 80, 180],
+        )
+    else:
+        pdf.paragraph("No clause-level benchmark results were available. Run Benchmark Comparison first.")
+
+    pdf.section("Suggested Revisions", "Recommended wording improvements for below-average clauses.")
+    revisions = [f"{r['clause']}: {r['suggested_revision']}" for r in rows if r["suggested_revision"]]
+    if revisions:
+        pdf.bullet_list(revisions, limit=12)
+    else:
+        pdf.paragraph("No suggested revisions were provided in the comparison data.")
+
+    return pdf.save()
