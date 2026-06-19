@@ -168,6 +168,31 @@ def test_stats_summary_empty_is_graceful(app_module):
     assert data["most_common_missing_clause"] == ""
 
 
+def test_grounded_analyze_endpoint_returns_sections(app_module):
+    module = app_module
+    client = TestClient(module.app)
+    contract_text = (
+        "SERVICE AGREEMENT. Payment Terms: Client pays invoices within 30 days. "
+        "Termination: either party may terminate on 60 days written notice. "
+        "Confidentiality applies for three years. Governed by the laws of New York."
+    )
+    resp = client.post("/genai/analyze", json={"contract_text": contract_text})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert set(data["sections"].keys()) == {"summary", "risks", "health"}
+    # No live LLM in tests -> explicit degraded mode, never a silent stub.
+    assert data["degraded_mode"] is True
+    assert data["evaluation_source"] == "rule_based_fallback"
+    # The call is logged for analytics.
+    assert any(d.get("endpoint") == "/genai/analyze" for d in module.db.logs.docs)
+
+
+def test_grounded_analyze_rejects_short_text(app_module):
+    client = TestClient(app_module.app)
+    resp = client.post("/genai/analyze", json={"contract_text": "too short"})
+    assert resp.status_code == 422
+
+
 def test_password_reset_flow(app_module):
     module = app_module
     module.db.users.docs.append({"username": "alice", "email": "alice@example.com", "password": "old"})

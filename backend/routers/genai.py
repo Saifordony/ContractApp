@@ -12,6 +12,7 @@ from backend.models import ContractChatTextRequest, ContractTextAnalysisRequest
 from backend.services.contract_chat_service import build_contract_chat_response
 from backend.services.contract_health import evaluate_contract_health_from_clauses
 from backend.services.contract_intelligence import extract_key_clauses
+from backend.services.grounded_analysis import make_llm_callable, run_grounded_analysis
 
 router = APIRouter()
 
@@ -222,6 +223,54 @@ async def evaluate_contract_endpoint(
             }
         )
         raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, llm_health_check()))
+
+
+@router.post("/genai/analyze")
+async def grounded_analyze_endpoint(
+    payload: ContractTextAnalysisRequest,
+    current_user: dict = Depends(_main.get_current_user),
+):
+    """Unified, evidence-grounded analysis: the single call the redesigned
+    upload -> analysis -> output flow makes.
+
+    Returns per-section answers (summary, risks, health) each with their own
+    evidence citations and confidence, plus an explicit ``degraded_mode`` flag when
+    the model is unreachable so the UI never presents keyword output as a model
+    judgement.
+    """
+    contract_text = (payload.contract_text or "").strip()
+    if len(contract_text) < 100:
+        raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
+
+    try:
+        result = run_grounded_analysis(contract_text, llm_callable=make_llm_callable())
+        await _main.db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/genai/analyze",
+                "action": "contract_analysis",
+                "timestamp": datetime.utcnow(),
+                "status": "success",
+                "degraded_mode": result.get("degraded_mode"),
+                "overall_confidence": result.get("overall_confidence"),
+            }
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        await _main.db.logs.insert_one(
+            {
+                "user": current_user["username"],
+                "endpoint": "/genai/analyze",
+                "action": "contract_analysis",
+                "timestamp": datetime.utcnow(),
+                "status": "error",
+                "error": str(exc),
+            }
+        )
+        print(f"/genai/analyze failed: {exc}")
+        raise HTTPException(status_code=500, detail=_main.format_analysis_error(exc, llm_health_check()))
 
 
 @router.post("/genai/contract-chat")
