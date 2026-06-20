@@ -13,28 +13,58 @@ FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None}
+    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
 
+def parse_response_body(response: requests.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
+
+
 def api_request(method: str, path: str, **kwargs) -> tuple[bool, Any]:
     headers = kwargs.pop("headers", {})
+    timeout = kwargs.pop("timeout", 90)
     if st.session_state.get("token"):
         headers["Authorization"] = f"Bearer {st.session_state.token}"
+    url = f"{API_BASE_URL}{path}"
+    debug = {"method": method.upper(), "base_url": API_BASE_URL, "path": path, "url": url, "status_code": None, "response_body": None, "error": None}
     try:
-        response = requests.request(method, f"{API_BASE_URL}{path}", headers=headers, timeout=30, **kwargs)
+        response = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
+        body = parse_response_body(response)
+        debug["status_code"] = response.status_code
+        debug["response_body"] = body
+        st.session_state.last_api_debug = debug
         if response.status_code == 401:
             st.session_state.token = None
             st.session_state.user = None
-            return False, "Your session expired. Please sign in again."
+            return False, {"message": "Session expired. Please sign in again.", **debug}
+        if response.status_code == 404:
+            return False, {"message": "Analysis endpoint not found." if "/analyze" in path else "Requested resource was not found.", **debug}
+        if response.status_code == 422:
+            return False, {"message": "Invalid contract id or request payload.", **debug}
+        if response.status_code >= 500:
+            detail = body.get("detail") if isinstance(body, dict) else body
+            return False, {"message": safe_text(detail, "Backend returned an internal error."), **debug}
         if response.status_code >= 400:
-            try: detail = response.json().get("detail", "Request failed.")
-            except Exception: detail = "Request failed. Please try again."
-            return False, detail
-        return True, response.json()
-    except requests.RequestException:
-        return False, "Backend is not reachable. Confirm FastAPI is running on port 8000."
+            detail = body.get("detail") if isinstance(body, dict) else body
+            return False, {"message": safe_text(detail, "Request failed."), **debug}
+        return True, body
+    except requests.ConnectionError as exc:
+        debug["error"] = str(exc)
+        st.session_state.last_api_debug = debug
+        return False, {"message": "Backend connection failed.", **debug}
+    except requests.Timeout as exc:
+        debug["error"] = str(exc)
+        st.session_state.last_api_debug = debug
+        return False, {"message": "Backend request timed out before analysis completed.", **debug}
+    except requests.RequestException as exc:
+        debug["error"] = str(exc)
+        st.session_state.last_api_debug = debug
+        return False, {"message": "Backend request failed.", **debug}
 
 
 def health_marker():
@@ -49,7 +79,7 @@ def user_message(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        detail = value.get("detail") or value.get("message") or value.get("error")
+        detail = value.get("message") or value.get("detail") or value.get("error")
         if isinstance(detail, str):
             return detail
         if detail is not None:
@@ -525,40 +555,68 @@ def select_contract():
     ok, contracts = api_request("GET", "/contracts")
     if not ok or not contracts:
         st.warning("Upload a contract first.")
-        return None
-    labels = {f"{c['name']} ({c['id'][:6]})": c["id"] for c in contracts}
-    chosen = st.selectbox("Contract", list(labels.keys()))
-    return labels[chosen]
+        return None, None
+    label_to_contract_id = {}
+    for contract in contracts:
+        contract_id = contract.get("id") or contract.get("_id")
+        if not contract_id:
+            continue
+        name = contract.get("name") or contract.get("filename") or "Untitled contract"
+        label = f"{name} ({str(contract_id)[:6]})"
+        label_to_contract_id[label] = str(contract_id)
+    if not label_to_contract_id:
+        st.warning("No valid contract ids were returned by the backend.")
+        return None, None
+    selected_label = st.selectbox("Contract", list(label_to_contract_id.keys()))
+    return selected_label, label_to_contract_id[selected_label]
 
 
 def analysis_page():
     st.title("Contract Analysis")
     st.caption("Review extracted clauses, risks, evidence, and recommended actions.")
-    cid = select_contract()
+    selected_label, cid = select_contract()
     if not cid:
         return
+    endpoint_path = f"/contracts/{cid}/analyze"
+    st.session_state.analysis_contract_label = selected_label
+    st.session_state.analysis_contract_id = cid
+    st.session_state.analysis_endpoint = endpoint_path
     if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis_at"):
         st.caption(f"Last analyzed: {st.session_state.last_analysis_at}")
     if st.button("Run Analysis", use_container_width=True):
         with st.spinner("Analyzing contract and extracting evidence..."):
-            ok, data = api_request("POST", f"/contracts/{cid}/analyze")
+            ok, data = api_request("POST", endpoint_path, timeout=120)
         if ok:
-            st.session_state.last_analysis = normalize_analysis_response(data)
+            normalized = normalize_analysis_response(data)
+            st.session_state.last_analysis = normalized
+            st.session_state.analysis_result = normalized
             st.session_state.last_analysis_contract_id = cid
             st.session_state.last_analysis_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.success("Analysis complete.")
         else:
             st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
             return
-    if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis"):
-        render_analysis_results(st.session_state.last_analysis)
+    with st.expander("Advanced / API Debug", expanded=False):
+        latest_debug = st.session_state.last_api_debug or {}
+        st.write({
+            "backend_base_url": API_BASE_URL,
+            "selected_contract_label": selected_label,
+            "selected_contract_id": cid,
+            "endpoint_path": endpoint_path,
+            "http_method": "POST",
+            "status_code": latest_debug.get("status_code"),
+            "response_body": latest_debug.get("response_body"),
+            "error": latest_debug.get("error"),
+        })
+    if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("analysis_result"):
+        render_analysis_results(st.session_state.analysis_result)
     else:
         st.info("Run analysis to see health score, risks, clauses, recommendations, and evidence trace.")
 
 
 def chat_page():
     st.title("Contract Chat")
-    cid = select_contract()
+    selected_label, cid = select_contract()
     q = st.text_input("Ask a question grounded in this contract")
     if cid and st.button("Ask"):
         ok, data = api_request("POST", f"/contracts/{cid}/chat", json={"question": q})
@@ -572,7 +630,7 @@ def chat_page():
 
 def benchmark_page():
     st.title("Benchmark")
-    cid = select_contract()
+    selected_label, cid = select_contract()
     if cid and st.button("Run benchmark", use_container_width=True):
         ok, data = api_request("POST", f"/contracts/{cid}/benchmark")
         if ok:

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, File, Form, UploadFile
+import logging
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from backend.core.security import get_current_user
 from backend.database import get_database
 from backend.services.analysis_service import analyze_contract_record
@@ -8,6 +10,7 @@ from backend.services.contract_service import get_contract, list_contracts, uplo
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
+logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     question: str
@@ -26,8 +29,22 @@ async def get_one(contract_id: str, user=Depends(get_current_user)):
 
 @router.post("/{contract_id}/analyze")
 async def analyze(contract_id: str, user=Depends(get_current_user)):
-    contract = await get_contract(get_database(), user["id"], contract_id)
-    return await analyze_contract_record(get_database(), contract)
+    logger.info("analysis route hit user_id=%s contract_id=%s", user["id"], contract_id)
+    db = get_database()
+    try:
+        contract = await get_contract(db, user["id"], contract_id)
+        logger.info("analysis contract found user_id=%s contract_id=%s", user["id"], contract_id)
+        logger.info("analysis started user_id=%s contract_id=%s", user["id"], contract_id)
+        result = await analyze_contract_record(db, contract)
+        result["contract_id"] = contract_id
+        logger.info("analysis completed user_id=%s contract_id=%s degraded_mode=%s llm_used=%s", user["id"], contract_id, result.get("degraded_mode"), result.get("llm_used"))
+        return result
+    except HTTPException as exc:
+        logger.warning("analysis failed user_id=%s contract_id=%s status=%s detail=%s", user["id"], contract_id, exc.status_code, exc.detail)
+        raise
+    except Exception as exc:
+        logger.exception("analysis unexpected error user_id=%s contract_id=%s", user["id"], contract_id)
+        raise HTTPException(status_code=500, detail="Analysis failed. Please try again or check system health.") from exc
 
 @router.post("/{contract_id}/chat")
 async def chat(contract_id: str, payload: ChatRequest, user=Depends(get_current_user)):

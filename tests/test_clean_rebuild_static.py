@@ -124,3 +124,22 @@ def test_analysis_ui_shows_ai_sections_and_status():
         "LLM request status",
     ]:
         assert token in src
+
+
+def test_analysis_api_debug_and_real_contract_id_mapping():
+    src = read("frontend/streamlit_app.py")
+    assert "label_to_contract_id" in src
+    assert "selected_contract_id" in src
+    assert 'endpoint_path = f"/contracts/{cid}/analyze"' in src
+    assert "Advanced / API Debug" in src
+    assert "status_code" in src
+    assert "response_body" in src
+
+
+def test_contract_analysis_route_logs_and_returns_contract_id():
+    src = read("backend/routers/contracts.py")
+    assert 'router.post("/{contract_id}/analyze")' in src
+    assert "analysis route hit" in src
+    assert "analysis completed" in src
+    assert 'result["contract_id"] = contract_id' in src
+    assert "degraded_mode" in src and "llm_used" in src
