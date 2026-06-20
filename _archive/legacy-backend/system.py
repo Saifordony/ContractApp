@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend import main as _main
-from backend.llm_config import llm_health_check
+from backend.llm_config import AI_PROVIDER, llm_health_check, selected_model
 
 router = APIRouter()
 
@@ -86,11 +86,17 @@ async def health_check():
         await _main.db_client.admin.command("ping")
     except Exception:
         mongo_ok = "unreachable"
+    llm = llm_health_check()
     return {
         "status": "ok",
         "build": _main.APP_BUILD,
+        "backend": _main.APP_BUILD,
+        "active_backend_entrypoint": "backend.main:app",
+        "active_ai_provider": AI_PROVIDER,
+        "active_model": selected_model(),
         "mongodb": mongo_ok,
-        "llm": llm_health_check(),
+        "llm_reachable": bool(llm.get("reachable")),
+        "llm": llm,
     }
 
 
