@@ -5,7 +5,7 @@ def test_streamlit_page_config_precedes_session_state_initialization():
     source = Path("frontend/streamlit_app.py").read_text()
     assert source.count("st.set_page_config(") == 1
     assert source.index("st.set_page_config(") < source.index("def init_state():")
-    assert "Frontend Build: {FRONTEND_BUILD}" in source
+    assert "label.frontend_build" in source and "FRONTEND_BUILD" in source
     assert "streamlit-clean-rebuild-v1" in source
 
 

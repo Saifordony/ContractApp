@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 import requests
 import streamlit as st
-from frontend.styles.global_css import APP_CSS
+from frontend.styles.global_css import build_app_css
 
 st.set_page_config(page_title="Contract Intelligence", page_icon="⚖️", layout="wide", initial_sidebar_state="expanded")
 
@@ -12,8 +12,144 @@ API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
 FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
+TRANSLATIONS = {
+    "en": {
+        "app.name": "Contract Intelligence",
+        "app.subtitle": "AI-powered contract review workspace",
+        "nav.dashboard": "Dashboard",
+        "nav.workspace": "Workspace",
+        "nav.system": "System",
+        "page.Home.title": "Home Dashboard",
+        "page.Home.subtitle": "Track clients, contracts, reviews, and next actions from one workspace.",
+        "page.Clients.title": "Clients",
+        "page.Clients.subtitle": "Create and manage client records used to organize contracts.",
+        "page.Contracts.title": "Contracts",
+        "page.Contracts.subtitle": "Upload, browse, and organize contract files for review.",
+        "page.Contract Analysis.title": "Contract Analysis",
+        "page.Contract Analysis.subtitle": "Review extracted clauses, risks, evidence, and recommended actions.",
+        "page.Contract Chat.title": "Contract Chat",
+        "page.Contract Chat.subtitle": "Ask questions about this contract, risks, clauses, obligations, or general follow-up questions.",
+        "page.Benchmark.title": "Benchmark",
+        "page.Benchmark.subtitle": "Compare the selected contract against clearly labeled synthetic benchmark profiles.",
+        "page.Settings / System Health.title": "Settings / System Health",
+        "page.Settings / System Health.subtitle": "Diagnostics for frontend, backend, database, authentication, AI model, endpoints, and runtime configuration.",
+        "action.logout": "Logout",
+        "action.create_client": "Create client",
+        "action.upload_contract": "Upload contract",
+        "action.run_analysis": "Run Analysis",
+        "action.new_chat": "New chat",
+        "action.run_benchmark": "Run benchmark",
+        "theme.light": "Light",
+        "theme.dark": "Dark",
+        "language.english": "English",
+        "language.arabic": "العربية",
+        "status.healthy": "Healthy",
+        "status.degraded": "Degraded",
+        "status.offline": "Offline",
+        "empty.clients": "No clients yet. Create your first client to start organizing contracts.",
+        "empty.contracts": "No contracts uploaded yet. Upload a contract to begin analysis.",
+        "home.help": "Start by creating a client, uploading a contract, then running analysis, chat, and benchmark workflows.",
+        "label.signed_in_as": "Signed in as",
+        "label.theme": "Theme",
+        "label.language": "Language",
+        "label.frontend_build": "Frontend Build",
+        "label.backend_build": "Backend Build",
+        "label.active_frontend": "Active Frontend: Streamlit",
+        "label.active_file": "Active Frontend File: frontend/streamlit_app.py",
+    },
+    "ar": {
+        "app.name": "ذكاء العقود",
+        "app.subtitle": "مساحة عمل لمراجعة العقود بالذكاء الاصطناعي",
+        "nav.dashboard": "لوحة التحكم",
+        "nav.workspace": "مساحة العمل",
+        "nav.system": "النظام",
+        "page.Home.title": "لوحة التحكم الرئيسية",
+        "page.Home.subtitle": "تابع العملاء والعقود والمراجعات والإجراءات التالية من مساحة واحدة.",
+        "page.Clients.title": "العملاء",
+        "page.Clients.subtitle": "أنشئ وأدر سجلات العملاء لتنظيم العقود.",
+        "page.Contracts.title": "العقود",
+        "page.Contracts.subtitle": "ارفع وتصفح ونظم ملفات العقود للمراجعة.",
+        "page.Contract Analysis.title": "تحليل العقد",
+        "page.Contract Analysis.subtitle": "راجع البنود والمخاطر والأدلة والإجراءات المقترحة.",
+        "page.Contract Chat.title": "محادثة العقد",
+        "page.Contract Chat.subtitle": "اطرح أسئلة عن العقد والمخاطر والبنود والالتزامات أو أسئلة متابعة عامة.",
+        "page.Benchmark.title": "المقارنة المرجعية",
+        "page.Benchmark.subtitle": "قارن العقد المحدد بملفات مرجعية توضيحية مصنفة بوضوح.",
+        "page.Settings / System Health.title": "الإعدادات / صحة النظام",
+        "page.Settings / System Health.subtitle": "تشخيص الواجهة والخادم وقاعدة البيانات والمصادقة ونموذج الذكاء الاصطناعي ونقاط النهاية.",
+        "action.logout": "تسجيل الخروج",
+        "action.create_client": "إنشاء عميل",
+        "action.upload_contract": "رفع عقد",
+        "action.run_analysis": "تشغيل التحليل",
+        "action.new_chat": "محادثة جديدة",
+        "action.run_benchmark": "تشغيل المقارنة",
+        "theme.light": "فاتح",
+        "theme.dark": "داكن",
+        "language.english": "English",
+        "language.arabic": "العربية",
+        "status.healthy": "سليم",
+        "status.degraded": "متدهور",
+        "status.offline": "غير متصل",
+        "empty.clients": "لا يوجد عملاء بعد. أنشئ أول عميل لبدء تنظيم العقود.",
+        "empty.contracts": "لا توجد عقود مرفوعة بعد. ارفع عقداً لبدء التحليل.",
+        "home.help": "ابدأ بإنشاء عميل ورفع عقد ثم تشغيل التحليل والمحادثة والمقارنة المرجعية.",
+        "label.signed_in_as": "تم تسجيل الدخول باسم",
+        "label.theme": "السمة",
+        "label.language": "اللغة",
+        "label.frontend_build": "إصدار الواجهة",
+        "label.backend_build": "إصدار الخادم",
+        "label.active_frontend": "الواجهة النشطة: Streamlit",
+        "label.active_file": "ملف الواجهة النشط: frontend/streamlit_app.py",
+    },
+}
+
+NAV_GROUPS = [
+    ("nav.dashboard", [("Home", "🏠")]),
+    ("nav.workspace", [("Clients", "🏢"), ("Contracts", "📄"), ("Contract Analysis", "🔎"), ("Contract Chat", "💬"), ("Benchmark", "📊")]),
+    ("nav.system", [("Settings / System Health", "⚙️")]),
+]
+
+QUICK_ACTIONS = {
+    "Clients": "action.create_client",
+    "Contracts": "action.upload_contract",
+    "Contract Analysis": "action.run_analysis",
+    "Contract Chat": "action.new_chat",
+    "Benchmark": "action.run_benchmark",
+}
+
+
+def t(key: str, fallback: str | None = None) -> str:
+    lang = st.session_state.get("language", "en")
+    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, TRANSLATIONS["en"].get(key, fallback or key))
+
+
+def is_rtl() -> bool:
+    return st.session_state.get("language") == "ar"
+
+
+def localized_status(value: str) -> str:
+    mapping = {"Healthy": "status.healthy", "Degraded": "status.degraded", "Offline": "status.offline"}
+    return t(mapping.get(value, value), value)
+
+
+def render_global_css() -> None:
+    direction = "rtl" if is_rtl() else "ltr"
+    st.markdown(build_app_css(st.session_state.get("theme", "light"), direction), unsafe_allow_html=True)
+
+
+def render_page_header(page: str, quick_label: str | None = None) -> None:
+    title = t(f"page.{page}.title", page)
+    subtitle = t(f"page.{page}.subtitle", "")
+    quick = f'<span class="cip-pill">{safe_html(quick_label)}</span>' if quick_label else ""
+    st.markdown(f'<div class="cip-shell-topbar"><div class="cip-page-title"><h1>{safe_html(title)}</h1><p>{safe_html(subtitle)}</p></div><div>{quick}</div></div>', unsafe_allow_html=True)
+
+
+def render_empty_state(title: str, body: str) -> None:
+    st.markdown(f'<div class="cip-empty-state"><strong>{safe_html(title)}</strong><br>{safe_html(body)}</div>', unsafe_allow_html=True)
+
+
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None}
+    defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -583,27 +719,46 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
 
 def render_sidebar():
     health = health_marker()
-    st.sidebar.markdown("### Contract Intelligence")
-    st.sidebar.caption("Active Frontend: Streamlit")
-    st.sidebar.caption("Active Frontend File: frontend/streamlit_app.py")
-    st.sidebar.caption(f"Frontend Build: {FRONTEND_BUILD}")
-    st.sidebar.caption(f"Backend Build: {health.get('Backend Build', 'unknown')}")
+    st.sidebar.markdown(f'<div class="cip-brand-card"><div class="cip-brand-title">⚖️ {safe_html(t("app.name"))}</div><div class="cip-brand-subtitle">{safe_html(t("app.subtitle"))}</div><div class="cip-card-meta"><span>{safe_html(t("label.frontend_build"))}: {FRONTEND_BUILD}</span></div></div>', unsafe_allow_html=True)
+    theme_label_to_value = {t("theme.light"): "light", t("theme.dark"): "dark"}
+    current_theme_label = t("theme.dark") if st.session_state.theme == "dark" else t("theme.light")
+    selected_theme = st.sidebar.selectbox(t("label.theme"), list(theme_label_to_value.keys()), index=list(theme_label_to_value.keys()).index(current_theme_label))
+    selected_theme_value = theme_label_to_value[selected_theme]
+    if selected_theme_value != st.session_state.theme:
+        st.session_state.theme = selected_theme_value
+        st.rerun()
+    lang_label_to_value = {t("language.english"): "en", t("language.arabic"): "ar"}
+    current_lang_label = t("language.arabic") if st.session_state.language == "ar" else t("language.english")
+    selected_lang = st.sidebar.selectbox(t("label.language"), list(lang_label_to_value.keys()), index=list(lang_label_to_value.keys()).index(current_lang_label))
+    selected_lang_value = lang_label_to_value[selected_lang]
+    if selected_lang_value != st.session_state.language:
+        st.session_state.language = selected_lang_value
+        st.rerun()
+    st.sidebar.caption(t("label.active_frontend"))
+    st.sidebar.caption(t("label.active_file"))
+    st.sidebar.caption(f"{t('label.backend_build')}: {health.get('Backend Build', 'unknown')}")
     if st.session_state.user:
         st.sidebar.divider()
-        st.sidebar.caption("Signed in as")
+        st.sidebar.caption(t("label.signed_in_as"))
         st.sidebar.write(st.session_state.user.get("email"))
-        if st.sidebar.button("Logout", use_container_width=True):
+        if st.sidebar.button(t("action.logout"), use_container_width=True):
             st.session_state.token = None
             st.session_state.user = None
             st.rerun()
         st.sidebar.divider()
-        pages = ["Home", "Clients", "Contracts", "Contract Analysis", "Contract Chat", "Benchmark", "Settings / System Health"]
-        st.session_state.page = st.sidebar.radio("Navigate", pages, index=pages.index(st.session_state.page) if st.session_state.page in pages else 0)
+        for group_key, items in NAV_GROUPS:
+            st.sidebar.markdown(f'<div class="cip-nav-group">{safe_html(t(group_key))}</div>', unsafe_allow_html=True)
+            for page, icon in items:
+                label = f"{icon} {t(f'page.{page}.title', page)}"
+                if page == st.session_state.page:
+                    st.sidebar.markdown(f'<div class="cip-nav-active">{safe_html(label)}</div>', unsafe_allow_html=True)
+                if st.sidebar.button(label, key=f"nav_{page}", use_container_width=True):
+                    st.session_state.page = page
+                    st.rerun()
 
 
 def auth_screen():
-    st.markdown(APP_CSS, unsafe_allow_html=True)
-    st.markdown('<div class="cip-hero"><span class="cip-pill">Contract Intelligence</span><h1>Review contracts with evidence, risk, and clarity.</h1><p class="cip-muted">Secure Streamlit MVP backed by FastAPI, MongoDB, and grounded rule-based analysis.</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-hero"><span class="cip-pill">{safe_html(t("app.name"))}</span><h1>{safe_html("Review contracts with evidence, risk, and clarity." if not is_rtl() else "راجع العقود بالأدلة والمخاطر والوضوح.")}</h1><p class="cip-muted">{safe_html("Secure Streamlit MVP backed by FastAPI, MongoDB, and grounded analysis." if not is_rtl() else "واجهة Streamlit آمنة مدعومة بـ FastAPI و MongoDB وتحليل قائم على الأدلة.")}</p></div>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.05, 1])
     with col2:
         st.write("")
@@ -612,13 +767,13 @@ def auth_screen():
         st.markdown('<div class="cip-auth-card">', unsafe_allow_html=True)
         with st.container():
             if st.session_state.auth_mode == "register":
-                st.header("Create account")
+                st.header("Create account" if not is_rtl() else "إنشاء حساب")
                 with st.form("register_form"):
-                    full_name = st.text_input("Full name", autocomplete="name")
-                    email = st.text_input("Email", autocomplete="email")
-                    password = st.text_input("Password", type="password", autocomplete="new-password")
-                    confirm = st.text_input("Confirm password", type="password", autocomplete="new-password")
-                    submitted = st.form_submit_button("Create account", use_container_width=True)
+                    full_name = st.text_input("Full name" if not is_rtl() else "الاسم الكامل", autocomplete="name")
+                    email = st.text_input("Email" if not is_rtl() else "البريد الإلكتروني", autocomplete="email")
+                    password = st.text_input("Password" if not is_rtl() else "كلمة المرور", type="password", autocomplete="new-password")
+                    confirm = st.text_input("Confirm password" if not is_rtl() else "تأكيد كلمة المرور", type="password", autocomplete="new-password")
+                    submitted = st.form_submit_button("Create account" if not is_rtl() else "إنشاء حساب", use_container_width=True)
                 if submitted:
                     if len(full_name.strip()) < 2:
                         st.error("Enter your full name.")
@@ -637,11 +792,11 @@ def auth_screen():
                         else:
                             st.error(user_message(data))
             else:
-                st.header("Log in")
+                st.header("Log in" if not is_rtl() else "تسجيل الدخول")
                 with st.form("login_form"):
-                    email = st.text_input("Email", autocomplete="email")
-                    password = st.text_input("Password", type="password", autocomplete="current-password")
-                    submitted = st.form_submit_button("Log in", use_container_width=True)
+                    email = st.text_input("Email" if not is_rtl() else "البريد الإلكتروني", autocomplete="email")
+                    password = st.text_input("Password" if not is_rtl() else "كلمة المرور", type="password", autocomplete="current-password")
+                    submitted = st.form_submit_button("Log in" if not is_rtl() else "تسجيل الدخول", use_container_width=True)
                 if submitted:
                     if not email or not password:
                         st.error("Email and password are required.")
@@ -656,7 +811,6 @@ def auth_screen():
                             st.error(user_message(data))
         st.markdown('</div>', unsafe_allow_html=True)
 
-
 def require_auth():
     if not st.session_state.token:
         return False
@@ -669,18 +823,18 @@ def require_auth():
 
 
 def home():
-    st.title("Home Dashboard")
+    render_page_header("Home")
     ok_c, clients = api_request("GET", "/clients")
     ok_k, contracts = api_request("GET", "/contracts")
     c1,c2,c3 = st.columns(3)
     c1.metric("Clients", len(clients) if ok_c else 0)
     c2.metric("Contracts", len(contracts) if ok_k else 0)
     c3.metric("Review status", "Ready")
-    st.info("Start by creating a client, uploading a contract, then running analysis, chat, and benchmark workflows.")
+    st.info(t("home.help"))
 
 
 def clients_page():
-    st.title("Clients")
+    render_page_header("Clients", t("action.create_client"))
     with st.form("client_form", clear_on_submit=True):
         name = st.text_input("Client name")
         industry = st.text_input("Industry")
@@ -695,11 +849,11 @@ def clients_page():
     if ok and data:
         st.dataframe(data, use_container_width=True)
     else:
-        st.caption("No clients yet.")
+        render_empty_state(t("page.Clients.title"), t("empty.clients"))
 
 
 def contracts_page():
-    st.title("Contracts")
+    render_page_header("Contracts", t("action.upload_contract"))
     ok, clients = api_request("GET", "/clients")
     client_options = {c["name"]: c["id"] for c in clients} if ok else {}
     with st.form("upload_form"):
@@ -723,7 +877,7 @@ def contracts_page():
     if ok and contracts:
         st.dataframe([{k:v for k,v in c.items() if k != "extracted_text"} for c in contracts], use_container_width=True)
     else:
-        st.caption("No contracts uploaded yet.")
+        render_empty_state(t("page.Contracts.title"), t("empty.contracts"))
 
 
 def select_contract():
@@ -747,8 +901,7 @@ def select_contract():
 
 
 def analysis_page():
-    st.title("Contract Analysis")
-    st.caption("Review extracted clauses, risks, evidence, and recommended actions.")
+    render_page_header("Contract Analysis", t("action.run_analysis"))
     selected_label, cid = select_contract()
     if not cid:
         return
@@ -790,8 +943,7 @@ def analysis_page():
 
 
 def chat_page():
-    st.title("Contract Chat")
-    st.caption("Ask questions about this contract, risks, clauses, obligations, or general follow-up questions.")
+    render_page_header("Contract Chat", t("action.new_chat"))
     selected_label, cid = select_contract()
     if not cid:
         return
@@ -855,8 +1007,7 @@ def chat_page():
 
 
 def benchmark_page():
-    st.title("Benchmark")
-    st.caption("Compare the selected contract against clearly labeled synthetic benchmark profiles.")
+    render_page_header("Benchmark", t("action.run_benchmark"))
     selected_label, cid = select_contract()
     if not cid:
         return
@@ -878,8 +1029,7 @@ def benchmark_page():
 
 
 def settings_page():
-    st.title("Settings / System Health")
-    st.caption("Diagnostics for frontend, backend, database, authentication, AI model, endpoints, and runtime configuration.")
+    render_page_header("Settings / System Health")
     health = health_marker()
     ok_diag, diagnostics = api_request("GET", "/system/diagnostics", timeout=15)
     if not ok_diag:
@@ -1010,11 +1160,11 @@ def settings_page():
 
 def main():
     init_state()
+    render_global_css()
     render_sidebar()
     if not require_auth():
         auth_screen()
         return
-    st.markdown(APP_CSS, unsafe_allow_html=True)
     {"Home": home, "Clients": clients_page, "Contracts": contracts_page, "Contract Analysis": analysis_page, "Contract Chat": chat_page, "Benchmark": benchmark_page, "Settings / System Health": settings_page}[st.session_state.page]()
 
 if __name__ == "__main__":

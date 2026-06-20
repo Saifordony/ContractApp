@@ -12,7 +12,7 @@ def test_streamlit_page_config_is_first_streamlit_command():
     first = min(i for i in [src.find("st.set_page_config"), src.find("st.sidebar"), src.find("st.markdown"), src.find("st.write"), src.find("st.title")] if i >= 0)
     assert src.find("st.set_page_config") == first
     assert src.count("st.set_page_config") == 1
-    assert "Frontend Build: {FRONTEND_BUILD}" in src
+    assert "label.frontend_build" in src and "FRONTEND_BUILD" in src
     assert "streamlit-clean-rebuild-v1" in src
 
 
@@ -228,3 +228,34 @@ def test_backend_health_router_exposes_diagnostics_without_secrets():
     assert "jwt_secret" in src
     assert "settings.jwt_secret" in src
     assert "JWT_SECRET" not in src
+
+
+
+def test_streamlit_shell_supports_theme_language_and_modern_navigation():
+    src = read("frontend/streamlit_app.py")
+    css = read("frontend/styles/global_css.py")
+    for token in [
+        "TRANSLATIONS",
+        "NAV_GROUPS",
+        "render_global_css",
+        "render_page_header",
+        "render_empty_state",
+        "st.session_state.theme",
+        "st.session_state.language",
+        "nav.workspace",
+        "language.arabic",
+        "theme.dark",
+        "direction = \"rtl\"",
+    ]:
+        assert token in src
+    for token in [
+        "DARK_TOKENS",
+        "LIGHT_TOKENS",
+        "build_app_css",
+        "--cip-bg",
+        ".cip-shell-topbar",
+        ".cip-brand-card",
+        ".cip-nav-active",
+        ".cip-empty-state",
+    ]:
+        assert token in css
