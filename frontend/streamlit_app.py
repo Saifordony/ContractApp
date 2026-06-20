@@ -13,7 +13,7 @@ FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None}
+    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -103,6 +103,48 @@ def safe_html(value: Any, fallback: str = "Not specified") -> str:
 
 def titleize(value: Any) -> str:
     return safe_text(value).replace("_", " ").title()
+
+
+def plain_value(value: Any, fallback: str = "Not specified") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, dict):
+        parts = []
+        for key, val in value.items():
+            parts.append(f"{titleize(key)}: {plain_value(val, fallback='')}")
+        return "; ".join(part for part in parts if part) or fallback
+    if isinstance(value, list):
+        return "; ".join(plain_value(item, fallback="") for item in value if plain_value(item, fallback="")) or fallback
+    return safe_text(value, fallback)
+
+
+def normalize_action(item: Any, default_source: str = "AI / rule-based review") -> dict[str, str]:
+    if isinstance(item, dict):
+        return {
+            "action": safe_text(item.get("action") or item.get("title") or item.get("recommendation"), "Review this item."),
+            "rationale": plain_value(item.get("rationale") or item.get("why") or item.get("reason"), "This item may affect contract clarity or risk."),
+            "related_clause": safe_text(item.get("related_clause") or item.get("clause"), "General"),
+            "priority": safe_text(item.get("priority"), "Medium"),
+            "source": safe_text(item.get("source"), default_source),
+        }
+    return {"action": safe_text(item, "Review this item."), "rationale": "Recommended review point from the current analysis.", "related_clause": "General", "priority": "Medium", "source": default_source}
+
+
+def render_action_card(action: dict[str, str]) -> None:
+    st.markdown(f'<div class="cip-action-card"><div class="cip-card-header"><h4>{safe_html(action["action"])}</h4><span class="{badge_class(action["priority"])}">{safe_html(action["priority"])}</span></div><p><strong>Why this matters:</strong> {safe_html(action["rationale"])}</p><p><strong>Related clause:</strong> {safe_html(action["related_clause"])}</p><p><strong>Source:</strong> {safe_html(action["source"])}</p></div>', unsafe_allow_html=True)
+
+
+def render_overall_visual(analysis: dict[str, Any]) -> None:
+    score = analysis.get("health_score")
+    score_number = int(score) if isinstance(score, (int, float)) else 0
+    risk = analysis.get("risk_level", "Not specified")
+    summary = plain_value(analysis.get("ai_overall_assessment"), "No AI overall assessment was returned.")
+    cols = st.columns([1, 2])
+    with cols[0]:
+        st.markdown(f'<div class="cip-radial"><div class="cip-radial-score">{score_number}</div><div class="cip-muted">Overall Health / 100</div></div>', unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown(f'<div class="cip-summary-card"><div class="cip-card-meta"><span class="{badge_class(risk)}">Risk Signal: {safe_html(risk)}</span><span>Overall Health: {score_number}/100</span></div><p>{safe_html(summary)}</p></div>', unsafe_allow_html=True)
+        st.progress(max(0, min(100, score_number)) / 100)
 
 
 def clause_summary(clause_type: str, status: str) -> str:
@@ -204,7 +246,9 @@ def normalize_clause(clause: Any, index: int) -> dict[str, Any]:
         "page": page,
         "location": location,
         "evidence": evidence,
-        "summary": safe_text(clause.get("rule_based_summary") or clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
+        "summary": plain_value(clause.get("rule_based_summary") or clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
+        "simple_explanation": plain_value(clause.get("simple_explanation") or clause.get("ai_insight"), clause_summary(clause_type, status)),
+        "what_to_check_next": plain_value(clause.get("what_to_check_next"), generic_recommendation(clause_type, status)),
         "risk": safe_text(clause.get("risk") or clause.get("risk_level"), "Not specified"),
         "recommendation": safe_text(clause.get("ai_recommendation") or clause.get("recommendation") or clause.get("suggested_improvement"), generic_recommendation(clause_type, status)),
         "ai_insight": safe_text(clause.get("ai_insight"), "No AI insight was returned for this clause."),
@@ -246,14 +290,14 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "active_model": safe_text(data.get("active_model") or data.get("model"), "Not specified"),
         "confidence": safe_text(data.get("confidence"), "Low" if data.get("degraded_mode") else "Medium"),
         "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
-        "ai_overall_assessment": safe_text(data.get("ai_overall_assessment"), "No AI overall assessment was returned."),
-        "key_strengths": [safe_text(item) for item in (data.get("key_strengths") or [])],
-        "key_risks": [safe_text(item) for item in (data.get("key_risks") or [])],
+        "ai_overall_assessment": plain_value(data.get("ai_overall_assessment"), "No AI overall assessment was returned."),
+        "key_strengths": [plain_value(item) for item in (data.get("key_strengths") or [])],
+        "key_risks": [plain_value(item) for item in (data.get("key_risks") or [])],
         "clauses": clauses,
         "clauses_found": found_count,
         "missing_critical_clauses": missing_names,
         "risks": [normalize_risk(risk, idx) for idx, risk in enumerate(data.get("risks") or [])],
-        "recommended_improvements": [safe_text(item) for item in (data.get("recommended_actions") or data.get("recommended_improvements") or data.get("recommendations") or [])],
+        "recommended_improvements": [normalize_action(item) for item in (data.get("recommended_actions") or data.get("recommended_improvements") or data.get("recommendations") or [])],
         "evidence_trace": data.get("evidence_trace") or [],
         "rule_based_result": data.get("rule_based_result"),
         "llm_request_status": data.get("llm_request_status"),
@@ -355,8 +399,10 @@ def render_clause_card(clause: dict[str, Any]) -> None:
     st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Rule confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span></div><p><strong>Rule-based detection:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
     st.markdown("**Evidence from contract**")
     render_evidence(clause["evidence"])
-    st.markdown(f'<div class="cip-ai-box"><strong>AI insight:</strong><br>{safe_html(clause["ai_insight"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-ai-box"><strong>AI risk assessment:</strong><br>{safe_html(clause["ai_risk_assessment"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>Simple explanation:</strong><br>{safe_html(clause["simple_explanation"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>Why it matters:</strong><br>{safe_html(clause["ai_insight"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>Risk in plain English:</strong><br>{safe_html(clause["ai_risk_assessment"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>What to check next:</strong> {safe_html(clause["what_to_check_next"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-recommendation"><strong>AI recommendation:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-negotiation"><strong>Negotiation note:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
 
@@ -373,19 +419,74 @@ def render_missing_clause_card(name: str) -> None:
 def render_recommendations(analysis: dict[str, Any]) -> None:
     recommendations = list(analysis.get("recommended_improvements") or [])
     for missing in analysis.get("missing_critical_clauses") or []:
-        recommendations.append(generic_recommendation(missing, "missing"))
+        recommendations.append(normalize_action({"action": generic_recommendation(missing, "missing"), "rationale": "A critical clause was not detected in the extracted text.", "related_clause": titleize(missing), "priority": "High", "source": "rule-based missing clause"}))
     if analysis.get("risks"):
-        recommendations.append("Review high-risk terms with legal counsel before signature.")
+        recommendations.append(normalize_action({"action": "Review high-risk terms with legal counsel before signature.", "rationale": "The risk summary includes one or more review signals.", "related_clause": "Risk summary", "priority": "High", "source": "AI / rule-based review"}))
     if not recommendations:
-        recommendations.append("No major remediation actions were identified. Confirm business terms and final legal review before signature.")
+        recommendations.append(normalize_action("No major remediation actions were identified. Confirm business terms and final legal review before signature."))
     for item in recommendations:
-        st.markdown(f'<div class="cip-check-item">✓ {safe_html(item)}</div>', unsafe_allow_html=True)
+        render_action_card(normalize_action(item))
+
+
+def normalize_benchmark_response(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    comparisons = data.get("clause_alignment") or []
+    actions = [normalize_action(item, "illustrative benchmark comparison") for item in (data.get("recommended_improvements") or [])]
+    return {
+        "raw": data,
+        "benchmark_mode": safe_text(data.get("benchmark_mode"), "Illustrative benchmark comparison"),
+        "profiles": data.get("benchmark_profiles") or [],
+        "overall_score": data.get("overall_score", 0),
+        "aligned": data.get("aligned_clauses", 0),
+        "partial": data.get("partially_aligned_clauses", 0),
+        "missing": data.get("missing_or_weak_clauses", len(data.get("missing_protections") or [])),
+        "market_position": safe_text(data.get("market_position"), "Not specified"),
+        "narrative_summary": plain_value(data.get("narrative_summary"), "This comparison uses internal illustrative benchmark profiles to compare common contract structures."),
+        "comparisons": comparisons,
+        "actions": actions,
+    }
+
+
+def render_benchmark_results(result: dict[str, Any]) -> None:
+    cols = st.columns(5)
+    with cols[0]:
+        render_metric_card("Overall Benchmark Score", f"{result['overall_score']}/100", result["market_position"])
+    with cols[1]:
+        render_metric_card("Aligned Clauses", result["aligned"], "Strong alignment")
+    with cols[2]:
+        render_metric_card("Partially Aligned", result["partial"], "Needs review")
+    with cols[3]:
+        render_metric_card("Missing / Weak", result["missing"], "Priority gaps")
+    with cols[4]:
+        render_metric_card("Benchmark Mode", "Illustrative", "Synthetic profiles")
+    st.info("This comparison uses internal illustrative benchmark profiles to show how the selected contract compares against common contract structures. It is not live market data.")
+    st.markdown(f'<div class="cip-summary-card"><strong>Benchmark narrative</strong><br>{safe_html(result["narrative_summary"])}</div>', unsafe_allow_html=True)
+    st.markdown("### Alignment Snapshot")
+    total = max(1, result["aligned"] + result["partial"] + result["missing"])
+    for label, value in [("Strong alignment", result["aligned"]), ("Moderate alignment", result["partial"]), ("Missing / weak", result["missing"])]:
+        pct = int(value / total * 100)
+        st.markdown(f'<div><strong>{safe_html(label)}</strong> — {value} clauses<div class="cip-mini-bar"><span style="width:{pct}%"></span></div></div>', unsafe_allow_html=True)
+    st.markdown("### Clause-by-Clause Comparison")
+    for item in result["comparisons"]:
+        status = safe_text(item.get("your_contract_status"), "Not specified")
+        st.markdown(f'<div class="cip-benchmark-card"><div class="cip-card-header"><h4>{safe_html(item.get("clause"))}</h4><span class="{badge_class(status)}">{safe_html(status)}</span></div><p><strong>Your contract:</strong> {safe_html(status)}</p><p><strong>Benchmark expectation:</strong> {safe_html(item.get("benchmark_expectation"))}</p><p><strong>Gap assessment:</strong> {safe_html(item.get("gap_assessment"))}</p><p><strong>Plain-English explanation:</strong> {safe_html(item.get("plain_english_explanation"))}</p><p><strong>Suggested improvement:</strong> {safe_html(item.get("improvement_suggestion"))}</p></div>', unsafe_allow_html=True)
+    st.markdown("### Benchmark Recommended Actions")
+    if result["actions"]:
+        for action in result["actions"]:
+            render_action_card(action)
+    else:
+        st.success("No major benchmark gaps were identified against the illustrative profiles.")
+    with st.expander("Advanced / Debug Output", expanded=False):
+        st.caption("Raw benchmark response for debugging only")
+        st.json(result["raw"])
 
 
 def render_analysis_results(analysis: dict[str, Any]) -> None:
     render_score_cards(analysis)
     st.markdown("### AI Executive Review")
-    st.markdown(f'<div class="cip-summary-card"><strong>Executive summary</strong><br>{safe_html(analysis["executive_summary"])}<br><br><strong>Overall assessment</strong><br>{safe_html(analysis["ai_overall_assessment"])}</div>', unsafe_allow_html=True)
+    render_overall_visual(analysis)
+    st.markdown(f'<div class="cip-summary-card"><strong>Executive summary</strong><br>{safe_html(analysis["executive_summary"])}</div>', unsafe_allow_html=True)
     cols = st.columns(3)
     with cols[0]:
         st.markdown("**Key strengths**")
@@ -397,8 +498,9 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
             st.markdown(f'<div class="cip-risk-chip">⚠ {safe_html(item)}</div>', unsafe_allow_html=True)
     with cols[2]:
         st.markdown("**Recommended next actions**")
-        for item in analysis["recommended_improvements"] or ["No AI recommendations returned."]:
-            st.markdown(f'<div class="cip-check-item">→ {safe_html(item)}</div>', unsafe_allow_html=True)
+        for item in analysis["recommended_improvements"] or [normalize_action("No AI recommendations returned.")]:
+            action = normalize_action(item)
+            st.markdown(f'<div class="cip-check-item">→ {safe_html(action["action"])}</div>', unsafe_allow_html=True)
 
     st.markdown("### Risk Summary")
     if analysis["risks"]:
@@ -425,16 +527,12 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
     render_recommendations(analysis)
 
     st.markdown("### Evidence Trace")
-    evidence_rows = []
+    has_evidence = False
     for clause in analysis["clauses"]:
-        if clause["evidence"]:
-            for item in clause["evidence"]:
-                evidence_rows.append({"Clause": clause["title"], "Evidence snippet": item.get("text"), "Page": item.get("page") or "Not specified", "Source type": item.get("source") or "extracted_text", "Confidence": item.get("confidence") or clause["confidence"]})
-        else:
-            evidence_rows.append({"Clause": clause["title"], "Evidence snippet": "No direct evidence captured for this clause.", "Page": "Not specified", "Source type": "extracted_text", "Confidence": clause["confidence"]})
-    if evidence_rows:
-        st.dataframe(evidence_rows, use_container_width=True)
-    else:
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Clause: {safe_html(clause["title"])} · Confidence: {safe_html(clause["confidence"])}</div></div>', unsafe_allow_html=True)
+        render_evidence(clause["evidence"])
+        has_evidence = True
+    if not has_evidence:
         st.caption("No evidence trace is available yet.")
 
     with st.expander("Advanced / Debug Output", expanded=False):
@@ -723,14 +821,25 @@ def chat_page():
 
 def benchmark_page():
     st.title("Benchmark")
+    st.caption("Compare the selected contract against clearly labeled synthetic benchmark profiles.")
     selected_label, cid = select_contract()
-    if cid and st.button("Run benchmark", use_container_width=True):
-        ok, data = api_request("POST", f"/contracts/{cid}/benchmark")
+    if not cid:
+        return
+    st.markdown(f'<div class="cip-chat-contract">Selected contract: <strong>{safe_html(selected_label)}</strong></div>', unsafe_allow_html=True)
+    if st.button("Run benchmark", use_container_width=True):
+        with st.spinner("Comparing against illustrative benchmark profiles..."):
+            ok, data = api_request("POST", f"/contracts/{cid}/benchmark", timeout=90)
         if ok:
-            st.metric("Overall score", data["overall_score"])
-            st.write(data)
+            st.session_state.benchmark_result = normalize_benchmark_response(data)
+            st.session_state.benchmark_contract_id = cid
+            st.success("Benchmark comparison complete.")
         else:
-            st.error(user_message(data))
+            st.markdown(f'<div class="cip-error-card"><strong>Benchmark failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
+            return
+    if st.session_state.get("benchmark_contract_id") == cid and st.session_state.get("benchmark_result"):
+        render_benchmark_results(st.session_state.benchmark_result)
+    else:
+        st.info("Run benchmark to compare this contract against illustrative benchmark profiles.")
 
 
 def settings_page():

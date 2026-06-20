@@ -173,3 +173,16 @@ def test_chat_ui_is_chat_style_not_raw_json_main_view():
         "New chat",
     ]:
         assert token in src
+
+
+def test_analysis_and_benchmark_avoid_raw_main_outputs():
+    src = read("frontend/streamlit_app.py")
+    assert "render_overall_visual" in src
+    assert "plain_value" in src
+    assert "render_action_card" in src
+    assert "normalize_benchmark_response" in src
+    assert "render_benchmark_results" in src
+    assert "Illustrative benchmark comparison" in read("backend/services/benchmark_service.py")
+    assert 'st.write(data)' not in src
+    assert 'st.dataframe(evidence_rows' not in src
+    assert "Raw benchmark response for debugging only" in src

@@ -35,5 +35,11 @@ APP_CSS = """
 .cip-assistant-bubble { background:#ffffff; border:1px solid #dbeafe; border-radius:20px; padding:1rem 1.1rem; box-shadow:0 12px 30px rgba(15,23,42,.06); line-height:1.62; }
 .cip-chat-contract { background:#eef2ff; border:1px solid #c7d2fe; color:#1e1b4b; border-radius:18px; padding:.85rem 1rem; margin:.4rem 0 1rem 0; }
 .cip-suggestion-chip { display:inline-flex; background:#f8fafc; border:1px solid #cbd5e1; color:#334155; border-radius:999px; padding:.42rem .7rem; margin:.25rem; font-size:.86rem; }
+.cip-action-card { background:#ffffff; border:1px solid #bbf7d0; border-left:5px solid #22c55e; border-radius:20px; padding:1rem 1.1rem; margin:.7rem 0; box-shadow:0 10px 26px rgba(15,23,42,.05); }
+.cip-radial { width:160px; height:160px; border-radius:50%; background:conic-gradient(#2563eb 0 80%, #e2e8f0 80% 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; margin:auto; box-shadow:inset 0 0 0 16px #fff, 0 14px 36px rgba(15,23,42,.08); }
+.cip-radial-score { font-size:2.1rem; font-weight:900; color:#0f172a; }
+.cip-benchmark-card { background:#fff; border:1px solid #e2e8f0; border-radius:20px; padding:1rem 1.1rem; margin:.7rem 0; box-shadow:0 10px 26px rgba(15,23,42,.05); }
+.cip-mini-bar { height:10px; border-radius:999px; background:#e2e8f0; overflow:hidden; margin:.35rem 0 .8rem; }
+.cip-mini-bar span { display:block; height:100%; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }
 </style>
 """
