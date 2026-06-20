@@ -68,7 +68,8 @@ def auth_screen():
         st.write("")
         mode = st.radio("Account action", ["Sign In", "Create Account"], horizontal=True, label_visibility="collapsed")
         st.session_state.auth_mode = "register" if mode == "Create Account" else "login"
-        with st.container(border=True):
+        st.markdown('<div class="cip-auth-card">', unsafe_allow_html=True)
+        with st.container():
             if st.session_state.auth_mode == "register":
                 st.header("Create account")
                 with st.form("register_form"):
@@ -102,6 +103,7 @@ def auth_screen():
                         if ok:
                             st.session_state.token = data["access_token"]; st.session_state.user = data["user"]; st.rerun()
                         else: st.error(data)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def require_auth():
