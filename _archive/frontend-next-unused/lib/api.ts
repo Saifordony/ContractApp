@@ -4,7 +4,7 @@
 // screen gets the same behaviour: a failed call throws an ApiError with a
 // human-readable message (never a raw {"detail": ...} blob leaked to the UI).
 
-import type { ChatResponse, ChatTurn, GroundedAnalysis, LoginResponse } from "./types";
+import type { ChatResponse, ChatTurn, GroundedAnalysis, LoginResponse, RegisterResponse } from "./types";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "http://localhost:8000";
@@ -22,13 +22,16 @@ export class ApiError extends Error {
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
+  return window.localStorage.getItem(TOKEN_KEY) || window.sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string | null): void {
+export function setToken(token: string | null, persist = true): void {
   if (typeof window === "undefined") return;
-  if (token) window.localStorage.setItem(TOKEN_KEY, token);
-  else window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(TOKEN_KEY);
+  window.sessionStorage.removeItem(TOKEN_KEY);
+  if (!token) return;
+  const storage = persist ? window.localStorage : window.sessionStorage;
+  storage.setItem(TOKEN_KEY, token);
 }
 
 async function readError(res: Response): Promise<string> {
@@ -70,13 +73,29 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function login(username: string, password: string): Promise<LoginResponse> {
+export async function login(
+  username: string,
+  password: string,
+  options: { remember?: boolean } = {}
+): Promise<LoginResponse> {
   const data = await request<LoginResponse>("/auth/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
-  setToken(data.access_token);
+  setToken(data.access_token, options.remember ?? true);
   return data;
+}
+
+export async function registerUser(args: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<RegisterResponse> {
+  const email = args.email.trim().toLowerCase();
+  return request<RegisterResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username: args.name.trim(), email, password: args.password }),
+  });
 }
 
 export async function analyzeContractText(

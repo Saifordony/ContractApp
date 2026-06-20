@@ -49,7 +49,7 @@ BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
 # Build marker: surfaced unauthenticated at GET /healthz and rendered in the
 # frontend sidebar. Bump this string to confirm at a glance that the running
 # process is serving the current code (the dev-loop sanity beacon).
-APP_BUILD = "2026-06-19 · dev-loop verified"
+APP_BUILD = "Backend: FastAPI / backend/main.py / Build v2"
 
 if not SECRET_KEY:
     raise RuntimeError("SECRET_KEY environment variable must be set")
@@ -59,7 +59,7 @@ db_client = None
 db = None
 
 # Security
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
 

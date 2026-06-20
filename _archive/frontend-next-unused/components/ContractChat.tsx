@@ -25,9 +25,11 @@ function confidenceClass(confidence?: string): "high" | "medium" | "low" {
 export function ContractChat({
   contractText,
   analysis,
+  compact = false,
 }: {
   contractText: string;
   analysis: GroundedAnalysis | null;
+  compact?: boolean;
 }) {
   const [turns, setTurns] = useState<DisplayTurn[]>([]);
   const [input, setInput] = useState("");
@@ -74,14 +76,14 @@ export function ContractChat({
   }
 
   return (
-    <div className="panel" style={{ marginTop: "1.5rem" }}>
+    <div className={compact ? "chat-panel" : "panel chat-panel"}>
       <strong>Ask about this contract</strong>
       <p className="subtle" style={{ fontSize: "0.82rem", marginTop: "0.25rem" }}>
         Answers are grounded in the text above and cite the clauses they rely on.
       </p>
 
       {turns.length === 0 && (
-        <div className="row" style={{ margin: "0.75rem 0" }}>
+        <div className="starter-row">
           {STARTERS.map((s) => (
             <button key={s} className="secondary" onClick={() => send(s)} disabled={busy}>
               {s}
@@ -90,9 +92,9 @@ export function ContractChat({
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", margin: "1rem 0" }}>
+      <div className="chat-messages">
         {turns.map((turn, i) => (
-          <div key={i} className={turn.role === "user" ? "row spread" : ""}>
+          <div key={i} className={`chat-turn ${turn.role}`}>
             <div
               style={{
                 background: turn.role === "user" ? "var(--panel-2)" : "transparent",
@@ -127,7 +129,7 @@ export function ContractChat({
 
       {error && <div className="banner error">{error}</div>}
 
-      <div className="row" style={{ gap: "0.5rem" }}>
+      <div className="chat-input">
         <input
           type="text"
           value={input}

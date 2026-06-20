@@ -6,13 +6,15 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from backend import main as _main
-from backend.gen1 import evaluate_contract, explain_clauses_for_layman, extract_text_from_upload_bytes
-from backend.llm_config import is_genai_configured, llm_health_check
 from backend.models import ContractChatTextRequest, ContractTextAnalysisRequest
 from backend.services.contract_chat_service import build_contract_chat_response
-from backend.services.contract_health import evaluate_contract_health_from_clauses
-from backend.services.contract_intelligence import extract_key_clauses
-from backend.services.grounded_analysis import make_llm_callable, run_grounded_analysis
+from backend.services.contract_analysis_service import (
+    analyze_contract_text,
+    analyze_uploaded_contract,
+    build_health_evaluation,
+    to_grounded_response,
+    to_legacy_clause_response,
+)
 
 router = APIRouter()
 
@@ -24,76 +26,48 @@ async def analyze_contract_endpoint(
     use_ocr: bool = Form(True),
     current_user: dict = Depends(_main.get_current_user),
 ):
+    """Compatibility wrapper for Streamlit file analysis.
+
+    Business logic lives in contract_analysis_service; this route only validates
+    upload basics, logs, and adapts the canonical result to the legacy shape.
+    """
     allowed_extensions = (".pdf", ".docx", ".txt", ".png", ".jpg", ".jpeg")
     if not file.filename or not file.filename.lower().endswith(allowed_extensions):
         raise HTTPException(status_code=400, detail="Supported files: PDF, DOCX, TXT, PNG, JPG, and JPEG")
 
-    if not is_genai_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
-        )
-
-    analysis_health = None
     try:
-        file_bytes = await file.read()
-        extracted = extract_text_from_upload_bytes(
-            file_bytes,
+        canonical = await analyze_uploaded_contract(
+            await file.read(),
             file.filename,
             content_type=file.content_type,
             use_ocr=use_ocr,
             response_language=response_language,
         )
-        contract_text = extracted["text"]
-        analysis_health = _main.log_analysis_llm_context("/genai/analyze-contract")
-        structured_clauses = extract_key_clauses(contract_text)
-        found_clauses = {
-            k: v.get("extracted_text")
-            for k, v in structured_clauses.get("clauses", {}).items()
-            if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")
-        }
-        clause_explanations = (
-            await explain_clauses_for_layman(found_clauses, response_language=response_language)
-            if found_clauses
-            else {}
-        )
-
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze-contract",
-                "action": "contract_analysis",
-                "timestamp": datetime.utcnow(),
-                "status": "success",
-            }
-        )
-
-        ocr_warning = None
-        if extracted.get("used_ocr") and extracted.get("ocr_confidence") is not None and extracted.get("ocr_confidence", 1) < 0.45:
-            ocr_warning = "جودة المسح منخفضة، لذلك قد يكون بعض النص المستخرج غير دقيق." if response_language.lower().startswith("ar") else "The scan quality is low, so some extracted text may be inaccurate."
-        return {
-            "structured_clauses": structured_clauses,
-            "clause_explanations": clause_explanations,
-            "contract_text": contract_text,
-            "used_ocr": bool(extracted.get("used_ocr")),
-            "ocr_confidence": extracted.get("ocr_confidence"),
-            "ocr_warning": ocr_warning,
-        }
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze-contract",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "analysis_source": canonical.get("analysis_source"),
+            "degraded_mode": canonical.get("health_evaluation", {}).get("degraded_mode"),
+        })
+        return to_legacy_clause_response(canonical)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         raise
-    except Exception as e:
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze-contract",
-                "action": "contract_analysis",
-                "timestamp": datetime.utcnow(),
-                "status": "error",
-                "error": str(e),
-            }
-        )
-        print(f"/genai/analyze-contract failed: {e}")
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, analysis_health))
+    except Exception as exc:
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze-contract",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "error",
+            "error": exc.__class__.__name__,
+        })
+        print(f"/genai/analyze-contract failed: {exc}")
+        raise HTTPException(status_code=500, detail="Contract analysis failed. Please try again.")
 
 
 @router.post("/genai/analyze-contract-text")
@@ -101,128 +75,67 @@ async def analyze_contract_text_endpoint(
     payload: ContractTextAnalysisRequest,
     current_user: dict = Depends(_main.get_current_user),
 ):
-    if not is_genai_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
-        )
-
-    contract_text = (payload.contract_text or "").strip()
-    if len(contract_text) < 100:
-        raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
-
-    analysis_health = None
+    """Compatibility wrapper for Streamlit text analysis."""
     try:
-        analysis_health = _main.log_analysis_llm_context("/genai/analyze-contract-text")
-        structured_clauses = extract_key_clauses(contract_text)
-        found_clauses = {
-            k: v.get("extracted_text")
-            for k, v in structured_clauses.get("clauses", {}).items()
-            if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")
-        }
-        clause_explanations = (
-            await explain_clauses_for_layman(found_clauses, response_language=payload.response_language)
-            if found_clauses
-            else {}
+        canonical = await analyze_contract_text(
+            payload.contract_text,
+            response_language=payload.response_language,
+            include_clause_explanations=True,
         )
-
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze-contract-text",
-                "action": "contract_analysis_text",
-                "timestamp": datetime.utcnow(),
-                "status": "success",
-                "chunk_count": structured_clauses.get("chunk_count", 0),
-                "conflicts_count": len(structured_clauses.get("conflicts", [])),
-            }
-        )
-        return {
-            "structured_clauses": structured_clauses,
-            "clause_explanations": clause_explanations,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze-contract-text",
-                "action": "contract_analysis_text",
-                "timestamp": datetime.utcnow(),
-                "status": "error",
-                "error": str(e),
-            }
-        )
-        print(f"/genai/analyze-contract-text failed: {e}")
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, analysis_health))
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze-contract-text",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "analysis_source": canonical.get("analysis_source"),
+            "degraded_mode": canonical.get("health_evaluation", {}).get("degraded_mode"),
+        })
+        return to_legacy_clause_response(canonical)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze-contract-text",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "error",
+            "error": exc.__class__.__name__,
+        })
+        print(f"/genai/analyze-contract-text failed: {exc}")
+        raise HTTPException(status_code=500, detail="Contract analysis failed. Please try again.")
 
 
 @router.post("/genai/evaluate-contract")
 async def evaluate_contract_endpoint(
     payload: Dict[str, Any], current_user: dict = Depends(_main.get_current_user)
 ):
-    if not is_genai_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
-        )
-
+    """Compatibility wrapper around canonical health evaluation."""
     try:
         clauses = payload.get("clauses", payload)
         response_language = payload.get("response_language", "english")
-
-        # The rule engine is the deterministic, always-available scaffold: it owns
-        # the structured fields (health_score, dimensions, missing clauses) that must
-        # never depend on a reachable LLM. The LLM supplies the narrative verdict.
-        rule_evaluation = evaluate_contract_health_from_clauses(clauses, response_language=response_language)
-        llm_evaluation = await evaluate_contract(
-            clauses,
-            response_language=response_language,
-        )
-
-        # If the LLM path itself fell back to the rule engine, evaluate_contract_sync
-        # tags it degraded -- surface that explicitly rather than blind-merging the
-        # two and silently presenting rule output as the model's judgement.
-        llm_degraded = bool(llm_evaluation.get("degraded_mode"))
-        evaluation = {
-            # Deterministic structured scaffold (source of truth for scoring/clauses).
-            **rule_evaluation,
-            # Narrative verdict from the model, only overriding when the LLM succeeded.
-            "approved": (rule_evaluation if llm_degraded else llm_evaluation).get("approved"),
-            "reasoning": (rule_evaluation if llm_degraded else llm_evaluation).get("reasoning"),
-            "risk_level": (rule_evaluation if llm_degraded else llm_evaluation).get("risk_level", "medium"),
-            "llm_assessment": llm_evaluation,
-            "evaluation_source": "rule_based_fallback" if llm_degraded else "llm",
-            "degraded_mode": llm_degraded,
-            "module": "contract_health",
-        }
-
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/evaluate-contract",
-                "action": "contract_evaluation",
-                "timestamp": datetime.utcnow(),
-                "status": "success",
-            }
-        )
-
+        evaluation = await build_health_evaluation(clauses, response_language=response_language)
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/evaluate-contract",
+            "action": "contract_health",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "scoring_source": evaluation.get("scoring_source"),
+            "degraded_mode": evaluation.get("degraded_mode"),
+        })
         return evaluation
-    except HTTPException:
-        raise
-    except Exception as e:
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/evaluate-contract",
-                "action": "contract_evaluation",
-                "timestamp": datetime.utcnow(),
-                "status": "error",
-                "error": str(e),
-            }
-        )
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, llm_health_check()))
+    except Exception as exc:
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/evaluate-contract",
+            "action": "contract_health",
+            "timestamp": datetime.utcnow(),
+            "status": "error",
+            "error": exc.__class__.__name__,
+        })
+        raise HTTPException(status_code=500, detail="Contract health evaluation failed. Please try again.")
 
 
 @router.post("/genai/analyze")
@@ -230,47 +143,37 @@ async def grounded_analyze_endpoint(
     payload: ContractTextAnalysisRequest,
     current_user: dict = Depends(_main.get_current_user),
 ):
-    """Unified, evidence-grounded analysis: the single call the redesigned
-    upload -> analysis -> output flow makes.
-
-    Returns per-section answers (summary, risks, health) each with their own
-    evidence citations and confidence, plus an explicit ``degraded_mode`` flag when
-    the model is unreachable so the UI never presents keyword output as a model
-    judgement.
-    """
-    contract_text = (payload.contract_text or "").strip()
-    if len(contract_text) < 100:
-        raise HTTPException(status_code=422, detail="Contract text is too short to analyze.")
-
+    """Primary grounded-analysis endpoint backed by contract_analysis_service."""
     try:
-        result = run_grounded_analysis(contract_text, llm_callable=make_llm_callable())
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze",
-                "action": "contract_analysis",
-                "timestamp": datetime.utcnow(),
-                "status": "success",
-                "degraded_mode": result.get("degraded_mode"),
-                "overall_confidence": result.get("overall_confidence"),
-            }
+        canonical = await analyze_contract_text(
+            payload.contract_text,
+            response_language=payload.response_language,
+            include_clause_explanations=False,
         )
-        return result
+        grounded = to_grounded_response(canonical)
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "success",
+            "degraded_mode": grounded.get("degraded_mode"),
+            "overall_confidence": grounded.get("overall_confidence"),
+        })
+        return grounded
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": "/genai/analyze",
-                "action": "contract_analysis",
-                "timestamp": datetime.utcnow(),
-                "status": "error",
-                "error": str(exc),
-            }
-        )
+        await _main.db.logs.insert_one({
+            "user": current_user["username"],
+            "endpoint": "/genai/analyze",
+            "action": "contract_analysis",
+            "timestamp": datetime.utcnow(),
+            "status": "error",
+            "error": exc.__class__.__name__,
+        })
         print(f"/genai/analyze failed: {exc}")
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(exc, llm_health_check()))
+        raise HTTPException(status_code=500, detail="Grounded analysis failed. Please try again.")
 
 
 @router.post("/genai/contract-chat")
