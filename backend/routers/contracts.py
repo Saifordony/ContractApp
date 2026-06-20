@@ -1,12 +1,17 @@
 import logging
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from io import BytesIO
 from backend.core.security import get_current_user
 from backend.database import get_database
 from backend.services.analysis_service import analyze_contract_record
 from backend.services.benchmark_service import benchmark_contract
 from backend.services.chat_service import chat_with_contract
 from backend.services.contract_service import get_contract, list_contracts, upload_contract, serialize_contract
+from backend.services.report_service import generate_analysis_pdf
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/contracts", tags=["contracts"])
@@ -45,6 +50,21 @@ async def analyze(contract_id: str, user=Depends(get_current_user)):
     except Exception as exc:
         logger.exception("analysis unexpected error user_id=%s contract_id=%s", user["id"], contract_id)
         raise HTTPException(status_code=500, detail="Analysis failed. Please try again or check system health.") from exc
+
+
+@router.get("/{contract_id}/analysis/report")
+async def analysis_report(contract_id: str, user=Depends(get_current_user)):
+    db = get_database()
+    contract = await get_contract(db, user["id"], contract_id)
+    latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": user["id"]}, sort=[("created_at", -1)])
+    if not latest or not latest.get("analysis"):
+        raise HTTPException(status_code=400, detail="Run analysis before generating report.")
+    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    pdf = generate_analysis_pdf(contract, latest["analysis"], generated_at)
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (contract.get("name") or "contract")).strip("-") or "contract"
+    filename = f"contract-intelligence-report-{safe_name}-{datetime.utcnow().strftime('%Y%m%d')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(BytesIO(pdf), media_type="application/pdf", headers=headers)
 
 @router.post("/{contract_id}/chat")
 async def chat(contract_id: str, payload: ChatRequest, user=Depends(get_current_user)):

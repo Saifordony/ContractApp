@@ -119,7 +119,7 @@ def test_analysis_ui_shows_ai_sections_and_status():
         "Rule-based fallback",
         "AI Executive Review",
         "AI Review by Clause",
-        "AI insight",
+        "Why it matters",
         "AI recommendation",
         "LLM request status",
     ]:
@@ -259,3 +259,45 @@ def test_streamlit_shell_supports_theme_language_and_modern_navigation():
         ".cip-empty-state",
     ]:
         assert token in css
+
+
+
+def test_analysis_extraction_key_terms_and_pdf_report():
+    analysis = read("backend/services/analysis_service.py")
+    report = read("backend/services/report_service.py")
+    contracts = read("backend/routers/contracts.py")
+    frontend = read("frontend/streamlit_app.py")
+    for token in [
+        "TERM_PATTERNS",
+        "_details_from_evidence",
+        "_extract_key_terms",
+        "key_terms",
+        "monetary_amounts",
+        "notice_periods",
+        "risk_in_plain_english",
+        "what_to_check_next",
+        "completeness",
+    ]:
+        assert token in analysis
+    for token in [
+        "generate_analysis_pdf",
+        "Contract Intelligence Report",
+        "Key Terms Extracted",
+        "Clause-by-Clause Review",
+        "Evidence Appendix",
+        "AI-assisted review only",
+    ]:
+        assert token in report
+    assert '@router.get("/{contract_id}/analysis/report")' in contracts
+    assert "StreamingResponse" in contracts
+    for token in [
+        "api_download",
+        "Download PDF Report",
+        "Save PDF Report",
+        "render_key_terms",
+        "render_clause_details",
+        "Key Terms Extracted",
+    ]:
+        assert token in frontend
+    assert "The AI review did not return a specific insight" not in frontend
+    assert "Generic recommendation" not in frontend

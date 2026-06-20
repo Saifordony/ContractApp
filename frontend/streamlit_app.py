@@ -149,7 +149,7 @@ def render_empty_state(title: str, body: str) -> None:
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None}
+    defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None, "analysis_report_pdf": None, "analysis_report_filename": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -201,6 +201,32 @@ def api_request(method: str, path: str, **kwargs) -> tuple[bool, Any]:
         debug["error"] = str(exc)
         st.session_state.last_api_debug = debug
         return False, {"message": "Backend request failed.", **debug}
+
+
+def api_download(path: str, timeout: int = 90) -> tuple[bool, Any, str | None]:
+    headers = {}
+    if st.session_state.get("token"):
+        headers["Authorization"] = f"Bearer {st.session_state.token}"
+    url = f"{API_BASE_URL}{path}"
+    debug = {"method": "GET", "base_url": API_BASE_URL, "path": path, "url": url, "status_code": None, "response_body": None, "error": None}
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        debug["status_code"] = response.status_code
+        st.session_state.last_api_debug = debug
+        if response.ok:
+            disposition = response.headers.get("content-disposition", "")
+            filename = None
+            if "filename=" in disposition:
+                filename = disposition.split("filename=", 1)[1].strip('"')
+            return True, response.content, filename
+        body = parse_response_body(response)
+        debug["response_body"] = body
+        message = body.get("detail") if isinstance(body, dict) else body
+        return False, {"message": safe_text(message, "Report generation failed."), **debug}, None
+    except requests.RequestException as exc:
+        debug["error"] = str(exc)
+        st.session_state.last_api_debug = debug
+        return False, {"message": "Report download request failed.", **debug}, None
 
 
 def health_marker():
@@ -302,18 +328,18 @@ def clause_summary(clause_type: str, status: str) -> str:
 def generic_recommendation(clause_type: str, status: str) -> str:
     label = titleize(clause_type)
     if status == "missing":
-        return f"Generic recommendation: add a clear {label} clause tailored to this deal before signature."
+        return f"Fallback review point: add a clear {label} clause tailored to this deal before signature."
     recommendations = {
-        "termination": "Generic recommendation: confirm notice period, cure period, termination for cause, and survival language are complete.",
-        "payment": "Generic recommendation: confirm amounts, due dates, late fees, taxes, invoice process, and disputed-payment rights.",
-        "confidentiality": "Generic recommendation: confirm exclusions, permitted disclosures, duration, and return/destruction obligations.",
-        "liability": "Generic recommendation: confirm liability caps, excluded damages, indemnities, and exceptions are commercially acceptable.",
-        "intellectual_property": "Generic recommendation: confirm ownership, licenses, deliverables, and pre-existing IP rights are explicit.",
-        "governing_law": "Generic recommendation: confirm governing law and venue are acceptable to the business.",
-        "dispute_resolution": "Generic recommendation: confirm escalation, forum, timing, and interim relief rights are workable.",
-        "renewal": "Generic recommendation: confirm renewal term, notice window, price changes, and opt-out rights are clear.",
+        "termination": "Fallback review point: confirm notice period, cure period, termination for cause, and survival language are complete.",
+        "payment": "Fallback review point: confirm amounts, due dates, late fees, taxes, invoice process, and disputed-payment rights.",
+        "confidentiality": "Fallback review point: confirm exclusions, permitted disclosures, duration, and return/destruction obligations.",
+        "liability": "Fallback review point: confirm liability caps, excluded damages, indemnities, and exceptions are commercially acceptable.",
+        "intellectual_property": "Fallback review point: confirm ownership, licenses, deliverables, and pre-existing IP rights are explicit.",
+        "governing_law": "Fallback review point: confirm governing law and venue are acceptable to the business.",
+        "dispute_resolution": "Fallback review point: confirm escalation, forum, timing, and interim relief rights are workable.",
+        "renewal": "Fallback review point: confirm renewal term, notice window, price changes, and opt-out rights are clear.",
     }
-    return recommendations.get(clause_type, f"Generic recommendation: review the {label} clause for completeness and negotiation risk.")
+    return recommendations.get(clause_type, f"Fallback review point: review the {label} clause for completeness and negotiation risk.")
 
 
 def normalize_evidence(evidence: Any) -> list[dict[str, Any]]:
@@ -384,13 +410,17 @@ def normalize_clause(clause: Any, index: int) -> dict[str, Any]:
         "evidence": evidence,
         "summary": plain_value(clause.get("rule_based_summary") or clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
         "simple_explanation": plain_value(clause.get("simple_explanation") or clause.get("ai_insight"), clause_summary(clause_type, status)),
+        "why_it_matters": plain_value(clause.get("why_it_matters") or clause.get("ai_insight"), clause_summary(clause_type, status)),
+        "risk_in_plain_english": plain_value(clause.get("risk_in_plain_english") or clause.get("ai_risk_assessment"), "Review whether the clause is complete, balanced, and clear enough for the business use case."),
         "what_to_check_next": plain_value(clause.get("what_to_check_next"), generic_recommendation(clause_type, status)),
+        "completeness": safe_text(clause.get("completeness"), "Partial" if status != "missing" else "Missing"),
+        "extracted_details": clause.get("extracted_details") or {},
         "risk": safe_text(clause.get("risk") or clause.get("risk_level"), "Not specified"),
         "recommendation": safe_text(clause.get("ai_recommendation") or clause.get("recommendation") or clause.get("suggested_improvement"), generic_recommendation(clause_type, status)),
-        "ai_insight": safe_text(clause.get("ai_insight"), "No AI insight was returned for this clause."),
-        "ai_risk_assessment": safe_text(clause.get("ai_risk_assessment"), "No AI risk assessment was returned for this clause."),
-        "ai_recommendation": safe_text(clause.get("ai_recommendation"), "No AI recommendation was returned for this clause."),
-        "negotiation_note": safe_text(clause.get("negotiation_note"), "No negotiation note was returned for this clause."),
+        "ai_insight": safe_text(clause.get("ai_insight"), clause_summary(clause_type, status)),
+        "ai_risk_assessment": safe_text(clause.get("ai_risk_assessment"), "Review whether the clause is complete, balanced, and clear enough for the business use case."),
+        "ai_recommendation": safe_text(clause.get("ai_recommendation"), generic_recommendation(clause_type, status)),
+        "negotiation_note": safe_text(clause.get("negotiation_note"), "Discuss clearer limits, responsibilities, exceptions, and approval steps if this clause affects the business deal."),
         "review_priority": safe_text(clause.get("review_priority"), "Medium"),
     }
 
@@ -407,10 +437,26 @@ def normalize_risk(risk: Any, index: int) -> dict[str, str]:
     }
 
 
+def normalize_key_term(item: Any, index: int) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        item = {"term": f"Key term {index + 1}", "extracted_value": item}
+    evidence = normalize_evidence(item.get("evidence") or item.get("sources"))
+    return {
+        "term": safe_text(item.get("term") or item.get("name"), f"Key term {index + 1}"),
+        "extracted_value": plain_value(item.get("extracted_value") or item.get("value"), "Not found in extracted text"),
+        "evidence": evidence,
+        "evidence_source": safe_text(item.get("evidence_source") or (evidence[0].get("source") if evidence else None), "Extracted contract text"),
+        "simple_explanation": plain_value(item.get("simple_explanation"), "This is an important business term extracted from the contract evidence."),
+        "risk_or_verify": plain_value(item.get("risk_or_verify") or item.get("what_to_verify"), "Confirm this value against the original contract and responsible business owner."),
+        "confidence": safe_text(item.get("confidence"), "Medium — evidence was found, but the value should be confirmed."),
+    }
+
+
 def normalize_analysis_response(data: Any) -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
     clauses = [normalize_clause(clause, idx) for idx, clause in enumerate(data.get("clauses") or [])]
+    key_terms = [normalize_key_term(item, idx) for idx, item in enumerate(data.get("key_terms") or [])]
     missing = data.get("missing_critical_clauses") or []
     missing_names = [safe_text(item) for item in missing]
     found_count = sum(1 for clause in clauses if clause["status"] == "found")
@@ -427,6 +473,7 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "confidence": safe_text(data.get("confidence"), "Low" if data.get("degraded_mode") else "Medium"),
         "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
         "ai_overall_assessment": plain_value(data.get("ai_overall_assessment"), "No AI overall assessment was returned."),
+        "key_terms": key_terms,
         "key_strengths": [plain_value(item) for item in (data.get("key_strengths") or [])],
         "key_risks": [plain_value(item) for item in (data.get("key_risks") or [])],
         "clauses": clauses,
@@ -535,9 +582,12 @@ def render_clause_card(clause: dict[str, Any]) -> None:
     st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Rule confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span></div><p><strong>Rule-based detection:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
     st.markdown("**Evidence from contract**")
     render_evidence(clause["evidence"])
+    st.markdown("**Key details extracted**")
+    render_clause_details(clause)
     st.markdown(f'<div class="cip-ai-box"><strong>Simple explanation:</strong><br>{safe_html(clause["simple_explanation"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-ai-box"><strong>Why it matters:</strong><br>{safe_html(clause["ai_insight"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-ai-box"><strong>Risk in plain English:</strong><br>{safe_html(clause["ai_risk_assessment"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>Why it matters:</strong><br>{safe_html(clause["why_it_matters"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>Risk in plain English:</strong><br>{safe_html(clause["risk_in_plain_english"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-card-meta"><span>Completeness: {safe_html(clause["completeness"])}</span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-recommendation"><strong>What to check next:</strong> {safe_html(clause["what_to_check_next"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-recommendation"><strong>AI recommendation:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-negotiation"><strong>Negotiation note:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
@@ -653,6 +703,27 @@ def render_benchmark_results(result: dict[str, Any]) -> None:
         st.json(result["raw"])
 
 
+def render_key_terms(terms: list[dict[str, Any]]) -> None:
+    st.markdown("### Key Terms Extracted")
+    if not terms:
+        render_empty_state("Key Terms Extracted", "No precise key terms were extracted yet. Run analysis again with a clearer contract scan if this seems wrong.")
+        return
+    for term in terms:
+        st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><h4>{safe_html(term["term"])}</h4><span class="{badge_class(term["confidence"])}">{safe_html(term["confidence"])}</span></div><p><strong>Extracted value:</strong> {safe_html(term["extracted_value"])}</p><p><strong>Simple explanation:</strong> {safe_html(term["simple_explanation"])}</p><p><strong>Risk / what to verify:</strong> {safe_html(term["risk_or_verify"])}</p><p><strong>Evidence source:</strong> {safe_html(term["evidence_source"])}</p></div>', unsafe_allow_html=True)
+        render_evidence(term.get("evidence") or [])
+
+
+def render_clause_details(clause: dict[str, Any]) -> None:
+    details = clause.get("extracted_details") or {}
+    if not details:
+        st.caption("No additional structured details were extracted for this clause.")
+        return
+    chips = []
+    for key, value in details.items():
+        chips.append(f'<span>{safe_html(titleize(key))}: {safe_html(plain_value(value))}</span>')
+    st.markdown(f'<div class="cip-card-meta">{"".join(chips[:10])}</div>', unsafe_allow_html=True)
+
+
 def render_analysis_results(analysis: dict[str, Any]) -> None:
     render_score_cards(analysis)
     st.markdown("### AI Executive Review")
@@ -669,11 +740,13 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
             st.markdown(f'<div class="cip-risk-chip">⚠ {safe_html(item)}</div>', unsafe_allow_html=True)
     with cols[2]:
         st.markdown("**Recommended next actions**")
-        for item in analysis["recommended_improvements"] or [normalize_action("No AI recommendations returned.")]:
+        for item in analysis["recommended_improvements"] or [normalize_action("Review extracted terms and confirm business/legal assumptions before signature.")]:
             action = normalize_action(item)
             st.markdown(f'<div class="cip-check-item">→ {safe_html(action["action"])}</div>', unsafe_allow_html=True)
 
-    st.markdown("### Risk Summary")
+    render_key_terms(analysis.get("key_terms") or [])
+
+    st.markdown("### Contract Health / Risk Overview")
     if analysis["risks"]:
         for risk in analysis["risks"]:
             render_risk_card(risk)
@@ -920,6 +993,8 @@ def analysis_page():
             st.session_state.analysis_result = normalized
             st.session_state.last_analysis_contract_id = cid
             st.session_state.last_analysis_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.analysis_report_pdf = None
+            st.session_state.analysis_report_filename = None
             st.success("Analysis complete.")
         else:
             st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
@@ -938,8 +1013,20 @@ def analysis_page():
         })
     if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("analysis_result"):
         render_analysis_results(st.session_state.analysis_result)
+        st.markdown("### Download Report")
+        if st.button("Download PDF Report", use_container_width=True):
+            with st.spinner("Generating PDF report..."):
+                ok_pdf, pdf_data, pdf_filename = api_download(f"/contracts/{cid}/analysis/report", timeout=120)
+            if ok_pdf:
+                st.session_state.analysis_report_pdf = pdf_data
+                st.session_state.analysis_report_filename = pdf_filename or f"contract-intelligence-report-{datetime.now().strftime('%Y%m%d')}.pdf"
+                st.success("PDF report is ready to download.")
+            else:
+                st.error(user_message(pdf_data))
+        if st.session_state.get("analysis_report_pdf"):
+            st.download_button("Save PDF Report", data=st.session_state.analysis_report_pdf, file_name=st.session_state.get("analysis_report_filename", "contract-intelligence-report.pdf"), mime="application/pdf", use_container_width=True)
     else:
-        st.info("Run analysis to see health score, risks, clauses, recommendations, and evidence trace.")
+        st.info("Run analysis first to generate a report and see health score, risks, clauses, recommendations, and evidence trace.")
 
 
 def chat_page():
