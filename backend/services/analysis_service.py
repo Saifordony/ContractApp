@@ -214,6 +214,20 @@ def _missing_detail_questions(clause_type: str, details: dict[str, Any]) -> list
     return questions[:3]
 
 
+
+def _arabic_action_for_clause(clause_type: str) -> str:
+    templates = {
+        "termination": "مراجعة بند الإنهاء: قبل التوقيع، تأكد من وجود مدة إشعار واضحة، وحقوق الإنهاء لكل طرف، والتسوية النهائية، والالتزامات التي تستمر بعد انتهاء العقد.",
+        "payment": "مراجعة بند الدفع: تأكد من قيمة المبلغ، موعد الدفع، طريقة الدفع، الخصومات، الضرائب، وآلية التعامل مع التأخير أو النزاع على المدفوعات.",
+        "liability": "مراجعة بند المسؤولية: وضّح حدود المسؤولية، الاستثناءات، التعويضات، والإجراءات المتبعة عند حدوث ضرر أو مطالبة.",
+        "intellectual_property": "مراجعة بند الملكية الفكرية: تأكد من تحديد ملكية الأعمال، واستثناء الأعمال السابقة أو المشاريع الشخصية، وحقوق استخدام البرمجيات أو التصاميم.",
+        "confidentiality": "مراجعة بند السرية: تأكد من نطاق المعلومات السرية، مدة الالتزام، الاستثناءات، وما يجب فعله بالمعلومات بعد انتهاء العقد.",
+        "non_compete": "مراجعة القيود التنافسية وعدم الاستقطاب: تأكد من أن المدة، النطاق الجغرافي، والأطراف المشمولة واضحة ومعقولة وقابلة للمراجعة القانونية.",
+        "dispute_resolution": "مراجعة بند حل النزاعات: تأكد من وجود خطوات تصعيد واضحة، وجهة مختصة، وإجراءات عملية عند حدوث خلاف.",
+        "governing_law": "مراجعة بند القانون الحاكم: تأكد من تحديد القانون والجهة المختصة بطريقة واضحة ومناسبة للأطراف.",
+    }
+    return templates.get(clause_type, "مراجعة هذا البند: تأكد من وضوح المسؤوليات، التوقيت، الاستثناءات، والعواقب قبل الاعتماد على العقد.")
+
 def _clause_decision(clause: dict[str, Any], language: str = "en") -> dict[str, Any]:
     ctype = clause["type"]
     status = clause["status"]
@@ -250,10 +264,13 @@ def _clause_decision(clause: dict[str, Any], language: str = "en") -> dict[str, 
         risk_map = {"Low": "منخفض", "Medium": "متوسط", "High": "مرتفع"}
         risk = risk_map.get(risk, risk)
         priority = risk_map.get(priority, priority)
-        why = "يعتمد هذا القرار على الأدلة المستخرجة والتفاصيل الناقصة في هذا البند. " + why
-        fix = "قبل التوقيع، " + fix
+        why = "يعتمد هذا القرار على الأدلة المستخرجة والتفاصيل الناقصة في هذا البند. يجب مراجعة ما يظهر في الدليل وما لا يظهر قبل الاعتماد عليه."
+        fix = _arabic_action_for_clause(ctype)
         business_impact = "هذا القرار يساعد المستخدم على معرفة ما إذا كان البند مقبولًا للمراجعة التجارية أو يحتاج إلى تعديل أو مراجعة قانونية."
-    return {"clause_decision": decision, "business_impact": business_impact, "risk_level": risk, "why_this_decision": why, "recommended_fix": fix, "questions_to_ask": _missing_detail_questions(ctype, details), "priority": priority}
+        questions = _arabic_questions_for_clause(ctype)
+    else:
+        questions = _missing_detail_questions(ctype, details)
+    return {"clause_decision": decision, "business_impact": business_impact, "risk_level": risk, "why_this_decision": why, "recommended_fix": fix, "questions_to_ask": questions, "priority": priority}
 
 
 def _overall_decision(rule_result: dict[str, Any], clauses: list[dict[str, Any]], language: str = "en") -> dict[str, Any]:
@@ -285,6 +302,9 @@ def _overall_decision(rule_result: dict[str, Any], clauses: list[dict[str, Any]]
         review_decision = decision_map.get(review_decision, review_decision)
         confidence = {"High": "عالية", "Medium": "متوسطة", "Low": "منخفضة"}.get(confidence, confidence)
         reasoning = "يعتمد القرار على البنود الناقصة، اكتمال التفاصيل المستخرجة، جودة الأدلة، وإشارات المخاطر لكل بند. هذا دعم لاتخاذ القرار وليس رأيًا قانونيًا نهائيًا."
+        must_fix = [item.replace("Fix or add ", "أصلح أو أضف بند ").replace(" before signing.", " قبل التوقيع.") for item in must_fix]
+        should_review = [str(item).replace("Review ", "مراجعة بند ") for item in should_review]
+        acceptable = [str(item).replace(" appears acceptable for business review based on current evidence.", " يبدو مقبولًا للمراجعة التجارية بناءً على الأدلة الحالية.") for item in acceptable]
     return {"review_decision": review_decision, "decision_confidence": confidence, "decision_reasoning": reasoning, "top_decision_drivers": must_fix[:2] + should_review[:3], "must_fix_before_signing": must_fix, "should_review": should_review, "acceptable_points": acceptable[:5], "human_review_required": bool(must_fix or should_review)}
 
 

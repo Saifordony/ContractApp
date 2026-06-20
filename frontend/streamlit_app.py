@@ -150,6 +150,74 @@ def localized_status(value: str) -> str:
     return t(mapping.get(value, value), value)
 
 
+def current_lang() -> str:
+    return st.session_state.get("language", "en")
+
+
+def format_bool(value: Any, lang: str | None = None) -> str:
+    lang = lang or current_lang()
+    truthy = value is True or str(value).lower() in {"true", "yes", "1", "enabled", "connected"}
+    return ("نعم" if truthy else "لا") if lang == "ar" else ("Yes" if truthy else "No")
+
+
+def format_clause_type(value: Any, lang: str | None = None) -> str:
+    lang = lang or current_lang()
+    key = safe_text(value, "").lower().replace(" ", "_").replace("/", "_")
+    en = {"termination":"Termination", "payment":"Payment", "confidentiality":"Confidentiality", "intellectual_property":"Intellectual Property", "non_compete":"Non-compete / Non-solicitation", "non_solicitation":"Non-compete / Non-solicitation", "liability":"Liability", "dispute_resolution":"Dispute Resolution", "governing_law":"Governing Law", "renewal":"Renewal", "unknown":"Unknown"}
+    ar = {"termination":"الإنهاء", "payment":"الدفع", "confidentiality":"السرية", "intellectual_property":"الملكية الفكرية", "non_compete":"القيود التنافسية وعدم الاستقطاب", "non_solicitation":"القيود التنافسية وعدم الاستقطاب", "liability":"المسؤولية", "dispute_resolution":"حل النزاعات", "governing_law":"القانون الحاكم", "renewal":"التجديد", "unknown":"غير محدد"}
+    return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
+
+
+def format_risk_level(value: Any, lang: str | None = None) -> str:
+    lang = lang or current_lang()
+    key = safe_text(value, "").lower()
+    en = {"high":"High", "medium":"Medium", "low":"Low", "critical":"Critical", "found":"Found", "missing":"Missing", "partial":"Partial", "moderate alignment":"Moderate alignment", "strong alignment":"Strong alignment", "needs strengthening":"Needs strengthening"}
+    ar = {"high":"مرتفع", "medium":"متوسط", "low":"منخفض", "critical":"حرج", "found":"موجود", "missing":"مفقود", "partial":"جزئي", "moderate alignment":"توافق متوسط", "strong alignment":"توافق قوي", "needs strengthening":"يحتاج إلى تقوية", "مرتفع":"مرتفع", "متوسط":"متوسط", "منخفض":"منخفض"}
+    return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
+
+
+def format_priority(value: Any, lang: str | None = None) -> str:
+    return format_risk_level(value, lang)
+
+
+def format_decision(value: Any, lang: str | None = None) -> str:
+    lang = lang or current_lang()
+    key = safe_text(value, "").lower()
+    en = {"ready for business review":"Ready for business review", "needs revision":"Needs revision", "needs legal review":"Needs legal review", "high risk - do not sign yet":"High risk - do not sign yet", "acceptable":"Acceptable", "needs strengthening":"Needs strengthening", "needs clarification":"Needs clarification", "missing":"Missing", "high risk":"High risk", "needs review":"Needs review"}
+    ar = {"ready for business review":"جاهز للمراجعة التجارية", "needs revision":"يحتاج إلى تعديل", "needs legal review":"يحتاج إلى مراجعة قانونية", "high risk - do not sign yet":"خطر مرتفع - لا توقّع الآن", "acceptable":"مقبول", "needs strengthening":"يحتاج إلى تقوية", "needs clarification":"يحتاج إلى توضيح", "missing":"مفقود", "high risk":"خطر مرتفع", "needs review":"يحتاج إلى مراجعة", "مقبول للمراجعة التجارية":"مقبول للمراجعة التجارية", "يحتاج إلى تقوية":"يحتاج إلى تقوية", "يحتاج إلى توضيح":"يحتاج إلى توضيح", "مفقود":"مفقود", "يحتاج إلى مراجعة قانونية":"يحتاج إلى مراجعة قانونية"}
+    return (ar if lang == "ar" else en).get(key, safe_text(value, "يحتاج إلى مراجعة" if lang == "ar" else "Needs review"))
+
+
+def format_source(value: Any, lang: str | None = None) -> str:
+    lang = lang or current_lang()
+    key = safe_text(value, "").lower()
+    ar = {"extracted_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية"}
+    en = {"extracted_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison"}
+    return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
+
+
+def localized_review_item(text: Any) -> str:
+    value = safe_text(text, "")
+    if current_lang() != "ar":
+        return value
+    replacements = {
+        "Review Termination": "مراجعة بند الإنهاء",
+        "Review Payment": "مراجعة بند الدفع",
+        "Review Liability": "مراجعة بند المسؤولية",
+        "Review Intellectual Property": "مراجعة بند الملكية الفكرية",
+        "Review Confidentiality": "مراجعة بند السرية",
+        "Review Dispute Resolution": "مراجعة بند حل النزاعات",
+        "Review Governing Law": "مراجعة بند القانون الحاكم",
+        "Fix or add Termination before signing.": "أصلح أو أضف بند الإنهاء قبل التوقيع.",
+        "Fix or add Payment before signing.": "أصلح أو أضف بند الدفع قبل التوقيع.",
+        "Fix or add Liability before signing.": "أصلح أو أضف بند المسؤولية قبل التوقيع.",
+        "appears acceptable for business review based on current evidence.": "يبدو مقبولًا للمراجعة التجارية بناءً على الأدلة الحالية.",
+    }
+    for en, ar in replacements.items():
+        value = value.replace(en, ar)
+    return value
+
+
 def render_global_css() -> None:
     direction = "rtl" if is_rtl() else "ltr"
     st.markdown(build_app_css(st.session_state.get("theme", "light"), direction), unsafe_allow_html=True)
@@ -311,7 +379,12 @@ def normalize_action(item: Any, default_source: str = "AI / rule-based review") 
 
 
 def render_action_card(action: dict[str, str]) -> None:
-    st.markdown(f'<div class="cip-action-card"><div class="cip-card-header"><h4>{safe_html(action["action"])}</h4><span class="{badge_class(action["priority"])}">{safe_html(action["priority"])}</span></div><p><strong>Why this matters:</strong> {safe_html(action["rationale"])}</p><p><strong>Related clause:</strong> {safe_html(action["related_clause"])}</p><p><strong>Source:</strong> {safe_html(action["source"])}</p></div>', unsafe_allow_html=True)
+    why_label = localized_label("Why this matters", "لماذا هذا مهم")
+    clause_label = localized_label("Related clause", "البند المرتبط")
+    source_label = localized_label("Source", "المصدر")
+    priority = format_priority(action.get("priority"))
+    related = format_clause_type(action.get("related_clause")) if current_lang() == "ar" else safe_text(action.get("related_clause"), "Not specified")
+    st.markdown(f'<div class="cip-action-card"><div class="cip-card-header"><h4>{safe_html(localized_review_item(action["action"]))}</h4><span class="{badge_class(action["priority"])}">{safe_html(priority)}</span></div><p><strong>{safe_html(why_label)}:</strong> {safe_html(localized_review_item(action["rationale"]))}</p><p><strong>{safe_html(clause_label)}:</strong> {safe_html(related)}</p><p><strong>{safe_html(source_label)}:</strong> {safe_html(format_source(action["source"]))}</p></div>', unsafe_allow_html=True)
 
 
 def render_overall_visual(analysis: dict[str, Any]) -> None:
@@ -320,10 +393,13 @@ def render_overall_visual(analysis: dict[str, Any]) -> None:
     risk = analysis.get("risk_level", "Not specified")
     summary = plain_value(analysis.get("ai_overall_assessment"), "The analysis provides decision support based on extracted evidence and missing details.")
     decision = analysis.get("review_decision", {})
-    decision_label = decision.get("review_decision") if isinstance(decision, dict) else "Needs review"
+    decision_label = format_decision(decision.get("review_decision")) if isinstance(decision, dict) else format_decision("Needs review")
     width = max(0, min(100, score_number))
     explanation = "This contract appears generally strong, but review the decision drivers before signing." if score_number >= 80 else "This contract needs revision or focused review before signing."
-    st.markdown(f'<div class="cip-score-meter"><div class="cip-card-header"><div><div class="cip-eyebrow">Contract Health</div><div class="cip-score-value">{score_number}/100</div></div><span class="{badge_class(risk)}">{safe_html(risk)} Risk</span></div><div class="cip-score-track"><span class="cip-score-fill" style="width:{width}%"></span></div><p>{safe_html(explanation)}</p><p><strong>AI decision:</strong> {safe_html(decision_label)}</p><p class="cip-muted">{safe_html(summary)}</p></div>', unsafe_allow_html=True)
+    health_label = localized_label("Contract Health", "صحة العقد")
+    decision_text = localized_label("AI decision", "قرار الذكاء الاصطناعي")
+    risk_text = localized_label("Risk", "المخاطر")
+    st.markdown(f'<div class="cip-score-meter"><div class="cip-card-header"><div><div class="cip-eyebrow">{safe_html(health_label)}</div><div class="cip-score-value technical-value">{score_number}/100</div></div><span class="{badge_class(risk)}">{safe_html(format_risk_level(risk))} {safe_html(risk_text)}</span></div><div class="cip-score-track"><span class="cip-score-fill" style="width:{width}%"></span></div><p>{safe_html(explanation)}</p><p><strong>{safe_html(decision_text)}:</strong> {safe_html(decision_label)}</p><p class="cip-muted">{safe_html(summary)}</p></div>', unsafe_allow_html=True)
 
 def clause_summary(clause_type: str, status: str) -> str:
     if status == "missing":
@@ -557,7 +633,12 @@ def render_evidence(evidence: list[dict[str, Any]]) -> None:
         source = item.get("source") or "extracted_text"
         confidence = item.get("confidence") or "Not specified"
         keyword = item.get("keyword") or "Not specified"
-        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Evidence {idx} · Source: {safe_html(source)} · Location: {safe_html(location)} · Keyword: {safe_html(keyword)} · Confidence: {safe_html(confidence)}</div><blockquote>{safe_html(item.get("text"), "No direct evidence captured for this clause.")}</blockquote></div>', unsafe_allow_html=True)
+        evidence_label = localized_label("Evidence", "الدليل")
+        source_label = localized_label("Source", "المصدر")
+        location_label = localized_label("Location", "الموقع")
+        keyword_label = localized_label("Keyword", "الكلمة المفتاحية")
+        confidence_label = localized_label("Confidence", "الثقة")
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">{safe_html(evidence_label)} {idx} · {safe_html(source_label)}: {safe_html(format_source(source))} · {safe_html(location_label)}: <span class="technical-value">{safe_html(location)}</span> · {safe_html(keyword_label)}: <span class="technical-value">{safe_html(keyword)}</span> · {safe_html(confidence_label)}: {safe_html(confidence)}</div><blockquote>{safe_html(item.get("text"), "No direct evidence captured for this clause.")}</blockquote></div>', unsafe_allow_html=True)
 
 
 def render_chat_evidence(evidence: list[dict[str, Any]]) -> None:
@@ -569,7 +650,12 @@ def render_chat_evidence(evidence: list[dict[str, Any]]) -> None:
         source = item.get("source") or "extracted_contract_text"
         location = item.get("location") or "Extracted contract text"
         text = item.get("text") or "No direct evidence captured."
-        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Card {idx} · Clause: {safe_html(clause)} · Source: {safe_html(source)} · Location: {safe_html(location)}</div><blockquote>{safe_html(text)}</blockquote><div class="cip-muted">Why it matters: this is the contract text used to support the answer.</div></div>', unsafe_allow_html=True)
+        card_label = localized_label("Card", "بطاقة")
+        clause_label = localized_label("Clause", "البند")
+        source_label = localized_label("Source", "المصدر")
+        location_label = localized_label("Location", "الموقع")
+        why_text = localized_label("Why it matters: this is the contract text used to support the answer.", "سبب الأهمية: هذا هو نص العقد المستخدم لدعم الإجابة.")
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">{safe_html(card_label)} {idx} · {safe_html(clause_label)}: {safe_html(format_clause_type(clause))} · {safe_html(source_label)}: {safe_html(format_source(source))} · {safe_html(location_label)}: <span class="technical-value">{safe_html(location)}</span></div><blockquote>{safe_html(text)}</blockquote><div class="cip-muted">{safe_html(why_text)}</div></div>', unsafe_allow_html=True)
 
 
 def confidence_human(confidence: Any, label: str | None = None) -> str:
@@ -587,12 +673,17 @@ def confidence_human(confidence: Any, label: str | None = None) -> str:
 
 
 def render_assistant_message(message: dict[str, Any]) -> None:
-    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">Contract Assistant · {safe_html(message.get("answer_type"), "conversation")}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>Plain-English summary:</strong> {safe_html(message.get("plain_english_summary"), "No summary returned.")}</p><p><strong>Practical note:</strong> {safe_html(message.get("practical_note"), "No practical note returned.")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label")))}</span><span>Used contract: {safe_html(message.get("used_contract"))}</span><span>LLM used: {safe_html(message.get("llm_used"))}</span></div></div>', unsafe_allow_html=True)
-    with st.expander("Evidence used", expanded=False):
+    assistant_label = localized_label("Contract Assistant", "مساعد العقود")
+    summary_label = localized_label("Simple summary", "ملخص مبسط")
+    note_label = localized_label("Practical note", "ملاحظة عملية")
+    used_contract_label = localized_label("Used contract", "استخدم العقد")
+    llm_label = localized_label("LLM used", "استخدم نموذج الذكاء الاصطناعي")
+    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">{safe_html(assistant_label)} · {safe_html(format_source(message.get("answer_type")))}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>{safe_html(summary_label)}:</strong> {safe_html(message.get("plain_english_summary"), "")}</p><p><strong>{safe_html(note_label)}:</strong> {safe_html(message.get("practical_note"), "")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label")))}</span><span>{safe_html(used_contract_label)}: {safe_html(format_bool(message.get("used_contract")))}</span><span>{safe_html(llm_label)}: {safe_html(format_bool(message.get("llm_used")))}</span></div></div>', unsafe_allow_html=True)
+    with st.expander(localized_label("Evidence used", "الأدلة المستخدمة"), expanded=False):
         render_chat_evidence(message.get("evidence") or [])
     suggestions = message.get("follow_up_suggestions") or []
     if suggestions:
-        st.markdown("**Suggested follow-ups**")
+        st.markdown(f"**{localized_label('Suggested follow-ups', 'أسئلة متابعة مقترحة')}**")
         st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(item)}</span>' for item in suggestions[:4]), unsafe_allow_html=True)
 
 
@@ -605,31 +696,41 @@ def append_chat_message(role: str, content: str, **metadata: Any) -> None:
 def render_clause_card(clause: dict[str, Any]) -> None:
     status_class = badge_class(clause["status"])
     priority_class = badge_class(clause["review_priority"])
-    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span class="{badge_class(clause["clause_decision"])}">AI decision: {safe_html(clause["clause_decision"])}</span><span class="{badge_class(clause["decision_risk_level"])}">Risk: {safe_html(clause["decision_risk_level"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span><span>Source: {safe_html(clause["location"])}</span></div></div>', unsafe_allow_html=True)
+    review_label = localized_label("AI Review by Clause", "مراجعة الذكاء الاصطناعي للبند")
+    decision_label = localized_label("AI decision", "قرار الذكاء الاصطناعي")
+    risk_label = localized_label("Risk", "المخاطر")
+    priority_label = localized_label("Priority", "الأولوية")
+    source_label = localized_label("Source", "المصدر")
+    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">{safe_html(review_label)}</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(format_risk_level(clause["status"]))}</span></div><div class="cip-card-meta"><span class="{badge_class(clause["clause_decision"])}">{safe_html(decision_label)}: {safe_html(format_decision(clause["clause_decision"]))}</span><span class="{badge_class(clause["decision_risk_level"])}">{safe_html(risk_label)}: {safe_html(format_risk_level(clause["decision_risk_level"]))}</span><span class="{priority_class}">{safe_html(priority_label)}: {safe_html(format_priority(clause["review_priority"]))}</span><span>{safe_html(source_label)}: <span class="technical-value">{safe_html(clause["location"])}</span></span></div></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-layman-box"><strong>{safe_html(localized_label("Simple explanation", "شرح مبسط"))}</strong><br>{safe_html(clause["simple_explanation"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-ai-box"><strong>{safe_html(localized_label("Why it matters", "لماذا هذا مهم"))}:</strong><br>{safe_html(clause["why_it_matters"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-ai-box"><strong>{safe_html(localized_label("Risk in plain language", "الخطر ببساطة"))}:</strong><br>{safe_html(clause["risk_in_plain_english"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-recommendation"><strong>{safe_html(localized_label("What to check next", "ما الذي يجب التأكد منه"))}:</strong> {safe_html(clause["what_to_check_next"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-negotiation"><strong>Why this decision:</strong> {safe_html(clause["why_this_decision"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-recommendation"><strong>Recommended fix:</strong> {safe_html(clause["recommended_fix"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-negotiation"><strong>{safe_html(localized_label("Why this decision", "سبب القرار"))}:</strong> {safe_html(clause["why_this_decision"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>{safe_html(localized_label("Recommended fix", "الإصلاح المقترح"))}:</strong> {safe_html(clause["recommended_fix"])}</div>', unsafe_allow_html=True)
     if clause.get("questions_to_ask"):
         st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(q)}</span>' for q in clause["questions_to_ask"]), unsafe_allow_html=True)
-    st.markdown("**Evidence from contract**")
+    st.markdown(f"**{localized_label('Evidence from contract', 'الدليل من العقد')}**")
     render_evidence(clause["evidence"])
-    st.markdown("**Key details extracted**")
+    st.markdown(f"**{localized_label('Key details extracted', 'التفاصيل الرئيسية المستخرجة')}**")
     render_clause_details(clause)
-    st.markdown(f'<div class="cip-card-meta"><span>Completeness: {safe_html(clause["completeness"])}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-recommendation"><strong>AI recommendation:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-negotiation"><strong>Negotiation note:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-card-meta"><span>{safe_html(localized_label("Completeness", "الاكتمال"))}: {safe_html(format_risk_level(clause["completeness"]))}</span></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>{safe_html(localized_label("AI recommendation", "توصية الذكاء الاصطناعي"))}:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-negotiation"><strong>{safe_html(localized_label("Negotiation note", "ملاحظة تفاوضية"))}:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
 
 
 def render_risk_card(risk: dict[str, str]) -> None:
-    st.markdown(f'<div class="cip-risk-card"><div class="cip-card-header"><h4>{safe_html(risk["title"])}</h4><span class="{badge_class(risk["severity"])}">{safe_html(risk["severity"].title())}</span></div><p>{safe_html(risk["explanation"])}</p><p><strong>Affected clause:</strong> {safe_html(risk["affected_clause"])}</p><p><strong>Recommendation:</strong> {safe_html(risk["recommendation"])}</p></div>', unsafe_allow_html=True)
+    affected_label = localized_label("Affected clause", "البند المتأثر")
+    rec_label = localized_label("Recommendation", "التوصية")
+    st.markdown(f'<div class="cip-risk-card"><div class="cip-card-header"><h4>{safe_html(risk["title"])}</h4><span class="{badge_class(risk["severity"])}">{safe_html(format_risk_level(risk["severity"]))}</span></div><p>{safe_html(risk["explanation"])}</p><p><strong>{safe_html(affected_label)}:</strong> {safe_html(format_clause_type(risk["affected_clause"]))}</p><p><strong>{safe_html(rec_label)}:</strong> {safe_html(risk["recommendation"])}</p></div>', unsafe_allow_html=True)
 
 
 def render_missing_clause_card(name: str) -> None:
-    label = titleize(name)
-    st.markdown(f'<div class="cip-missing-card"><div class="cip-card-header"><h4>{safe_html(label)}</h4><span class="cip-badge cip-badge-red">High Priority</span></div><p><strong>Why it matters:</strong> {safe_html(clause_summary(safe_text(name).lower(), "missing"))}</p><p><strong>Suggested wording direction:</strong> {safe_html(generic_recommendation(safe_text(name).lower(), "missing"))}</p></div>', unsafe_allow_html=True)
+    label = format_clause_type(name)
+    priority_label = localized_label("High Priority", "أولوية مرتفعة")
+    why_label = localized_label("Why it matters", "لماذا هذا مهم")
+    wording_label = localized_label("Suggested wording direction", "اتجاه الصياغة المقترح")
+    st.markdown(f'<div class="cip-missing-card"><div class="cip-card-header"><h4>{safe_html(label)}</h4><span class="cip-badge cip-badge-red">{safe_html(priority_label)}</span></div><p><strong>{safe_html(why_label)}:</strong> {safe_html(clause_summary(safe_text(name).lower(), "missing"))}</p><p><strong>{safe_html(wording_label)}:</strong> {safe_html(generic_recommendation(safe_text(name).lower(), "missing"))}</p></div>', unsafe_allow_html=True)
 
 
 def render_recommendations(analysis: dict[str, Any]) -> None:
@@ -673,11 +774,14 @@ def service_status_label(ok: bool, degraded: bool = False) -> str:
 
 
 def render_status_card(title: str, status: str, key_value: Any, explanation: str, checked_at: str = "Now") -> None:
-    st.markdown(f'<div class="cip-status-card"><div class="cip-card-header"><h4>{safe_html(title)}</h4><span class="{badge_class(status)}">{safe_html(status)}</span></div><p><strong>{safe_html(key_value)}</strong></p><p>{safe_html(explanation)}</p><div class="cip-muted">Last checked: {safe_html(checked_at)}</div></div>', unsafe_allow_html=True)
+    checked_label = localized_label("Last checked", "آخر فحص")
+    display_value = format_bool(key_value) if isinstance(key_value, bool) else key_value
+    st.markdown(f'<div class="cip-status-card"><div class="cip-card-header"><h4>{safe_html(title)}</h4><span class="{badge_class(status)}">{safe_html(localized_status(status))}</span></div><p><strong>{safe_html(display_value)}</strong></p><p>{safe_html(explanation)}</p><div class="cip-muted">{safe_html(checked_label)}: {safe_html(checked_at)}</div></div>', unsafe_allow_html=True)
 
 
 def endpoint_status_row(name: str, status: str, status_code: Any, explanation: str) -> None:
-    st.markdown(f'<div class="cip-endpoint-row"><strong>{safe_html(name)}</strong><span class="{badge_class(status)}">{safe_html(status)}</span><span>Status: {safe_html(status_code)}</span><span>{safe_html(explanation)}</span></div>', unsafe_allow_html=True)
+    status_label = localized_label("Status", "الحالة")
+    st.markdown(f'<div class="cip-endpoint-row"><strong class="technical-value">{safe_html(name)}</strong><span class="{badge_class(status)}">{safe_html(localized_status(status))}</span><span>{safe_html(status_label)}: <span class="technical-value">{safe_html(status_code)}</span></span><span>{safe_html(explanation)}</span></div>', unsafe_allow_html=True)
 
 
 def run_endpoint_checks() -> list[dict[str, Any]]:
@@ -759,24 +863,32 @@ def render_ai_decision(analysis: dict[str, Any]) -> None:
     if not isinstance(decision, dict):
         decision = {}
     st.markdown("### Overall AI Decision")
-    st.markdown(f'<div class="cip-summary-card"><div class="cip-card-header"><h3>{safe_html(decision.get("review_decision", "Needs review"))}</h3><span class="{badge_class(decision.get("decision_confidence", "Medium"))}">{safe_html(decision.get("decision_confidence", "Medium"))}</span></div><p><strong>Why:</strong> {safe_html(decision.get("decision_reasoning", "Decision support is based on extracted evidence, missing details, and clause-level risks."))}</p><p><strong>Human review required:</strong> {safe_html(decision.get("human_review_required", True))}</p></div>', unsafe_allow_html=True)
-    for label, key in [("Must fix before signing", "must_fix_before_signing"), ("Should review", "should_review"), ("Acceptable points", "acceptable_points")]:
+    why_label = localized_label("Why", "سبب القرار")
+    human_label = localized_label("Human review required", "تتطلب مراجعة بشرية")
+    confidence = format_risk_level(decision.get("decision_confidence", "Medium"))
+    st.markdown(f'<div class="cip-summary-card"><div class="cip-card-header"><h3>{safe_html(format_decision(decision.get("review_decision", "Needs review")))}</h3><span class="{badge_class(decision.get("decision_confidence", "Medium"))}">{safe_html(confidence)}</span></div><p><strong>{safe_html(why_label)}:</strong> {safe_html(decision.get("decision_reasoning", "Decision support is based on extracted evidence, missing details, and clause-level risks."))}</p><p><strong>{safe_html(human_label)}:</strong> {safe_html(format_bool(decision.get("human_review_required", True)))}</p></div>', unsafe_allow_html=True)
+    for label, key in [(localized_label("Must fix before signing", "يجب إصلاحه قبل التوقيع"), "must_fix_before_signing"), (localized_label("Should review", "ينبغي مراجعته"), "should_review"), (localized_label("Acceptable points", "نقاط مقبولة"), "acceptable_points")]:
         items = decision.get(key) or []
         if items:
             st.markdown(f"**{label}**")
             for item in items[:5]:
-                st.markdown(f'<div class="cip-check-item">• {safe_html(item)}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="cip-check-item">• {safe_html(localized_review_item(item))}</div>', unsafe_allow_html=True)
 
 
 def render_priority_action_plan(analysis: dict[str, Any]) -> None:
     plan = analysis.get("priority_action_plan") or {}
     st.markdown("### Priority Action Plan")
-    for label, key in [("Must fix before signing", "must_fix_before_signing"), ("Should clarify", "should_clarify"), ("Good to confirm", "good_to_confirm"), ("Optional improvements", "optional_improvements")]:
+    for label, key in [(localized_label("Must fix before signing", "يجب إصلاحه قبل التوقيع"), "must_fix_before_signing"), (localized_label("Should clarify", "ينبغي توضيحه"), "should_clarify"), (localized_label("Good to confirm", "من الجيد تأكيده"), "good_to_confirm"), (localized_label("Optional improvements", "تحسينات اختيارية"), "optional_improvements")]:
         items = plan.get(key) or []
         if items:
             st.markdown(f"**{label}**")
             for item in items:
-                render_action_card({"action": item.get("action"), "rationale": item.get("reason"), "related_clause": item.get("related_clause"), "priority": item.get("priority"), "source": f"Owner: {item.get('owner_suggestion', 'Business Owner')} · {item.get('evidence_basis', 'Evidence-based decision support')}"})
+                owner_label = localized_label("Owner", "المالك")
+                owner_value = item.get('owner_suggestion', 'Business Owner')
+                if current_lang() == "ar":
+                    owner_value = {"Legal": "القانوني", "Business Owner": "مسؤول الأعمال", "HR": "الموارد البشرية", "Finance": "المالية"}.get(owner_value, owner_value)
+                source_text = f"{owner_label}: {owner_value} · {item.get('evidence_basis', localized_label('Evidence-based decision support', 'دعم قرار مبني على الأدلة'))}"
+                render_action_card({"action": item.get("action"), "rationale": item.get("reason"), "related_clause": item.get("related_clause"), "priority": item.get("priority"), "source": source_text})
 
 
 def render_analysis_results(analysis: dict[str, Any]) -> None:

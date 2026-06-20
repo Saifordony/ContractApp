@@ -314,6 +314,13 @@ def test_theme_contrast_score_meter_and_ai_language_controls():
         "--cip-nav-active-bg",
         "--cip-nav-active-text",
         "--cip-nav-inactive-text",
+        "--cip-input-bg",
+        "--cip-input-text",
+        "--cip-button-primary-bg",
+        "data-baseweb=\"select\"",
+        "data-testid=\"stTextInput\"",
+        ".technical-value",
+        ".rtl",
         ".cip-score-meter",
         ".cip-score-track",
         ".cip-score-fill",
@@ -333,6 +340,13 @@ def test_theme_contrast_score_meter_and_ai_language_controls():
         "review_decision",
         "priority_action_plan",
         "?report_language=",
+        "format_bool",
+        "format_clause_type",
+        "format_risk_level",
+        "format_decision",
+        "format_source",
+        "Human review required",
+        "تتطلب مراجعة بشرية",
     ]:
         assert token in src
     assert "st.dataframe" not in src
@@ -355,6 +369,9 @@ def test_analysis_service_has_decision_layer_and_arabic_layman_support():
         "explanation_language",
         "clear simple Arabic",
         "هذا البند",
+        "_arabic_action_for_clause",
+        "مراجعة بند الإنهاء",
+        "_arabic_questions_for_clause",
     ]:
         assert token in src
     assert "The AI review did not return" not in src

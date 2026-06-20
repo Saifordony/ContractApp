@@ -5,6 +5,9 @@ LIGHT_TOKENS = {
     "surface": "#F8FAFC",
     "surface_strong": "#FFFFFF",
     "card": "#ffffff",
+    "elevated": "#ffffff",
+    "input_bg": "#F8FAFC",
+    "input_text": "#0F172A",
     "border": "#e2e8f0",
     "border_strong": "#dbeafe",
     "text": "#0f172a",
@@ -26,6 +29,9 @@ DARK_TOKENS = {
     "surface": "#1E293B",
     "surface_strong": "#111827",
     "card": "#1E293B",
+    "elevated": "#243044",
+    "input_bg": "#1E293B",
+    "input_text": "#F8FAFC",
     "border": "#334155",
     "border_strong": "#1e40af",
     "text": "#F8FAFC",
@@ -54,6 +60,9 @@ def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
   --cip-surface: {tokens['surface']};
   --cip-surface-strong: {tokens['surface_strong']};
   --cip-card: {tokens['card']};
+  --cip-elevated: {tokens['elevated']};
+  --cip-input-bg: {tokens['input_bg']};
+  --cip-input-text: {tokens['input_text']};
   --cip-border: {tokens['border']};
   --cip-border-strong: {tokens['border_strong']};
   --cip-text: {tokens['text']};
@@ -73,6 +82,10 @@ def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
   --cip-nav-hover-bg: {"#334155" if theme == "dark" else "#EFF6FF"};
   --cip-nav-inactive-bg: {"#1E293B" if theme == "dark" else "transparent"};
   --cip-nav-inactive-text: {"#CBD5E1" if theme == "dark" else "#334155"};
+  --cip-button-primary-bg: #2563EB;
+  --cip-button-primary-text: #FFFFFF;
+  --cip-button-secondary-bg: {"#1E293B" if theme == "dark" else "#FFFFFF"};
+  --cip-button-secondary-text: {"#F8FAFC" if theme == "dark" else "#0F172A"};
 }}
 [data-testid="stAppViewContainer"] {{ background: var(--cip-bg); color: var(--cip-text); }}
 [data-testid="stSidebar"] {{ background: var(--cip-surface-strong); border-{reverse_align}: 1px solid var(--cip-border); }}
@@ -82,9 +95,17 @@ def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p, [data-testid="stSidebar"] label {{ color:var(--cip-muted) !important; }}
 .block-container {{ max-width: 1240px; padding-top: 1.25rem; direction: {direction}; text-align: {align}; }}
 h1, h2, h3, h4, h5, h6, p, label, span {{ color: inherit; }}
-.stButton > button, .stDownloadButton > button {{ border-radius: 14px; border: 1px solid var(--cip-border); min-height: 2.6rem; font-weight: 750; }}
-.stButton > button:hover {{ border-color: var(--cip-accent); color: var(--cip-accent); }}
-div[data-baseweb="input"], div[data-baseweb="select"], textarea {{ border-radius: 14px !important; }}
+.stButton > button, .stDownloadButton > button {{ background:var(--cip-button-secondary-bg) !important; color:var(--cip-button-secondary-text) !important; border-radius: 14px; border: 1px solid var(--cip-border); min-height: 2.6rem; font-weight: 750; opacity:1 !important; }}
+.stButton > button:hover, .stDownloadButton > button:hover {{ background:var(--cip-nav-hover-bg) !important; border-color: var(--cip-accent); color: var(--cip-text) !important; }}
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{ background:var(--cip-button-primary-bg) !important; color:var(--cip-button-primary-text) !important; border-color:var(--cip-button-primary-bg) !important; }}
+div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="textarea"], textarea {{ background:var(--cip-input-bg) !important; color:var(--cip-input-text) !important; border-radius: 14px !important; border-color:var(--cip-border) !important; }}
+div[data-baseweb="input"] input, div[data-baseweb="select"] input, textarea, input {{ color:var(--cip-input-text) !important; -webkit-text-fill-color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] span, div[data-baseweb="select"] div, div[data-baseweb="popover"] * {{ color:var(--cip-input-text) !important; }}
+div[data-baseweb="popover"] div {{ background:var(--cip-elevated) !important; }}
+input::placeholder, textarea::placeholder {{ color:var(--cip-muted) !important; opacity:1 !important; }}
+[data-testid="stRadio"] label, [data-testid="stFileUploader"] label, [data-testid="stTextInput"] label, [data-testid="stTextArea"] label, [data-testid="stSelectbox"] label {{ color:var(--cip-text) !important; }}
+.streamlit-expanderHeader, [data-testid="stExpander"] details summary, [data-testid="stExpander"] * {{ color:var(--cip-text) !important; }}
+[aria-disabled="true"], button:disabled {{ opacity:.55 !important; color:var(--cip-muted) !important; }}
 .cip-shell-topbar {{ display:flex; align-items:center; justify-content:space-between; gap:1rem; background:var(--cip-surface); border:1px solid var(--cip-border); border-radius:24px; padding:1rem 1.15rem; margin:.25rem 0 1.1rem; box-shadow:var(--cip-shadow); }}
 .cip-page-title h1 {{ margin:0; color:var(--cip-text); font-size:2rem; letter-spacing:-.04em; }}
 .cip-page-title p {{ margin:.25rem 0 0; color:var(--cip-muted); line-height:1.55; }}
@@ -93,6 +114,8 @@ div[data-baseweb="input"], div[data-baseweb="select"], textarea {{ border-radius
 .cip-brand-subtitle, .cip-muted {{ color: var(--cip-muted); }}
 .cip-nav-group {{ color:var(--cip-muted); font-size:.72rem; font-weight:900; letter-spacing:.1em; text-transform:uppercase; margin:1.1rem 0 .35rem; }}
 .cip-nav-active {{ background:var(--cip-nav-active-bg); border:1px solid var(--cip-nav-active-bg); color:var(--cip-nav-active-text) !important; border-radius:16px; padding:.65rem .75rem; font-weight:900; margin:.2rem 0; text-align:{align}; }}
+.rtl {{ direction:rtl; text-align:right; }}
+.ltr-value, .technical-value {{ direction:ltr; unicode-bidi:isolate; display:inline-block; }}
 .cip-auth-card, .cip-card, .cip-kpi, .cip-review-card, .cip-risk-card, .cip-missing-card, .cip-summary-card, .cip-error-card, .cip-action-card, .cip-benchmark-card, .cip-status-card, .cip-empty-state {{ background:var(--cip-card); border:1px solid var(--cip-border); border-radius:22px; box-shadow:var(--cip-shadow); color:var(--cip-text); }}
 .cip-auth-card {{ padding:1rem 1.15rem; }}
 .cip-card {{ padding:1.3rem; }}
