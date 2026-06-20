@@ -143,3 +143,33 @@ def test_contract_analysis_route_logs_and_returns_contract_id():
     assert "analysis completed" in src
     assert 'result["contract_id"] = contract_id' in src
     assert "degraded_mode" in src and "llm_used" in src
+
+
+def test_chat_service_supports_conversational_contract_aware_schema():
+    src = read("backend/services/chat_service.py")
+    for token in [
+        "classify_question",
+        "contract_specific",
+        "small_talk",
+        "app_help",
+        "plain_english_summary",
+        "practical_note",
+        "follow_up_suggestions",
+        "used_contract",
+        "You are a helpful contract intelligence assistant",
+    ]:
+        assert token in src
+
+
+def test_chat_ui_is_chat_style_not_raw_json_main_view():
+    src = read("frontend/streamlit_app.py")
+    for token in [
+        "st.chat_message",
+        "st.chat_input",
+        "chat_history",
+        "render_chat_evidence",
+        "Evidence used",
+        "Suggested follow-ups",
+        "New chat",
+    ]:
+        assert token in src

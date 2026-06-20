@@ -32,5 +32,8 @@ APP_CSS = """
 .cip-ai-box { background:#eef2ff; border:1px solid #c7d2fe; color:#1e1b4b; border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; line-height:1.55; }
 .cip-negotiation { background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12; border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; }
 .cip-risk-chip { background:#fff7ed; border:1px solid #fdba74; color:#9a3412; border-radius:14px; padding:.65rem .8rem; margin:.4rem 0; }
+.cip-assistant-bubble { background:#ffffff; border:1px solid #dbeafe; border-radius:20px; padding:1rem 1.1rem; box-shadow:0 12px 30px rgba(15,23,42,.06); line-height:1.62; }
+.cip-chat-contract { background:#eef2ff; border:1px solid #c7d2fe; color:#1e1b4b; border-radius:18px; padding:.85rem 1rem; margin:.4rem 0 1rem 0; }
+.cip-suggestion-chip { display:inline-flex; background:#f8fafc; border:1px solid #cbd5e1; color:#334155; border-radius:999px; padding:.42rem .7rem; margin:.25rem; font-size:.86rem; }
 </style>
 """

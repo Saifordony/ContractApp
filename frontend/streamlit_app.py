@@ -13,7 +13,7 @@ FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None}
+    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -305,6 +305,48 @@ def render_evidence(evidence: list[dict[str, Any]]) -> None:
         confidence = item.get("confidence") or "Not specified"
         keyword = item.get("keyword") or "Not specified"
         st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Evidence {idx} · Source: {safe_html(source)} · Location: {safe_html(location)} · Keyword: {safe_html(keyword)} · Confidence: {safe_html(confidence)}</div><blockquote>{safe_html(item.get("text"), "No direct evidence captured for this clause.")}</blockquote></div>', unsafe_allow_html=True)
+
+
+def render_chat_evidence(evidence: list[dict[str, Any]]) -> None:
+    if not evidence:
+        st.caption("No contract evidence was used for this answer.")
+        return
+    for idx, item in enumerate(evidence, start=1):
+        clause = item.get("clause") or "Relevant contract text"
+        source = item.get("source") or "extracted_contract_text"
+        location = item.get("location") or "Extracted contract text"
+        text = item.get("text") or "No direct evidence captured."
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Card {idx} · Clause: {safe_html(clause)} · Source: {safe_html(source)} · Location: {safe_html(location)}</div><blockquote>{safe_html(text)}</blockquote><div class="cip-muted">Why it matters: this is the contract text used to support the answer.</div></div>', unsafe_allow_html=True)
+
+
+def confidence_human(confidence: Any, label: str | None = None) -> str:
+    if label:
+        return label
+    try:
+        value = float(confidence)
+    except (TypeError, ValueError):
+        return "Medium — this answer should be confirmed against the contract."
+    if value >= 0.8:
+        return "High — the contract clearly mentions this."
+    if value >= 0.5:
+        return "Medium — the contract partly answers this, but some details should be confirmed."
+    return "Low — the contract does not clearly answer this."
+
+
+def render_assistant_message(message: dict[str, Any]) -> None:
+    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">Contract Assistant · {safe_html(message.get("answer_type"), "conversation")}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>Plain-English summary:</strong> {safe_html(message.get("plain_english_summary"), "No summary returned.")}</p><p><strong>Practical note:</strong> {safe_html(message.get("practical_note"), "No practical note returned.")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label")))}</span><span>Used contract: {safe_html(message.get("used_contract"))}</span><span>LLM used: {safe_html(message.get("llm_used"))}</span></div></div>', unsafe_allow_html=True)
+    with st.expander("Evidence used", expanded=False):
+        render_chat_evidence(message.get("evidence") or [])
+    suggestions = message.get("follow_up_suggestions") or []
+    if suggestions:
+        st.markdown("**Suggested follow-ups**")
+        st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(item)}</span>' for item in suggestions[:4]), unsafe_allow_html=True)
+
+
+def append_chat_message(role: str, content: str, **metadata: Any) -> None:
+    item = {"role": role, "content": content, "timestamp": datetime.now().strftime("%H:%M:%S")}
+    item.update(metadata)
+    st.session_state.chat_history.append(item)
 
 
 def render_clause_card(clause: dict[str, Any]) -> None:
@@ -616,16 +658,67 @@ def analysis_page():
 
 def chat_page():
     st.title("Contract Chat")
+    st.caption("Ask questions about this contract, risks, clauses, obligations, or general follow-up questions.")
     selected_label, cid = select_contract()
-    q = st.text_input("Ask a question grounded in this contract")
-    if cid and st.button("Ask"):
-        ok, data = api_request("POST", f"/contracts/{cid}/chat", json={"question": q})
-        if ok:
-            st.write(data["answer"])
-            st.caption(f"Confidence: {data['confidence']}")
-            st.write(data["evidence"])
+    if not cid:
+        return
+    if st.session_state.chat_contract_id and st.session_state.chat_contract_id != cid:
+        st.warning("You selected a different contract. Start a new chat to avoid mixing evidence between contracts.")
+        if st.button("New chat for selected contract", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.chat_contract_id = cid
+            st.session_state.chat_contract_label = selected_label
+            st.rerun()
+        return
+    if not st.session_state.chat_contract_id:
+        st.session_state.chat_contract_id = cid
+        st.session_state.chat_contract_label = selected_label
+    cols = st.columns([3, 1])
+    with cols[0]:
+        st.markdown(f'<div class="cip-chat-contract">Selected contract: <strong>{safe_html(selected_label)}</strong></div>', unsafe_allow_html=True)
+    with cols[1]:
+        if st.button("New chat", use_container_width=True):
+            st.session_state.chat_history = []
+            st.session_state.chat_contract_id = cid
+            st.session_state.chat_contract_label = selected_label
+            st.rerun()
+    if not st.session_state.chat_history:
+        st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(item)}</span>' for item in ["What are my key obligations?", "What risks should I review first?", "Explain this in simple terms", "What should I negotiate?"]), unsafe_allow_html=True)
+    for message in st.session_state.chat_history:
+        if message["role"] == "user":
+            with st.chat_message("user"):
+                st.markdown(safe_html(message["content"]))
         else:
-            st.error(user_message(data))
+            with st.chat_message("assistant"):
+                render_assistant_message(message)
+    prompt = st.chat_input("Ask about the selected contract, or ask a general follow-up question...")
+    if prompt:
+        append_chat_message("user", prompt)
+        endpoint_path = f"/contracts/{cid}/chat"
+        with st.spinner("Thinking through the contract context..."):
+            ok, data = api_request("POST", endpoint_path, json={"question": prompt}, timeout=120)
+        if ok:
+            append_chat_message(
+                "assistant",
+                data.get("answer", "I could not generate an answer."),
+                answer_type=data.get("answer_type"),
+                confidence=data.get("confidence"),
+                confidence_label=data.get("confidence_label"),
+                used_contract=data.get("used_contract"),
+                evidence=data.get("evidence") or [],
+                plain_english_summary=data.get("plain_english_summary"),
+                practical_note=data.get("practical_note"),
+                follow_up_suggestions=data.get("follow_up_suggestions") or [],
+                degraded_mode=data.get("degraded_mode"),
+                llm_used=data.get("llm_used"),
+                raw=data,
+            )
+            st.rerun()
+        else:
+            st.markdown(f'<div class="cip-error-card"><strong>I could not complete the chat request.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
+    with st.expander("Advanced / Debug Output", expanded=False):
+        st.caption("Last chat/API debug details")
+        st.json({"contract_id": cid, "contract_label": selected_label, "last_api_debug": st.session_state.last_api_debug, "last_assistant_raw": next((m.get("raw") for m in reversed(st.session_state.chat_history) if m.get("role") == "assistant"), None)})
 
 
 def benchmark_page():
