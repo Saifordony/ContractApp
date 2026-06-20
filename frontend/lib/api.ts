@@ -92,7 +92,12 @@ async function authFetch(path: string, options: RequestInit = {}, retry = true):
 
 async function jsonRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  // For FormData (file upload), let the browser set multipart/form-data with its
+  // boundary — forcing application/json here breaks server-side form parsing (422).
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  if (options.body && !isFormData && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const res = await authFetch(path, { ...options, headers });
   if (res.status === 204) return undefined as T;
   let body: any = null;
