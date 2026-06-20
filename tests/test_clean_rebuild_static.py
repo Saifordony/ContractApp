@@ -66,3 +66,19 @@ def test_compatibility_endpoints_delegate_to_official_services():
 def test_next_frontend_not_active():
     assert not (ROOT / "frontend-next").exists()
     assert (ROOT / "_archive/frontend-next-unused").exists()
+
+
+def test_streamlit_ui_feedback_not_used_in_ternaries_or_one_line_blocks():
+    src = read("frontend/streamlit_app.py")
+    forbidden = [
+        " if ok else st.",
+        " else st.",
+        "if ok: st.",
+        "; st.success",
+        "; st.error",
+        "; st.warning",
+        "; st.info",
+        "border=True",
+    ]
+    for pattern in forbidden:
+        assert pattern not in src
