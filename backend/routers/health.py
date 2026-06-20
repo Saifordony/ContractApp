@@ -19,7 +19,19 @@ async def healthz():
     except Exception:
         mongo = "unreachable"
     llm = llm_health()
-    return {"Active Backend": settings.active_backend, "Active Backend File": settings.active_backend_file, "Backend Build": settings.backend_build, "mongodb_status": mongo, "auth_status": "enabled", "llm_ollama_status": "reachable" if llm.get("reachable") else "unreachable", "active_model": settings.ollama_model, "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "Active Backend": settings.active_backend,
+        "Active Backend File": settings.active_backend_file,
+        "Backend Build": settings.backend_build,
+        "mongodb_status": mongo,
+        "auth_status": "enabled",
+        "llm_ollama_status": "reachable" if llm.get("reachable") else "unreachable",
+        "llm_reachable": bool(llm.get("reachable")),
+        "ollama_url": settings.ollama_base_url,
+        "active_model": settings.ollama_model,
+        "last_llm_error": llm.get("error") or llm.get("technical_error"),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 @router.get("/llm/health")
 def llm_status():

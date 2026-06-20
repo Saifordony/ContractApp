@@ -174,9 +174,14 @@ def normalize_clause(clause: Any, index: int) -> dict[str, Any]:
         "page": page,
         "location": location,
         "evidence": evidence,
-        "summary": safe_text(clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
+        "summary": safe_text(clause.get("rule_based_summary") or clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
         "risk": safe_text(clause.get("risk") or clause.get("risk_level"), "Not specified"),
-        "recommendation": safe_text(clause.get("recommendation") or clause.get("suggested_improvement"), generic_recommendation(clause_type, status)),
+        "recommendation": safe_text(clause.get("ai_recommendation") or clause.get("recommendation") or clause.get("suggested_improvement"), generic_recommendation(clause_type, status)),
+        "ai_insight": safe_text(clause.get("ai_insight"), "No AI insight was returned for this clause."),
+        "ai_risk_assessment": safe_text(clause.get("ai_risk_assessment"), "No AI risk assessment was returned for this clause."),
+        "ai_recommendation": safe_text(clause.get("ai_recommendation"), "No AI recommendation was returned for this clause."),
+        "negotiation_note": safe_text(clause.get("negotiation_note"), "No negotiation note was returned for this clause."),
+        "review_priority": safe_text(clause.get("review_priority"), "Medium"),
     }
 
 
@@ -205,13 +210,24 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "health_score": data.get("health_score"),
         "risk_level": safe_text(data.get("risk_level"), "Not specified"),
         "source": safe_text(source, "rule_based"),
+        "llm_used": bool(data.get("llm_used", False)),
         "degraded_mode": bool(data.get("degraded_mode", False)),
+        "ai_status": safe_text(data.get("ai_status"), "LLM unavailable" if data.get("degraded_mode") else "Not specified"),
+        "active_model": safe_text(data.get("active_model") or data.get("model"), "Not specified"),
+        "confidence": safe_text(data.get("confidence"), "Low" if data.get("degraded_mode") else "Medium"),
         "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
+        "ai_overall_assessment": safe_text(data.get("ai_overall_assessment"), "No AI overall assessment was returned."),
+        "key_strengths": [safe_text(item) for item in (data.get("key_strengths") or [])],
+        "key_risks": [safe_text(item) for item in (data.get("key_risks") or [])],
         "clauses": clauses,
         "clauses_found": found_count,
         "missing_critical_clauses": missing_names,
         "risks": [normalize_risk(risk, idx) for idx, risk in enumerate(data.get("risks") or [])],
-        "recommended_improvements": [safe_text(item) for item in (data.get("recommended_improvements") or data.get("recommendations") or [])],
+        "recommended_improvements": [safe_text(item) for item in (data.get("recommended_actions") or data.get("recommended_improvements") or data.get("recommendations") or [])],
+        "evidence_trace": data.get("evidence_trace") or [],
+        "rule_based_result": data.get("rule_based_result"),
+        "llm_request_status": data.get("llm_request_status"),
+        "raw_llm_response": data.get("raw_llm_response"),
         "created_at": data.get("created_at"),
     }
 
@@ -235,19 +251,17 @@ def render_score_cards(analysis: dict[str, Any]) -> None:
     cols = st.columns(5)
     score = analysis.get("health_score")
     score_value = f"{score}/100" if score is not None else "Not scored"
+    mode = "Hybrid AI + rule-based" if analysis.get("llm_used") else "Rule-based fallback"
     with cols[0]:
-        render_metric_card("Health Score", score_value, "Contract completeness")
+        render_metric_card("AI Status", analysis["ai_status"], mode)
     with cols[1]:
-        render_metric_card("Risk Level", analysis["risk_level"], "Current assessment")
+        render_metric_card("Model", analysis["active_model"], f"Confidence: {analysis['confidence']}")
     with cols[2]:
-        render_metric_card("Clauses Found", analysis["clauses_found"], "Extracted clauses")
+        render_metric_card("Health Score", score_value, analysis["risk_level"])
     with cols[3]:
-        render_metric_card("Missing Critical", len(analysis["missing_critical_clauses"]), "Priority gaps")
+        render_metric_card("Clauses Found", analysis["clauses_found"], "Rule-based extraction")
     with cols[4]:
-        source = analysis["source"]
-        if analysis["degraded_mode"]:
-            source = f"{source} / degraded"
-        render_metric_card("Source Mode", source, "Evidence confidence")
+        render_metric_card("Missing Critical", len(analysis["missing_critical_clauses"]), analysis["source"])
 
 
 def render_evidence(evidence: list[dict[str, Any]]) -> None:
@@ -265,11 +279,14 @@ def render_evidence(evidence: list[dict[str, Any]]) -> None:
 
 def render_clause_card(clause: dict[str, Any]) -> None:
     status_class = badge_class(clause["status"])
-    risk_class = badge_class(clause["risk"])
-    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{risk_class}">Risk: {safe_html(clause["risk"].title())}</span></div><p><strong>Why it matters:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
-    st.markdown("**Evidence**")
+    priority_class = badge_class(clause["review_priority"])
+    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Rule confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span></div><p><strong>Rule-based detection:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
+    st.markdown("**Evidence from contract**")
     render_evidence(clause["evidence"])
-    st.markdown(f'<div class="cip-recommendation"><strong>Recommendation:</strong> {safe_html(clause["recommendation"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>AI insight:</strong><br>{safe_html(clause["ai_insight"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>AI risk assessment:</strong><br>{safe_html(clause["ai_risk_assessment"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>AI recommendation:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-negotiation"><strong>Negotiation note:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
 
 
 def render_risk_card(risk: dict[str, str]) -> None:
@@ -295,8 +312,21 @@ def render_recommendations(analysis: dict[str, Any]) -> None:
 
 def render_analysis_results(analysis: dict[str, Any]) -> None:
     render_score_cards(analysis)
-    st.markdown("### Executive Summary")
-    st.markdown(f'<div class="cip-summary-card">{safe_html(analysis["executive_summary"])}</div>', unsafe_allow_html=True)
+    st.markdown("### AI Executive Review")
+    st.markdown(f'<div class="cip-summary-card"><strong>Executive summary</strong><br>{safe_html(analysis["executive_summary"])}<br><br><strong>Overall assessment</strong><br>{safe_html(analysis["ai_overall_assessment"])}</div>', unsafe_allow_html=True)
+    cols = st.columns(3)
+    with cols[0]:
+        st.markdown("**Key strengths**")
+        for item in analysis["key_strengths"] or ["No AI-identified strengths returned."]:
+            st.markdown(f'<div class="cip-check-item">✓ {safe_html(item)}</div>', unsafe_allow_html=True)
+    with cols[1]:
+        st.markdown("**Key risks**")
+        for item in analysis["key_risks"] or ["No AI-identified risks returned."]:
+            st.markdown(f'<div class="cip-risk-chip">⚠ {safe_html(item)}</div>', unsafe_allow_html=True)
+    with cols[2]:
+        st.markdown("**Recommended next actions**")
+        for item in analysis["recommended_improvements"] or ["No AI recommendations returned."]:
+            st.markdown(f'<div class="cip-check-item">→ {safe_html(item)}</div>', unsafe_allow_html=True)
 
     st.markdown("### Risk Summary")
     if analysis["risks"]:
@@ -305,7 +335,7 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
     else:
         st.info("No major risks detected based on the extracted clauses.")
 
-    st.markdown("### Clauses")
+    st.markdown("### AI Review by Clause")
     if analysis["clauses"]:
         for clause in analysis["clauses"]:
             render_clause_card(clause)
@@ -336,6 +366,12 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
         st.caption("No evidence trace is available yet.")
 
     with st.expander("Advanced / Debug Output", expanded=False):
+        st.caption("Rule-based result")
+        st.json(analysis.get("rule_based_result") or {})
+        st.caption("LLM request status")
+        st.json(analysis.get("llm_request_status") or {})
+        st.caption("Parsed AI output")
+        st.json(analysis.get("raw_llm_response") or {})
         st.caption("Raw backend response for debugging only")
         st.json(analysis["raw"])
 
@@ -548,7 +584,20 @@ def benchmark_page():
 
 def settings_page():
     st.title("Settings / System Health")
-    st.json(health_marker())
+    health = health_marker()
+    cols = st.columns(4)
+    with cols[0]:
+        render_metric_card("Frontend Build", FRONTEND_BUILD, "Streamlit")
+    with cols[1]:
+        render_metric_card("Backend Build", health.get("Backend Build", "unknown"), health.get("Active Backend", "FastAPI"))
+    with cols[2]:
+        render_metric_card("LLM Reachable", health.get("llm_reachable", "unknown"), health.get("llm_ollama_status", "unknown"))
+    with cols[3]:
+        render_metric_card("Active Model", health.get("active_model", "unknown"), "Ollama")
+    st.markdown("### LLM / Ollama")
+    st.write({"Ollama URL": health.get("ollama_url"), "Active model": health.get("active_model"), "Reachable": health.get("llm_reachable"), "Last LLM error": health.get("last_llm_error")})
+    with st.expander("Raw health response", expanded=False):
+        st.json(health)
     st.caption(f"API Base URL: {API_BASE_URL}")
 
 

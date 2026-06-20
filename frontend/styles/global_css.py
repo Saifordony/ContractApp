@@ -29,5 +29,8 @@ APP_CSS = """
 .cip-evidence-meta { color:#475569; font-size:.78rem; font-weight:700; margin-bottom:.35rem; }
 .cip-evidence blockquote { margin:.25rem 0 0 0; padding-left:.85rem; border-left:4px solid #60a5fa; color:#0f172a; line-height:1.55; }
 .cip-recommendation, .cip-check-item { background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d; border-radius:16px; padding:.8rem 1rem; margin:.55rem 0; }
+.cip-ai-box { background:#eef2ff; border:1px solid #c7d2fe; color:#1e1b4b; border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; line-height:1.55; }
+.cip-negotiation { background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12; border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; }
+.cip-risk-chip { background:#fff7ed; border:1px solid #fdba74; color:#9a3412; border-radius:14px; padding:.65rem .8rem; margin:.4rem 0; }
 </style>
 """
