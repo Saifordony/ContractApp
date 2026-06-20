@@ -51,7 +51,7 @@ def _footer(canvas, doc):
     canvas.restoreState()
 
 
-def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], generated_at: str) -> bytes:
+def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], generated_at: str, language: str = "en") -> bytes:
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=0.55 * inch, leftMargin=0.55 * inch, topMargin=0.65 * inch, bottomMargin=0.65 * inch)
     base = getSampleStyleSheet()
@@ -63,17 +63,32 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
         "Small": ParagraphStyle("ReportSmall", parent=base["BodyText"], fontSize=8, leading=11, textColor=colors.HexColor("#475569")),
         "Quote": ParagraphStyle("EvidenceQuote", parent=base["BodyText"], fontSize=8.4, leading=12, leftIndent=10, borderColor=colors.HexColor("#bfdbfe"), borderWidth=1, borderPadding=6, backColor=colors.HexColor("#eff6ff")),
     }
+    ar = language == "ar"
+    labels = {
+        "title": "تقرير ذكاء العقود" if ar else "Contract Intelligence Report",
+        "date": "تاريخ الإنشاء" if ar else "Date generated",
+        "ai_mode": "وضع الذكاء الاصطناعي" if ar else "AI mode",
+        "disclaimer": "هذا التقرير مراجعة مساعدة بالذكاء الاصطناعي وليس رأيًا قانونيًا نهائيًا. يجب إجراء مراجعة قانونية وتجارية بشرية قبل الاعتماد عليه." if ar else "Disclaimer: This report is an AI-assisted contract review and is not final legal advice. Human legal and business review is required before relying on it.",
+        "exec": "1. الملخص التنفيذي" if ar else "1. Executive Summary",
+        "terms": "2. المصطلحات الرئيسية المستخرجة" if ar else "2. Key Terms Extracted",
+        "risks": "3. نظرة عامة على المخاطر" if ar else "3. Risk Overview",
+        "clauses": "4. مراجعة البنود بندًا بندًا" if ar else "4. Clause-by-Clause Review",
+        "missing": "5. البنود المفقودة أو الضعيفة" if ar else "5. Missing / Weak Clauses",
+        "actions": "6. الإجراءات المقترحة" if ar else "6. Recommended Actions",
+        "evidence": "7. ملحق الأدلة" if ar else "7. Evidence Appendix",
+        "final_disclaimer": "8. إخلاء المسؤولية" if ar else "8. Disclaimer",
+    }
     story: list[Any] = []
     contract_name = _text(contract.get("name") or contract.get("filename"), "Untitled contract")
-    story.append(Paragraph("Contract Intelligence Report", styles["Title"]))
+    story.append(Paragraph(labels["title"], styles["Title"]))
     story.append(Paragraph(contract_name, styles["SectionTitle"]))
-    story.append(Paragraph(f"Date generated: {generated_at}", styles["Subtitle"]))
-    story.append(Paragraph(f"AI mode: {_text(analysis.get('source'))} | LLM used: {_text(analysis.get('llm_used'))} | Model: {_text(analysis.get('active_model'))}", styles["Subtitle"]))
+    story.append(Paragraph(f"{labels['date']}: {generated_at}", styles["Subtitle"]))
+    story.append(Paragraph(f"{labels['ai_mode']}: {_text(analysis.get('source'))} | LLM used: {_text(analysis.get('llm_used'))} | Model: {_text(analysis.get('active_model'))}", styles["Subtitle"]))
     story.append(Spacer(1, 0.25 * inch))
-    story.append(Paragraph("Disclaimer: This report is an AI-assisted contract review and is not final legal advice. Human legal and business review is required before relying on it.", styles["Quote"]))
+    story.append(Paragraph(labels["disclaimer"], styles["Quote"]))
     story.append(PageBreak())
 
-    _section(story, "1. Executive Summary", styles)
+    _section(story, labels["exec"], styles)
     summary_rows = [
         ["Overall health", f"{_text(analysis.get('health_score'))}/100"],
         ["Risk level", _text(analysis.get("risk_level"))],
@@ -83,7 +98,7 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
     story.append(Spacer(1, 0.12 * inch))
     story.append(_para(analysis.get("executive_summary"), styles["Body"]))
 
-    _section(story, "2. Key Terms Extracted", styles)
+    _section(story, labels["terms"], styles)
     key_terms = analysis.get("key_terms") or []
     if key_terms:
         for term in key_terms:
@@ -95,7 +110,7 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
     else:
         story.append(_para("No key terms were extracted. Run analysis again with a clearer contract scan if this appears incorrect.", styles["Body"]))
 
-    _section(story, "3. Risk Overview", styles)
+    _section(story, labels["risks"], styles)
     risks = analysis.get("risks") or []
     if risks:
         for risk in risks:
@@ -106,7 +121,7 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
     else:
         story.append(_para("No major risks were detected from the extracted clauses.", styles["Body"]))
 
-    _section(story, "4. Clause-by-Clause Review", styles)
+    _section(story, labels["clauses"], styles)
     for clause in analysis.get("clauses") or []:
         story.append(Paragraph(f"<b>{_text(clause.get('title'))}</b> — {_text(clause.get('status'))} — Priority: {_text(clause.get('review_priority'))}", styles["Body"]))
         story.append(Paragraph(f"Evidence: {_evidence_text(clause.get('evidence'))}", styles["Quote"]))
@@ -114,7 +129,7 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
             story.append(Paragraph(f"<b>{label}:</b> {_text(clause.get(key))}", styles["Small"]))
         story.append(Spacer(1, 0.12 * inch))
 
-    _section(story, "5. Missing / Weak Clauses", styles)
+    _section(story, labels["missing"], styles)
     missing = analysis.get("missing_critical_clauses") or analysis.get("missing_clauses") or []
     if missing:
         for item in missing:
@@ -122,7 +137,7 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
     else:
         story.append(_para("No missing critical clauses were identified by the current analysis.", styles["Body"]))
 
-    _section(story, "6. Recommended Actions", styles)
+    _section(story, labels["actions"], styles)
     actions = analysis.get("recommended_actions") or analysis.get("recommended_improvements") or []
     if actions:
         for action in actions:
@@ -130,13 +145,13 @@ def generate_analysis_pdf(contract: dict[str, Any], analysis: dict[str, Any], ge
     else:
         story.append(_para("Confirm extracted business terms and complete human legal review before signature.", styles["Body"]))
 
-    _section(story, "7. Evidence Appendix", styles)
+    _section(story, labels["evidence"], styles)
     for item in analysis.get("evidence_trace") or []:
         story.append(Paragraph(f"<b>{_text(item.get('clause'))}</b> — {_text(item.get('source'))} — {_text(item.get('keyword'))}", styles["Small"]))
         story.append(Paragraph(_text(item.get("text")), styles["Quote"]))
         story.append(Spacer(1, 0.06 * inch))
 
-    _section(story, "8. Disclaimer", styles)
+    _section(story, labels["final_disclaimer"], styles)
     story.append(_para("AI-assisted review only. This report is not legal advice and should not be treated as approval to sign. Have a qualified human reviewer confirm legal, financial, operational, and business implications before relying on it.", styles["Body"]))
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buffer.getvalue()

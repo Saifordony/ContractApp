@@ -130,7 +130,7 @@ def test_analysis_api_debug_and_real_contract_id_mapping():
     src = read("frontend/streamlit_app.py")
     assert "label_to_contract_id" in src
     assert "selected_contract_id" in src
-    assert 'endpoint_path = f"/contracts/{cid}/analyze"' in src
+    assert 'endpoint_path = f"/contracts/{cid}/analyze?explanation_language=' in src
     assert "Advanced / API Debug" in src
     assert "status_code" in src
     assert "response_body" in src
@@ -301,3 +301,79 @@ def test_analysis_extraction_key_terms_and_pdf_report():
         assert token in frontend
     assert "The AI review did not return a specific insight" not in frontend
     assert "Generic recommendation" not in frontend
+
+
+def test_theme_contrast_score_meter_and_ai_language_controls():
+    src = read("frontend/streamlit_app.py")
+    css = read("frontend/styles/global_css.py")
+    for token in [
+        "#0F172A",
+        "#111827",
+        "#1E293B",
+        "#F8FAFC",
+        "--cip-nav-active-bg",
+        "--cip-nav-active-text",
+        "--cip-nav-inactive-text",
+        ".cip-score-meter",
+        ".cip-score-track",
+        ".cip-score-fill",
+        ".cip-layman-box",
+    ]:
+        assert token in css
+    assert "cip-radial" not in css
+    for token in [
+        "effective_explanation_language",
+        "effective_report_language",
+        "label.ai_explanation_language",
+        "label.report_language",
+        "شرح مبسط",
+        "Simple explanation",
+        "render_ai_decision",
+        "render_priority_action_plan",
+        "review_decision",
+        "priority_action_plan",
+        "?report_language=",
+    ]:
+        assert token in src
+    assert "st.dataframe" not in src
+
+
+def test_analysis_service_has_decision_layer_and_arabic_layman_support():
+    src = read("backend/services/analysis_service.py")
+    for token in [
+        "def _clause_decision",
+        "def _overall_decision",
+        "def _action_plan",
+        "review_decision",
+        "priority_action_plan",
+        "must_fix_before_signing",
+        "human_review_required",
+        "clause_decision",
+        "business_impact",
+        "recommended_fix",
+        "questions_to_ask",
+        "explanation_language",
+        "clear simple Arabic",
+        "هذا البند",
+    ]:
+        assert token in src
+    assert "The AI review did not return" not in src
+    assert "No overall assessment was returned" not in src
+    assert "Confirm this point during legal/business review" not in src
+
+
+def test_chat_and_report_support_explanation_language():
+    chat = read("backend/services/chat_service.py")
+    report = read("backend/services/report_service.py")
+    contracts = read("backend/routers/contracts.py")
+    for token in [
+        "explanation_language",
+        "clear simple Arabic",
+        "إجابة مبنية",
+        "evidence",
+    ]:
+        assert token in chat
+    for token in ["report_language", "language=report_language", "analysis/report"]:
+        assert token in contracts
+    for token in ["language: str = \"en\"", "labels", "تقرير ذكاء العقود", "AI-assisted review only"]:
+        assert token in report

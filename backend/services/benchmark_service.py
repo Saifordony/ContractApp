@@ -21,7 +21,8 @@ def _status_for(found: bool, clause_type: str) -> str:
     return "Strong alignment"
 
 
-def benchmark_analysis(analysis: dict):
+def benchmark_analysis(analysis: dict, explanation_language: str = "en"):
+    ar = explanation_language == "ar"
     clauses = analysis.get("clauses", []) if analysis else []
     found = {c.get("type"): bool(c.get("found") or c.get("status") == "found") for c in clauses}
     comparisons = []
@@ -39,9 +40,9 @@ def benchmark_analysis(analysis: dict):
             "clause": label,
             "your_contract_status": status,
             "benchmark_expectation": BENCHMARK_EXPECTATIONS.get(key, "Clear, specific, balanced drafting."),
-            "gap_assessment": "The clause is present but should be reviewed for completeness against the illustrative profile." if found.get(key) else "The clause was not detected, so this is a clear gap against the illustrative benchmark profile.",
-            "plain_english_explanation": f"This comparison checks whether the contract has a practical {label} structure and enough detail for a reviewer to rely on.",
-            "improvement_suggestion": f"Strengthen the {label} clause with clear scope, process, timing, responsibilities, and exceptions." if found.get(key) else f"Add a {label} clause if it is relevant to the transaction.",
+            "gap_assessment": ("البند موجود، لكن يجب مراجعته للتأكد من اكتماله مقارنة بالملف المرجعي التوضيحي." if found.get(key) else "لم يتم اكتشاف هذا البند، لذلك توجد فجوة واضحة مقارنة بالمرجع التوضيحي.") if ar else ("The clause is present but should be reviewed for completeness against the illustrative profile." if found.get(key) else "The clause was not detected, so this is a clear gap against the illustrative benchmark profile."),
+            "plain_english_explanation": f"تتحقق هذه المقارنة مما إذا كان العقد يحتوي على بنية عملية لبند {label} وتفاصيل كافية ليستند إليها المراجع." if ar else f"This comparison checks whether the contract has a practical {label} structure and enough detail for a reviewer to rely on.",
+            "improvement_suggestion": (f"قوِّ بند {label} بنطاق وإجراءات وتوقيت ومسؤوليات واستثناءات واضحة." if found.get(key) else f"أضف بند {label} إذا كان مناسبًا لهذه الصفقة.") if ar else (f"Strengthen the {label} clause with clear scope, process, timing, responsibilities, and exceptions." if found.get(key) else f"Add a {label} clause if it is relevant to the transaction."),
         })
     total = max(1, len(comparisons))
     score = int(((aligned * 1.0) + (partial * 0.6)) / total * 100)
@@ -53,16 +54,17 @@ def benchmark_analysis(analysis: dict):
         "partially_aligned_clauses": partial,
         "missing_or_weak_clauses": missing,
         "market_position": "Strong alignment" if score >= 80 else "Moderate alignment" if score >= 55 else "Needs strengthening",
-        "narrative_summary": "This comparison uses internal illustrative benchmark profiles, not live market data. It highlights where the selected contract appears aligned, partial, or missing against common contract structures.",
+        "narrative_summary": "تستخدم هذه المقارنة ملفات مرجعية توضيحية داخلية وليست بيانات سوق فعلية. وتوضح أين يبدو العقد متوافقًا أو جزئيًا أو ناقصًا مقارنة بهياكل العقود الشائعة." if ar else "This comparison uses internal illustrative benchmark profiles, not live market data. It highlights where the selected contract appears aligned, partial, or missing against common contract structures.",
         "clause_alignment": comparisons,
         "missing_protections": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing"],
         "recommended_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative benchmark comparison"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
-        "evidence_or_rule_basis": "Synthetic illustrative profiles based on common contract structure expectations; not external market data.",
+        "evidence_or_rule_basis": "ملفات مرجعية توضيحية مبنية على توقعات بنية العقود الشائعة؛ وليست بيانات سوق خارجية." if ar else "Synthetic illustrative profiles based on common contract structure expectations; not external market data.",
+        "explanation_language": explanation_language,
         "degraded_mode": False,
     }
 
 
-async def benchmark_contract(db, owner_user_id: str, contract: dict, analysis: dict | None):
-    result = benchmark_analysis(analysis or contract.get("analysis_summary") or {})
+async def benchmark_contract(db, owner_user_id: str, contract: dict, analysis: dict | None, explanation_language: str = "en"):
+    result = benchmark_analysis(analysis or contract.get("analysis_summary") or {}, explanation_language=explanation_language)
     await db.benchmarks.insert_one({"owner_user_id": owner_user_id, "contract_id": str(contract["_id"]), "result": result, "created_at": datetime.now(timezone.utc)})
     return result

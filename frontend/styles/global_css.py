@@ -1,17 +1,17 @@
 """Centralized Streamlit CSS for the active Contract Intelligence frontend."""
 
 LIGHT_TOKENS = {
-    "bg": "radial-gradient(circle at top left, #eef2ff, #f8fafc 38%, #fff7ed)",
-    "surface": "rgba(255,255,255,.92)",
-    "surface_strong": "#ffffff",
+    "bg": "#F8FAFC",
+    "surface": "#F8FAFC",
+    "surface_strong": "#FFFFFF",
     "card": "#ffffff",
     "border": "#e2e8f0",
     "border_strong": "#dbeafe",
     "text": "#0f172a",
-    "muted": "#64748b",
+    "muted": "#64748B",
     "accent": "#2563eb",
-    "accent_soft": "#eef2ff",
-    "accent_text": "#1e1b4b",
+    "accent_soft": "#EFF6FF",
+    "accent_text": "#1D4ED8",
     "success_bg": "#dcfce7",
     "success_text": "#166534",
     "warning_bg": "#fef3c7",
@@ -22,17 +22,17 @@ LIGHT_TOKENS = {
 }
 
 DARK_TOKENS = {
-    "bg": "radial-gradient(circle at top left, #172554, #020617 42%, #111827)",
-    "surface": "rgba(15,23,42,.92)",
-    "surface_strong": "#0f172a",
-    "card": "#111827",
+    "bg": "#0F172A",
+    "surface": "#1E293B",
+    "surface_strong": "#111827",
+    "card": "#1E293B",
     "border": "#334155",
     "border_strong": "#1e40af",
-    "text": "#e5e7eb",
-    "muted": "#94a3b8",
-    "accent": "#60a5fa",
-    "accent_soft": "#172554",
-    "accent_text": "#dbeafe",
+    "text": "#F8FAFC",
+    "muted": "#94A3B8",
+    "accent": "#3B82F6",
+    "accent_soft": "#2563EB",
+    "accent_text": "#FFFFFF",
     "success_bg": "#052e16",
     "success_text": "#86efac",
     "warning_bg": "#422006",
@@ -68,10 +68,18 @@ def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
   --cip-danger-bg: {tokens['danger_bg']};
   --cip-danger-text: {tokens['danger_text']};
   --cip-shadow: {tokens['shadow']};
+  --cip-nav-active-bg: #2563EB;
+  --cip-nav-active-text: #FFFFFF;
+  --cip-nav-hover-bg: {"#334155" if theme == "dark" else "#EFF6FF"};
+  --cip-nav-inactive-bg: {"#1E293B" if theme == "dark" else "transparent"};
+  --cip-nav-inactive-text: {"#CBD5E1" if theme == "dark" else "#334155"};
 }}
 [data-testid="stAppViewContainer"] {{ background: var(--cip-bg); color: var(--cip-text); }}
 [data-testid="stSidebar"] {{ background: var(--cip-surface-strong); border-{reverse_align}: 1px solid var(--cip-border); }}
 [data-testid="stSidebar"] * {{ color: var(--cip-text); }}
+[data-testid="stSidebar"] .stButton > button {{ background:var(--cip-nav-inactive-bg) !important; color:var(--cip-nav-inactive-text) !important; border:1px solid var(--cip-border) !important; border-radius:14px !important; min-height:2.75rem; justify-content:flex-start; text-align:{align}; padding:.55rem .75rem; }}
+[data-testid="stSidebar"] .stButton > button:hover {{ background:var(--cip-nav-hover-bg) !important; color:var(--cip-text) !important; border-color:var(--cip-accent) !important; }}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p, [data-testid="stSidebar"] label {{ color:var(--cip-muted) !important; }}
 .block-container {{ max-width: 1240px; padding-top: 1.25rem; direction: {direction}; text-align: {align}; }}
 h1, h2, h3, h4, h5, h6, p, label, span {{ color: inherit; }}
 .stButton > button, .stDownloadButton > button {{ border-radius: 14px; border: 1px solid var(--cip-border); min-height: 2.6rem; font-weight: 750; }}
@@ -84,7 +92,7 @@ div[data-baseweb="input"], div[data-baseweb="select"], textarea {{ border-radius
 .cip-brand-title {{ font-size:1.05rem; font-weight:900; color:var(--cip-text); }}
 .cip-brand-subtitle, .cip-muted {{ color: var(--cip-muted); }}
 .cip-nav-group {{ color:var(--cip-muted); font-size:.72rem; font-weight:900; letter-spacing:.1em; text-transform:uppercase; margin:1.1rem 0 .35rem; }}
-.cip-nav-active {{ background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); color:var(--cip-accent-text); border-radius:16px; padding:.65rem .75rem; font-weight:900; margin:.2rem 0; }}
+.cip-nav-active {{ background:var(--cip-nav-active-bg); border:1px solid var(--cip-nav-active-bg); color:var(--cip-nav-active-text) !important; border-radius:16px; padding:.65rem .75rem; font-weight:900; margin:.2rem 0; text-align:{align}; }}
 .cip-auth-card, .cip-card, .cip-kpi, .cip-review-card, .cip-risk-card, .cip-missing-card, .cip-summary-card, .cip-error-card, .cip-action-card, .cip-benchmark-card, .cip-status-card, .cip-empty-state {{ background:var(--cip-card); border:1px solid var(--cip-border); border-radius:22px; box-shadow:var(--cip-shadow); color:var(--cip-text); }}
 .cip-auth-card {{ padding:1rem 1.15rem; }}
 .cip-card {{ padding:1.3rem; }}
@@ -113,13 +121,16 @@ div[data-baseweb="input"], div[data-baseweb="select"], textarea {{ border-radius
 .cip-evidence blockquote {{ margin:.25rem 0 0 0; padding-{align}:.85rem; border-{align}:4px solid var(--cip-accent); color:var(--cip-text); line-height:1.55; }}
 .cip-recommendation, .cip-check-item {{ background:var(--cip-success-bg); border:1px solid rgba(34,197,94,.45); color:var(--cip-success-text); border-radius:16px; padding:.8rem 1rem; margin:.55rem 0; }}
 .cip-ai-box {{ background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); color:var(--cip-accent-text); border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; line-height:1.55; }}
+.cip-layman-box {{ background:linear-gradient(135deg,var(--cip-accent-soft),var(--cip-card)); border:1px solid var(--cip-border-strong); border-radius:20px; padding:1.05rem 1.15rem; margin:.7rem 0; font-size:1.04rem; line-height:1.75; color:var(--cip-text); }}
 .cip-negotiation, .cip-risk-chip {{ background:var(--cip-warning-bg); border:1px solid rgba(245,158,11,.45); color:var(--cip-warning-text); border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; }}
 .cip-assistant-bubble {{ background:var(--cip-card); border:1px solid var(--cip-border-strong); border-radius:20px; padding:1rem 1.1rem; box-shadow:var(--cip-shadow); line-height:1.62; }}
 .cip-chat-contract {{ background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); color:var(--cip-accent-text); border-radius:18px; padding:.85rem 1rem; margin:.4rem 0 1rem 0; }}
 .cip-suggestion-chip {{ display:inline-flex; background:var(--cip-surface); border:1px solid var(--cip-border); color:var(--cip-text); border-radius:999px; padding:.42rem .7rem; margin:.25rem; font-size:.86rem; }}
 .cip-action-card {{ border-left:5px solid #22c55e; padding:1rem 1.1rem; margin:.7rem 0; }}
-.cip-radial {{ width:160px; height:160px; border-radius:50%; background:conic-gradient(var(--cip-accent) 0 80%, var(--cip-border) 80% 100%); display:flex; flex-direction:column; align-items:center; justify-content:center; margin:auto; box-shadow:inset 0 0 0 16px var(--cip-card), var(--cip-shadow); }}
-.cip-radial-score {{ font-size:2.1rem; font-weight:900; color:var(--cip-text); }}
+.cip-score-meter {{ background:var(--cip-card); border:1px solid var(--cip-border); border-radius:22px; padding:1.25rem; box-shadow:var(--cip-shadow); }}
+.cip-score-value {{ font-size:2.75rem; font-weight:950; color:var(--cip-text); letter-spacing:-.05em; }}
+.cip-score-track {{ height:14px; border-radius:999px; background:var(--cip-border); overflow:hidden; margin:.85rem 0 .55rem; }}
+.cip-score-fill {{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }}
 .cip-benchmark-card {{ padding:1rem 1.1rem; margin:.7rem 0; }}
 .cip-mini-bar {{ height:10px; border-radius:999px; background:var(--cip-border); overflow:hidden; margin:.35rem 0 .8rem; }}
 .cip-mini-bar span {{ display:block; height:100%; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }}

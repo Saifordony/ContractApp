@@ -52,6 +52,8 @@ TRANSLATIONS = {
         "label.signed_in_as": "Signed in as",
         "label.theme": "Theme",
         "label.language": "Language",
+        "label.ai_explanation_language": "AI Explanation Language",
+        "label.report_language": "Report Language",
         "label.frontend_build": "Frontend Build",
         "label.backend_build": "Backend Build",
         "label.active_frontend": "Active Frontend: Streamlit",
@@ -96,6 +98,8 @@ TRANSLATIONS = {
         "label.signed_in_as": "تم تسجيل الدخول باسم",
         "label.theme": "السمة",
         "label.language": "اللغة",
+        "label.ai_explanation_language": "لغة الشرح بالذكاء الاصطناعي",
+        "label.report_language": "لغة التقرير",
         "label.frontend_build": "إصدار الواجهة",
         "label.backend_build": "إصدار الخادم",
         "label.active_frontend": "الواجهة النشطة: Streamlit",
@@ -127,6 +131,20 @@ def is_rtl() -> bool:
     return st.session_state.get("language") == "ar"
 
 
+def effective_explanation_language() -> str:
+    pref = st.session_state.get("ai_explanation_language", "match")
+    return st.session_state.get("language", "en") if pref == "match" else pref
+
+
+def effective_report_language() -> str:
+    pref = st.session_state.get("report_language", "match")
+    return st.session_state.get("language", "en") if pref == "match" else pref
+
+
+def localized_label(en: str, ar: str) -> str:
+    return ar if effective_explanation_language() == "ar" else en
+
+
 def localized_status(value: str) -> str:
     mapping = {"Healthy": "status.healthy", "Degraded": "status.degraded", "Offline": "status.offline"}
     return t(mapping.get(value, value), value)
@@ -149,7 +167,7 @@ def render_empty_state(title: str, body: str) -> None:
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None, "analysis_report_pdf": None, "analysis_report_filename": None}
+    defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None, "ai_explanation_language": "match", "report_language": "match", "analysis_report_pdf": None, "analysis_report_filename": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -300,14 +318,12 @@ def render_overall_visual(analysis: dict[str, Any]) -> None:
     score = analysis.get("health_score")
     score_number = int(score) if isinstance(score, (int, float)) else 0
     risk = analysis.get("risk_level", "Not specified")
-    summary = plain_value(analysis.get("ai_overall_assessment"), "No AI overall assessment was returned.")
-    cols = st.columns([1, 2])
-    with cols[0]:
-        st.markdown(f'<div class="cip-radial"><div class="cip-radial-score">{score_number}</div><div class="cip-muted">Overall Health / 100</div></div>', unsafe_allow_html=True)
-    with cols[1]:
-        st.markdown(f'<div class="cip-summary-card"><div class="cip-card-meta"><span class="{badge_class(risk)}">Risk Signal: {safe_html(risk)}</span><span>Overall Health: {score_number}/100</span></div><p>{safe_html(summary)}</p></div>', unsafe_allow_html=True)
-        st.progress(max(0, min(100, score_number)) / 100)
-
+    summary = plain_value(analysis.get("ai_overall_assessment"), "The analysis provides decision support based on extracted evidence and missing details.")
+    decision = analysis.get("review_decision", {})
+    decision_label = decision.get("review_decision") if isinstance(decision, dict) else "Needs review"
+    width = max(0, min(100, score_number))
+    explanation = "This contract appears generally strong, but review the decision drivers before signing." if score_number >= 80 else "This contract needs revision or focused review before signing."
+    st.markdown(f'<div class="cip-score-meter"><div class="cip-card-header"><div><div class="cip-eyebrow">Contract Health</div><div class="cip-score-value">{score_number}/100</div></div><span class="{badge_class(risk)}">{safe_html(risk)} Risk</span></div><div class="cip-score-track"><span class="cip-score-fill" style="width:{width}%"></span></div><p>{safe_html(explanation)}</p><p><strong>AI decision:</strong> {safe_html(decision_label)}</p><p class="cip-muted">{safe_html(summary)}</p></div>', unsafe_allow_html=True)
 
 def clause_summary(clause_type: str, status: str) -> str:
     if status == "missing":
@@ -421,7 +437,13 @@ def normalize_clause(clause: Any, index: int) -> dict[str, Any]:
         "ai_risk_assessment": safe_text(clause.get("ai_risk_assessment"), "Review whether the clause is complete, balanced, and clear enough for the business use case."),
         "ai_recommendation": safe_text(clause.get("ai_recommendation"), generic_recommendation(clause_type, status)),
         "negotiation_note": safe_text(clause.get("negotiation_note"), "Discuss clearer limits, responsibilities, exceptions, and approval steps if this clause affects the business deal."),
-        "review_priority": safe_text(clause.get("review_priority"), "Medium"),
+        "clause_decision": safe_text(clause.get("clause_decision"), "Needs review"),
+        "business_impact": safe_text(clause.get("business_impact"), "This clause may affect business responsibilities, timing, money, restrictions, or legal exposure."),
+        "decision_risk_level": safe_text(clause.get("risk_level"), "Medium"),
+        "why_this_decision": safe_text(clause.get("why_this_decision"), clause.get("ai_risk_assessment") or "Decision is based on extracted evidence and missing details."),
+        "recommended_fix": safe_text(clause.get("recommended_fix"), clause.get("ai_recommendation") or generic_recommendation(clause_type, status)),
+        "questions_to_ask": clause.get("questions_to_ask") or [],
+        "review_priority": safe_text(clause.get("priority") or clause.get("review_priority"), "Medium"),
     }
 
 
@@ -472,7 +494,7 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "active_model": safe_text(data.get("active_model") or data.get("model"), "Not specified"),
         "confidence": safe_text(data.get("confidence"), "Low" if data.get("degraded_mode") else "Medium"),
         "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
-        "ai_overall_assessment": plain_value(data.get("ai_overall_assessment"), "No AI overall assessment was returned."),
+        "ai_overall_assessment": plain_value(data.get("ai_overall_assessment"), "Decision support is based on extracted evidence, missing details, and clause-level risk signals."),
         "key_terms": key_terms,
         "key_strengths": [plain_value(item) for item in (data.get("key_strengths") or [])],
         "key_risks": [plain_value(item) for item in (data.get("key_risks") or [])],
@@ -485,6 +507,10 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "rule_based_result": data.get("rule_based_result"),
         "llm_request_status": data.get("llm_request_status"),
         "raw_llm_response": data.get("raw_llm_response"),
+        "review_decision": data.get("review_decision") or {},
+        "priority_action_plan": data.get("priority_action_plan") or {},
+        "follow_up_questions": data.get("follow_up_questions") or [],
+        "explanation_language": safe_text(data.get("explanation_language"), effective_explanation_language()),
         "created_at": data.get("created_at"),
     }
 
@@ -579,16 +605,20 @@ def append_chat_message(role: str, content: str, **metadata: Any) -> None:
 def render_clause_card(clause: dict[str, Any]) -> None:
     status_class = badge_class(clause["status"])
     priority_class = badge_class(clause["review_priority"])
-    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Rule confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span></div><p><strong>Rule-based detection:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">AI Review by Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span class="{badge_class(clause["clause_decision"])}">AI decision: {safe_html(clause["clause_decision"])}</span><span class="{badge_class(clause["decision_risk_level"])}">Risk: {safe_html(clause["decision_risk_level"])}</span><span class="{priority_class}">Priority: {safe_html(clause["review_priority"])}</span><span>Source: {safe_html(clause["location"])}</span></div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-layman-box"><strong>{safe_html(localized_label("Simple explanation", "شرح مبسط"))}</strong><br>{safe_html(clause["simple_explanation"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>{safe_html(localized_label("Why it matters", "لماذا هذا مهم"))}:</strong><br>{safe_html(clause["why_it_matters"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-ai-box"><strong>{safe_html(localized_label("Risk in plain language", "الخطر ببساطة"))}:</strong><br>{safe_html(clause["risk_in_plain_english"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>{safe_html(localized_label("What to check next", "ما الذي يجب التأكد منه"))}:</strong> {safe_html(clause["what_to_check_next"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-negotiation"><strong>Why this decision:</strong> {safe_html(clause["why_this_decision"])}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-recommendation"><strong>Recommended fix:</strong> {safe_html(clause["recommended_fix"])}</div>', unsafe_allow_html=True)
+    if clause.get("questions_to_ask"):
+        st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(q)}</span>' for q in clause["questions_to_ask"]), unsafe_allow_html=True)
     st.markdown("**Evidence from contract**")
     render_evidence(clause["evidence"])
     st.markdown("**Key details extracted**")
     render_clause_details(clause)
-    st.markdown(f'<div class="cip-ai-box"><strong>Simple explanation:</strong><br>{safe_html(clause["simple_explanation"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-ai-box"><strong>Why it matters:</strong><br>{safe_html(clause["why_it_matters"])}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-ai-box"><strong>Risk in plain English:</strong><br>{safe_html(clause["risk_in_plain_english"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-card-meta"><span>Completeness: {safe_html(clause["completeness"])}</span></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="cip-recommendation"><strong>What to check next:</strong> {safe_html(clause["what_to_check_next"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-recommendation"><strong>AI recommendation:</strong> {safe_html(clause["ai_recommendation"])}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="cip-negotiation"><strong>Negotiation note:</strong> {safe_html(clause["negotiation_note"])}</div>', unsafe_allow_html=True)
 
@@ -724,8 +754,34 @@ def render_clause_details(clause: dict[str, Any]) -> None:
     st.markdown(f'<div class="cip-card-meta">{"".join(chips[:10])}</div>', unsafe_allow_html=True)
 
 
+def render_ai_decision(analysis: dict[str, Any]) -> None:
+    decision = analysis.get("review_decision") or {}
+    if not isinstance(decision, dict):
+        decision = {}
+    st.markdown("### Overall AI Decision")
+    st.markdown(f'<div class="cip-summary-card"><div class="cip-card-header"><h3>{safe_html(decision.get("review_decision", "Needs review"))}</h3><span class="{badge_class(decision.get("decision_confidence", "Medium"))}">{safe_html(decision.get("decision_confidence", "Medium"))}</span></div><p><strong>Why:</strong> {safe_html(decision.get("decision_reasoning", "Decision support is based on extracted evidence, missing details, and clause-level risks."))}</p><p><strong>Human review required:</strong> {safe_html(decision.get("human_review_required", True))}</p></div>', unsafe_allow_html=True)
+    for label, key in [("Must fix before signing", "must_fix_before_signing"), ("Should review", "should_review"), ("Acceptable points", "acceptable_points")]:
+        items = decision.get(key) or []
+        if items:
+            st.markdown(f"**{label}**")
+            for item in items[:5]:
+                st.markdown(f'<div class="cip-check-item">• {safe_html(item)}</div>', unsafe_allow_html=True)
+
+
+def render_priority_action_plan(analysis: dict[str, Any]) -> None:
+    plan = analysis.get("priority_action_plan") or {}
+    st.markdown("### Priority Action Plan")
+    for label, key in [("Must fix before signing", "must_fix_before_signing"), ("Should clarify", "should_clarify"), ("Good to confirm", "good_to_confirm"), ("Optional improvements", "optional_improvements")]:
+        items = plan.get(key) or []
+        if items:
+            st.markdown(f"**{label}**")
+            for item in items:
+                render_action_card({"action": item.get("action"), "rationale": item.get("reason"), "related_clause": item.get("related_clause"), "priority": item.get("priority"), "source": f"Owner: {item.get('owner_suggestion', 'Business Owner')} · {item.get('evidence_basis', 'Evidence-based decision support')}"})
+
+
 def render_analysis_results(analysis: dict[str, Any]) -> None:
     render_score_cards(analysis)
+    render_ai_decision(analysis)
     st.markdown("### AI Executive Review")
     render_overall_visual(analysis)
     st.markdown(f'<div class="cip-summary-card"><strong>Executive summary</strong><br>{safe_html(analysis["executive_summary"])}</div>', unsafe_allow_html=True)
@@ -767,6 +823,8 @@ def render_analysis_results(analysis: dict[str, Any]) -> None:
     else:
         st.success("No missing critical clauses were detected by the rule-based review.")
 
+    render_priority_action_plan(analysis)
+
     st.markdown("### Recommended Actions")
     render_recommendations(analysis)
 
@@ -807,6 +865,14 @@ def render_sidebar():
     if selected_lang_value != st.session_state.language:
         st.session_state.language = selected_lang_value
         st.rerun()
+    expl_options = {"Match interface language": "match", "English": "en", "العربية": "ar"}
+    current_expl = next(label for label, value in expl_options.items() if value == st.session_state.ai_explanation_language)
+    selected_expl = st.sidebar.selectbox(t("label.ai_explanation_language"), list(expl_options.keys()), index=list(expl_options.keys()).index(current_expl))
+    st.session_state.ai_explanation_language = expl_options[selected_expl]
+    report_options = {"Match interface language": "match", "English": "en", "العربية": "ar"}
+    current_report = next(label for label, value in report_options.items() if value == st.session_state.report_language)
+    selected_report = st.sidebar.selectbox(t("label.report_language"), list(report_options.keys()), index=list(report_options.keys()).index(current_report))
+    st.session_state.report_language = report_options[selected_report]
     st.sidebar.caption(t("label.active_frontend"))
     st.sidebar.caption(t("label.active_file"))
     st.sidebar.caption(f"{t('label.backend_build')}: {health.get('Backend Build', 'unknown')}")
@@ -920,7 +986,8 @@ def clients_page():
                 st.error(user_message(data))
     ok, data = api_request("GET", "/clients")
     if ok and data:
-        st.dataframe(data, use_container_width=True)
+        for client in data:
+            st.markdown(f'<div class="cip-card"><div class="cip-card-header"><h4>{safe_html(client.get("name", "Client"))}</h4><span class="cip-badge cip-badge-blue">{safe_html(client.get("industry", "General"))}</span></div><p>{safe_html(client.get("notes", "No notes yet."))}</p></div>', unsafe_allow_html=True)
     else:
         render_empty_state(t("page.Clients.title"), t("empty.clients"))
 
@@ -948,7 +1015,9 @@ def contracts_page():
                     st.error(user_message(resp))
     ok, contracts = api_request("GET", "/contracts")
     if ok and contracts:
-        st.dataframe([{k:v for k,v in c.items() if k != "extracted_text"} for c in contracts], use_container_width=True)
+        for contract in contracts:
+            cid = safe_text(contract.get("id") or contract.get("_id"), "")
+            st.markdown(f'<div class="cip-card"><div class="cip-card-header"><h4>{safe_html(contract.get("name") or contract.get("filename") or "Untitled contract")}</h4><span class="cip-badge cip-badge-blue">{safe_html(cid[:8])}</span></div><p><strong>File:</strong> {safe_html(contract.get("filename", "Uploaded contract"))}</p><p class="cip-muted">Use Contract Analysis, Chat, or Benchmark to review this document.</p></div>', unsafe_allow_html=True)
     else:
         render_empty_state(t("page.Contracts.title"), t("empty.contracts"))
 
@@ -978,7 +1047,7 @@ def analysis_page():
     selected_label, cid = select_contract()
     if not cid:
         return
-    endpoint_path = f"/contracts/{cid}/analyze"
+    endpoint_path = f"/contracts/{cid}/analyze?explanation_language={effective_explanation_language()}&ui_language={st.session_state.language}"
     st.session_state.analysis_contract_label = selected_label
     st.session_state.analysis_contract_id = cid
     st.session_state.analysis_endpoint = endpoint_path
@@ -1016,7 +1085,7 @@ def analysis_page():
         st.markdown("### Download Report")
         if st.button("Download PDF Report", use_container_width=True):
             with st.spinner("Generating PDF report..."):
-                ok_pdf, pdf_data, pdf_filename = api_download(f"/contracts/{cid}/analysis/report", timeout=120)
+                ok_pdf, pdf_data, pdf_filename = api_download(f"/contracts/{cid}/analysis/report?report_language={effective_report_language()}", timeout=120)
             if ok_pdf:
                 st.session_state.analysis_report_pdf = pdf_data
                 st.session_state.analysis_report_filename = pdf_filename or f"contract-intelligence-report-{datetime.now().strftime('%Y%m%d')}.pdf"
@@ -1068,7 +1137,7 @@ def chat_page():
         append_chat_message("user", prompt)
         endpoint_path = f"/contracts/{cid}/chat"
         with st.spinner("Thinking through the contract context..."):
-            ok, data = api_request("POST", endpoint_path, json={"question": prompt}, timeout=120)
+            ok, data = api_request("POST", endpoint_path, json={"question": prompt, "explanation_language": effective_explanation_language()}, timeout=120)
         if ok:
             append_chat_message(
                 "assistant",
@@ -1101,7 +1170,7 @@ def benchmark_page():
     st.markdown(f'<div class="cip-chat-contract">Selected contract: <strong>{safe_html(selected_label)}</strong></div>', unsafe_allow_html=True)
     if st.button("Run benchmark", use_container_width=True):
         with st.spinner("Comparing against illustrative benchmark profiles..."):
-            ok, data = api_request("POST", f"/contracts/{cid}/benchmark", timeout=90)
+            ok, data = api_request("POST", f"/contracts/{cid}/benchmark?explanation_language={effective_explanation_language()}", timeout=90)
         if ok:
             st.session_state.benchmark_result = normalize_benchmark_response(data)
             st.session_state.benchmark_contract_id = cid

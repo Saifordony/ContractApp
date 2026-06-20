@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class ChatRequest(BaseModel):
     question: str
+    explanation_language: str = "en"
 
 @router.get("")
 async def contracts(user=Depends(get_current_user)):
@@ -33,14 +34,14 @@ async def get_one(contract_id: str, user=Depends(get_current_user)):
     return serialize_contract(await get_contract(get_database(), user["id"], contract_id))
 
 @router.post("/{contract_id}/analyze")
-async def analyze(contract_id: str, user=Depends(get_current_user)):
+async def analyze(contract_id: str, explanation_language: str = "en", ui_language: str = "en", user=Depends(get_current_user)):
     logger.info("analysis route hit user_id=%s contract_id=%s", user["id"], contract_id)
     db = get_database()
     try:
         contract = await get_contract(db, user["id"], contract_id)
         logger.info("analysis contract found user_id=%s contract_id=%s", user["id"], contract_id)
         logger.info("analysis started user_id=%s contract_id=%s", user["id"], contract_id)
-        result = await analyze_contract_record(db, contract)
+        result = await analyze_contract_record(db, contract, explanation_language=explanation_language, ui_language=ui_language)
         result["contract_id"] = contract_id
         logger.info("analysis completed user_id=%s contract_id=%s degraded_mode=%s llm_used=%s", user["id"], contract_id, result.get("degraded_mode"), result.get("llm_used"))
         return result
@@ -53,14 +54,14 @@ async def analyze(contract_id: str, user=Depends(get_current_user)):
 
 
 @router.get("/{contract_id}/analysis/report")
-async def analysis_report(contract_id: str, user=Depends(get_current_user)):
+async def analysis_report(contract_id: str, report_language: str = "en", user=Depends(get_current_user)):
     db = get_database()
     contract = await get_contract(db, user["id"], contract_id)
     latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": user["id"]}, sort=[("created_at", -1)])
     if not latest or not latest.get("analysis"):
         raise HTTPException(status_code=400, detail="Run analysis before generating report.")
     generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    pdf = generate_analysis_pdf(contract, latest["analysis"], generated_at)
+    pdf = generate_analysis_pdf(contract, latest["analysis"], generated_at, language=report_language)
     safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (contract.get("name") or "contract")).strip("-") or "contract"
     filename = f"contract-intelligence-report-{safe_name}-{datetime.utcnow().strftime('%Y%m%d')}.pdf"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
@@ -69,13 +70,13 @@ async def analysis_report(contract_id: str, user=Depends(get_current_user)):
 @router.post("/{contract_id}/chat")
 async def chat(contract_id: str, payload: ChatRequest, user=Depends(get_current_user)):
     contract = await get_contract(get_database(), user["id"], contract_id)
-    return await chat_with_contract(get_database(), user["id"], contract, payload.question)
+    return await chat_with_contract(get_database(), user["id"], contract, payload.question, explanation_language=payload.explanation_language)
 
 @router.post("/{contract_id}/benchmark")
-async def benchmark(contract_id: str, user=Depends(get_current_user)):
+async def benchmark(contract_id: str, explanation_language: str = "en", user=Depends(get_current_user)):
     db = get_database(); contract = await get_contract(db, user["id"], contract_id)
     latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": user["id"]}, sort=[("created_at", -1)])
-    return await benchmark_contract(db, user["id"], contract, (latest or {}).get("analysis"))
+    return await benchmark_contract(db, user["id"], contract, (latest or {}).get("analysis"), explanation_language=explanation_language)
 
 # Compatibility wrapper for legacy Streamlit flows.
 @router.post("/{contract_id}/init-genai")

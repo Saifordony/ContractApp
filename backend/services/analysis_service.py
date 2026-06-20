@@ -77,7 +77,7 @@ def _details_from_evidence(clause_type: str, evidence_text: str) -> dict[str, An
     return {key: value for key, value in details.items() if value}
 
 
-def _human_clause_fields(clause_type: str, status: str, details: dict[str, Any], evidence: list[dict[str, Any]]) -> dict[str, str]:
+def _human_clause_fields(clause_type: str, status: str, details: dict[str, Any], evidence: list[dict[str, Any]], language: str = "en") -> dict[str, str]:
     has_evidence = bool(evidence)
     detail_bits = []
     for label, key in [("amounts", "monetary_amounts"), ("timing", "payment_timing"), ("dates", "dates"), ("durations", "durations"), ("notice", "notice_periods")]:
@@ -85,6 +85,26 @@ def _human_clause_fields(clause_type: str, status: str, details: dict[str, Any],
             detail_bits.append(f"{label}: {', '.join(details[key][:3])}")
     detail_sentence = f" Key extracted details include {('; '.join(detail_bits))}." if detail_bits else ""
     label = clause_type.replace("_", " ")
+    if language == "ar":
+        ar_label = label
+        ar_details = f" التفاصيل المستخرجة تشمل: {('؛ '.join(detail_bits))}." if detail_bits else ""
+        if status == "missing":
+            return {
+                "simple_explanation": f"لم يظهر في النص بند واضح بخصوص {ar_label}.",
+                "why_it_matters": f"هذا مهم لأن بند {ar_label} يساعد الأطراف على فهم الحقوق والالتزامات والتوقيت والمسؤوليات قبل الاعتماد على العقد.",
+                "risk_in_plain_english": f"الخطر ببساطة أن غياب أو غموض بند {ar_label} قد يؤدي إلى خلاف لاحق حول الحقوق أو الالتزامات أو التعويضات.",
+                "what_to_check_next": f"تأكد مع المسؤول التجاري أو القانوني مما إذا كان يجب إضافة بند واضح ومناسب عن {ar_label} في هذه الصفقة.",
+                "negotiation_note": f"ناقش صياغة محددة وواضحة لبند {ar_label} إذا كان هذا الموضوع مهمًا لأي طرف.",
+                "completeness": "مفقود",
+            }
+        return {
+            "simple_explanation": f"هذا البند يتناول {ar_label} في العقد.{ar_details}",
+            "why_it_matters": f"هذا مهم لأنه يوضح كيف يعمل موضوع {ar_label} عمليًا، ومن المسؤول عن ماذا.",
+            "risk_in_plain_english": "الخطر ببساطة أن بعض التفاصيل المهمة قد تكون ناقصة أو غير متوازنة أو غير واضحة إذا لم تظهر صراحة في الدليل المستخرج.",
+            "what_to_check_next": "تأكد من التفاصيل المستخرجة، خطوات الموافقة، المواعيد النهائية، الاستثناءات، والعواقب مع المسؤول التجاري أو القانوني.",
+            "negotiation_note": "إذا كان البند يؤثر على المال أو التوقيت أو الملكية أو الإنهاء أو القيود، فناقش حدودًا ومسؤوليات واستثناءات أوضح.",
+            "completeness": "قوي" if has_evidence and len(details) >= 3 else "جزئي",
+        }
     if status == "missing":
         return {
             "simple_explanation": f"The review did not find clear contract text for a {label} clause.",
@@ -157,6 +177,135 @@ def _extract_key_terms(text: str, clauses: list[dict[str, Any]]) -> list[dict[st
     return terms[:12]
 
 
+
+
+def _ar(text: str, language: str) -> str:
+    if language != "ar":
+        return text
+    translations = {
+        "This clause appears to address": "هذا البند يتناول",
+        "The review did not find clear contract text for": "لم يجد التحليل نصًا واضحًا بخصوص",
+        "Confirm the extracted details": "تأكد من التفاصيل المستخرجة",
+        "The main risk is": "الخطر الأساسي هو",
+    }
+    for en, ar in translations.items():
+        text = text.replace(en, ar)
+    return text
+
+
+def _missing_detail_questions(clause_type: str, details: dict[str, Any]) -> list[str]:
+    questions = []
+    if clause_type == "termination":
+        if not details.get("notice_periods"):
+            questions.append("Does the termination clause include a notice period?")
+        questions.append("Does it explain termination for cause, cure periods, resignation rights, final payment, and surviving obligations?")
+    elif clause_type == "payment":
+        if not details.get("monetary_amounts"):
+            questions.append("Is the amount or salary clearly stated?")
+        questions.append("Are deductions, taxes, late payment, final settlement, and payment disputes clearly defined?")
+    elif clause_type == "intellectual_property":
+        questions.append("Does the IP clause exclude pre-existing personal work and side projects?")
+    elif clause_type == "confidentiality":
+        questions.append("Does the confidentiality clause define exclusions, duration, permitted disclosures, and return/destruction duties?")
+    elif clause_type == "dispute_resolution":
+        questions.append("Is the dispute process clear enough if a disagreement happens?")
+    else:
+        questions.append("Are scope, responsibilities, timing, exceptions, and consequences clear enough for business use?")
+    return questions[:3]
+
+
+def _clause_decision(clause: dict[str, Any], language: str = "en") -> dict[str, Any]:
+    ctype = clause["type"]
+    status = clause["status"]
+    details = clause.get("extracted_details", {})
+    critical = ctype in CRITICAL
+    if status == "missing":
+        decision, risk, priority = "Missing", "High" if critical else "Medium", "High" if critical else "Medium"
+        why = f"No direct evidence was found for the {ctype.replace('_', ' ')} clause."
+        fix = f"Add clear {ctype.replace('_', ' ')} language if this topic matters to the transaction."
+    elif ctype == "termination" and not details.get("notice_periods"):
+        decision, risk, priority = "Needs clarification", "Medium", "High"
+        why = "The clause was found, but the extracted evidence does not clearly show notice period, termination rights, cure period, final settlement, or survival obligations."
+        fix = "Before signing, confirm notice period, termination for cause, employee resignation rights, final payment, and post-termination obligations."
+    elif ctype == "payment" and (not details.get("monetary_amounts") or not details.get("payment_timing")):
+        decision, risk, priority = "Needs strengthening", "Medium", "High"
+        why = "Payment-related language was found, but the extracted evidence does not show all key payment mechanics."
+        fix = "Confirm amount, payment timing, method, deductions, taxes, late payment handling, final settlement, and dispute process."
+    elif ctype == "intellectual_property" and clause.get("found"):
+        decision, risk, priority = "Needs legal review", "Medium", "High"
+        why = "IP language can affect ownership of work product, pre-existing work, side projects, and inventions created outside work."
+        fix = "Clarify exclusions for pre-existing work, personal projects, licenses, and work created outside the role."
+    elif status == "partial" or len(details) < 2:
+        decision, risk, priority = "Needs clarification", "Medium", "Medium"
+        why = "The clause appears to exist, but the extracted evidence does not show enough detail to rely on it without review."
+        fix = "Clarify responsibilities, timing, exceptions, approval steps, consequences, and owner accountability."
+    else:
+        decision, risk, priority = "Acceptable", "Low", "Low"
+        why = "The clause has direct evidence and enough extracted detail for business review, subject to final human review."
+        fix = "Confirm the extracted terms match the original document and the business intent."
+    business_impact = "This decision support highlights whether the clause is ready for business review, needs revision, or needs legal attention before signature."
+    if language == "ar":
+        ar_map = {"Acceptable": "مقبول للمراجعة التجارية", "Needs strengthening": "يحتاج إلى تقوية", "Needs clarification": "يحتاج إلى توضيح", "Missing": "مفقود", "High risk": "خطر مرتفع", "Needs legal review": "يحتاج إلى مراجعة قانونية"}
+        decision = ar_map.get(decision, decision)
+        risk_map = {"Low": "منخفض", "Medium": "متوسط", "High": "مرتفع"}
+        risk = risk_map.get(risk, risk)
+        priority = risk_map.get(priority, priority)
+        why = "يعتمد هذا القرار على الأدلة المستخرجة والتفاصيل الناقصة في هذا البند. " + why
+        fix = "قبل التوقيع، " + fix
+        business_impact = "هذا القرار يساعد المستخدم على معرفة ما إذا كان البند مقبولًا للمراجعة التجارية أو يحتاج إلى تعديل أو مراجعة قانونية."
+    return {"clause_decision": decision, "business_impact": business_impact, "risk_level": risk, "why_this_decision": why, "recommended_fix": fix, "questions_to_ask": _missing_detail_questions(ctype, details), "priority": priority}
+
+
+def _overall_decision(rule_result: dict[str, Any], clauses: list[dict[str, Any]], language: str = "en") -> dict[str, Any]:
+    must_fix = []
+    should_review = []
+    acceptable = []
+    for clause in clauses:
+        decision = str(clause.get("clause_decision", ""))
+        title = clause.get("title", clause.get("type", "Clause"))
+        if "Missing" in decision or "High risk" in decision:
+            must_fix.append(f"Fix or add {title} before signing.")
+        elif "Needs" in decision or "يحتاج" in decision:
+            should_review.append(f"Review {title}: {clause.get('recommended_fix')}")
+        else:
+            acceptable.append(f"{title} appears acceptable for business review based on current evidence.")
+    score = rule_result.get("health_score", 0)
+    if must_fix or score < 55:
+        review_decision = "High risk - do not sign yet" if len(must_fix) >= 2 else "Needs legal review"
+        confidence = "High" if must_fix else "Medium"
+    elif should_review or score < 80:
+        review_decision = "Needs revision"
+        confidence = "Medium"
+    else:
+        review_decision = "Ready for business review"
+        confidence = "Medium"
+    reasoning = "Decision is based on missing critical clauses, extracted detail completeness, evidence quality, and clause-level risk signals. This is decision support, not final legal advice."
+    if language == "ar":
+        decision_map = {"Ready for business review": "جاهز للمراجعة التجارية", "Needs revision": "يحتاج إلى تعديل", "Needs legal review": "يحتاج إلى مراجعة قانونية", "High risk - do not sign yet": "خطر مرتفع - لا توقّع الآن"}
+        review_decision = decision_map.get(review_decision, review_decision)
+        confidence = {"High": "عالية", "Medium": "متوسطة", "Low": "منخفضة"}.get(confidence, confidence)
+        reasoning = "يعتمد القرار على البنود الناقصة، اكتمال التفاصيل المستخرجة، جودة الأدلة، وإشارات المخاطر لكل بند. هذا دعم لاتخاذ القرار وليس رأيًا قانونيًا نهائيًا."
+    return {"review_decision": review_decision, "decision_confidence": confidence, "decision_reasoning": reasoning, "top_decision_drivers": must_fix[:2] + should_review[:3], "must_fix_before_signing": must_fix, "should_review": should_review, "acceptable_points": acceptable[:5], "human_review_required": bool(must_fix or should_review)}
+
+
+def _action_plan(decision: dict[str, Any], clauses: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    def action_item(action: str, clause: str, priority: str, reason: str, owner: str) -> dict[str, str]:
+        return {"action": action, "related_clause": clause, "priority": priority, "reason": reason, "evidence_basis": "Extracted clause evidence and missing detail analysis", "owner_suggestion": owner}
+    must = []
+    should = []
+    confirm = []
+    for clause in clauses:
+        title = clause.get("title", "Clause")
+        item = action_item(clause.get("recommended_fix", "Clarify this clause."), title, clause.get("priority", "Medium"), clause.get("why_this_decision", "Decision support signal."), "Legal" if clause.get("priority") == "High" else "Business Owner")
+        dec = str(clause.get("clause_decision", ""))
+        if "Missing" in dec or "High" in str(clause.get("risk_level")) or "مرتفع" in str(clause.get("risk_level")):
+            must.append(item)
+        elif "Needs" in dec or "يحتاج" in dec:
+            should.append(item)
+        else:
+            confirm.append(item)
+    return {"must_fix_before_signing": must[:5], "should_clarify": should[:6], "good_to_confirm": confirm[:6], "optional_improvements": []}
+
 def extract_text(filename: str, content: bytes) -> str:
     name = filename.lower()
     if name.endswith(".txt"):
@@ -190,14 +339,14 @@ def _evidence_for(text: str, terms: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def _rule_based_analysis(text: str) -> dict[str, Any]:
+def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[str, Any]:
     clauses = []
     for key, terms in CLAUSE_PATTERNS.items():
         evidence = _evidence_for(text, terms)
         evidence_text = evidence[0]["text"] if evidence else ""
         details = _details_from_evidence(key, evidence_text)
         status = "found" if evidence and len(details) >= 2 else "partial" if evidence else "missing" if key in CRITICAL else "partial"
-        human = _human_clause_fields(key, status, details, evidence)
+        human = _human_clause_fields(key, status, details, evidence, explanation_language)
         confidence = _confidence_label(status, details, evidence)
         clauses.append({
             "type": key,
@@ -235,11 +384,11 @@ def _rule_based_analysis(text: str) -> dict[str, Any]:
     return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks}
 
 
-def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: bool = False, error: str | None = None) -> dict[str, Any]:
+def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: bool = False, error: str | None = None, explanation_language: str = "en") -> dict[str, Any]:
     missing = rule_result["missing_critical_clauses"]
     clauses = []
     for clause in rule_result["clauses"]:
-        human = _human_clause_fields(clause["type"], clause["status"], clause.get("extracted_details", {}), clause.get("evidence", []))
+        human = _human_clause_fields(clause["type"], clause["status"], clause.get("extracted_details", {}), clause.get("evidence", []), explanation_language)
         if clause["found"]:
             insight = human["why_it_matters"]
             recommendation = human["what_to_check_next"]
@@ -259,7 +408,7 @@ def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: 
         "llm_parse_failed": parse_failed,
         "llm_error": error,
         "executive_summary": "Rule-based fallback: the contract was reviewed for common clause signals, but the LLM was not available to generate a contract-specific executive review.",
-        "ai_overall_assessment": "No AI assessment was generated. Use the clause evidence, missing-clause list, and health score as deterministic review signals only.",
+        "ai_overall_assessment": "Rule-based decision support is shown using extracted clause evidence, missing-clause signals, and health scoring because the LLM path was unavailable or could not be parsed.",
         "key_strengths": [c["title"] for c in rule_result["clauses"] if c["found"]][:5],
         "key_risks": [r["title"] for r in rule_result["risks"]],
         "missing_clauses": missing,
@@ -270,7 +419,7 @@ def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: 
     }
 
 
-def _ai_prompt(text: str, rule_result: dict[str, Any]) -> str:
+def _ai_prompt(text: str, rule_result: dict[str, Any], explanation_language: str = "en") -> str:
     evidence_payload = json.dumps(rule_result, default=str)[:12000]
     contract_excerpt = text[:16000]
     return f"""
@@ -285,17 +434,20 @@ If evidence is weak or missing, say clearly that the contract text provided does
 RULE_BASED_RESULT:
 {evidence_payload}
 
+EXPLANATION_LANGUAGE: {explanation_language}
+If explanation_language is ar, write layman explanations, practical notes, recommendations, and negotiation notes in clear simple Arabic. Do not translate names, amounts, dates, model names, URLs, or quoted evidence unnecessarily.
+
 CONTRACT_TEXT:
 {contract_excerpt}
 """
 
 
-def _merge_ai(rule_result: dict[str, Any], ai_output: dict[str, Any]) -> dict[str, Any]:
+def _merge_ai(rule_result: dict[str, Any], ai_output: dict[str, Any], explanation_language: str = "en") -> dict[str, Any]:
     ai_clause_by_type = {str(item.get("type", "")).lower(): item for item in ai_output.get("clauses", []) if isinstance(item, dict)}
     clauses = []
     for clause in rule_result["clauses"]:
         ai_clause = ai_clause_by_type.get(clause["type"], {})
-        human = _human_clause_fields(clause["type"], clause["status"], clause.get("extracted_details", {}), clause.get("evidence", []))
+        human = _human_clause_fields(clause["type"], clause["status"], clause.get("extracted_details", {}), clause.get("evidence", []), explanation_language)
         clauses.append({
             **clause,
             "simple_explanation": ai_clause.get("simple_explanation") or human["simple_explanation"],
@@ -313,19 +465,19 @@ def _merge_ai(rule_result: dict[str, Any], ai_output: dict[str, Any]) -> dict[st
     return {"clauses": clauses}
 
 
-def analyze_text(text: str) -> dict[str, Any]:
+def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en") -> dict[str, Any]:
     settings = get_settings()
     text = (text or "").strip()
-    rule_result = _rule_based_analysis(text)
+    rule_result = _rule_based_analysis(text, explanation_language)
     health = llm_health()
     llm_debug = {"health": health, "model": settings.ollama_model, "ollama_url": settings.ollama_base_url}
     if not health.get("reachable"):
-        ai_fields = _fallback_ai_fields(rule_result, "LLM unavailable", error=health.get("error"))
+        ai_fields = _fallback_ai_fields(rule_result, "LLM unavailable", error=health.get("error"), explanation_language=explanation_language)
     else:
         try:
-            retry = _ai_prompt(text, rule_result) + "\nReturn valid JSON only. No markdown. No prose outside JSON."
-            raw_ai = generate_structured_json(_ai_prompt(text, rule_result), retry_prompt=retry)
-            merged = _merge_ai(rule_result, raw_ai)
+            retry = _ai_prompt(text, rule_result, explanation_language) + "\nReturn valid JSON only. No markdown. No prose outside JSON."
+            raw_ai = generate_structured_json(_ai_prompt(text, rule_result, explanation_language), retry_prompt=retry)
+            merged = _merge_ai(rule_result, raw_ai, explanation_language)
             ai_fields = {
                 "source": "hybrid",
                 "llm_used": True,
@@ -334,18 +486,33 @@ def analyze_text(text: str) -> dict[str, Any]:
                 "llm_parse_failed": False,
                 "llm_error": None,
                 "executive_summary": raw_ai.get("executive_summary") or "AI review completed, but no executive summary was returned.",
-                "ai_overall_assessment": raw_ai.get("ai_overall_assessment") or "AI review completed, but no overall assessment was returned.",
+                "ai_overall_assessment": raw_ai.get("ai_overall_assessment") or "AI-assisted decision support is based on extracted evidence, missing details, and clause-level risk signals.",
                 "key_strengths": raw_ai.get("key_strengths") or [],
                 "key_risks": raw_ai.get("key_risks") or [],
                 "missing_clauses": raw_ai.get("missing_clauses") or rule_result["missing_critical_clauses"],
                 "recommended_actions": raw_ai.get("recommended_actions") or [],
                 "key_terms": raw_ai.get("key_terms") or rule_result.get("key_terms", []),
+                "review_decision": raw_ai.get("review_decision"),
+                "priority_action_plan": raw_ai.get("priority_action_plan"),
+                "follow_up_questions": raw_ai.get("follow_up_questions"),
                 "clauses": merged["clauses"],
                 "raw_llm_response": raw_ai,
             }
         except Exception as exc:
             llm_debug["parse_or_generation_error"] = str(exc)
-            ai_fields = _fallback_ai_fields(rule_result, "LLM response could not be parsed", parse_failed=True, error=str(exc))
+            ai_fields = _fallback_ai_fields(rule_result, "LLM response could not be parsed", parse_failed=True, error=str(exc), explanation_language=explanation_language)
+    for clause in ai_fields["clauses"]:
+        decision_fields = _clause_decision(clause, explanation_language)
+        clause.update(decision_fields)
+    review_decision = ai_fields.get("review_decision") or _overall_decision(rule_result, ai_fields["clauses"], explanation_language)
+    action_plan = ai_fields.get("priority_action_plan") or _action_plan(review_decision, ai_fields["clauses"])
+    follow_up_questions = ai_fields.get("follow_up_questions") or [
+        "Does the termination clause include a notice period?",
+        "Are salary deductions and final settlement clearly defined?",
+        "Does the IP clause exclude pre-existing personal work?",
+        "Are non-compete restrictions reasonable in scope and duration?",
+        "Is the dispute process clear enough if a disagreement happens?",
+    ]
     evidence_trace = []
     for clause in ai_fields["clauses"]:
         if clause.get("evidence"):
@@ -355,6 +522,11 @@ def analyze_text(text: str) -> dict[str, Any]:
             evidence_trace.append({"clause": clause["title"], "text": "No direct evidence captured for this clause.", "source": "rule-based absence", "keyword": None, "confidence": clause.get("confidence")})
     return {
         "schema_version": "hybrid-analysis-v1",
+        "explanation_language": explanation_language,
+        "ui_language": ui_language,
+        "review_decision": review_decision,
+        "priority_action_plan": action_plan,
+        "follow_up_questions": follow_up_questions,
         "health_score": rule_result["health_score"],
         "risk_level": rule_result["risk_level"],
         "source": ai_fields["source"],
@@ -384,8 +556,8 @@ def analyze_text(text: str) -> dict[str, Any]:
     }
 
 
-async def analyze_contract_record(db, contract: dict):
-    analysis = analyze_text(contract.get("extracted_text", ""))
+async def analyze_contract_record(db, contract: dict, explanation_language: str = "en", ui_language: str = "en"):
+    analysis = analyze_text(contract.get("extracted_text", ""), explanation_language=explanation_language, ui_language=ui_language)
     doc = {"owner_user_id": contract["owner_user_id"], "contract_id": str(contract["_id"]), "analysis": analysis, "created_at": datetime.now(timezone.utc)}
     result = await db.analyses.insert_one(doc)
     doc["_id"] = result.inserted_id
