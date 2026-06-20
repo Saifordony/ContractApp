@@ -24,13 +24,19 @@ class LLMUnavailable(Exception):
 
 class LLMClient:
     def __init__(self, *, base_url: str, model: str, api_key: str,
-                 temperature: float, num_ctx: int, timeout: int):
+                 temperature: float, num_ctx: int, timeout: int,
+                 transport: httpx.AsyncBaseTransport | None = None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
         self.temperature = temperature
         self.num_ctx = num_ctx
         self.timeout = timeout
+        # An injectable transport lets tests exercise the client without a server.
+        self._transport = transport
+
+    def _client(self, timeout: float | int) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=timeout, transport=self._transport)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
@@ -54,7 +60,7 @@ class LLMClient:
         body = self._body(messages, stream=False, json_mode=json_mode,
                           max_tokens=max_tokens, temperature=temperature)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._client(self.timeout) as client:
                 resp = await client.post(f"{self.base_url}/chat/completions",
                                          json=body, headers=self._headers())
                 resp.raise_for_status()
@@ -69,7 +75,7 @@ class LLMClient:
         body = self._body(messages, stream=True, json_mode=False,
                           max_tokens=max_tokens, temperature=temperature)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with self._client(self.timeout) as client:
                 async with client.stream("POST", f"{self.base_url}/chat/completions",
                                          json=body, headers=self._headers()) as resp:
                     resp.raise_for_status()
@@ -92,7 +98,7 @@ class LLMClient:
 
     async def ping(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=min(self.timeout, 5)) as client:
+            async with self._client(min(self.timeout, 5)) as client:
                 resp = await client.get(f"{self.base_url}/models", headers=self._headers())
                 return resp.status_code == 200
         except httpx.HTTPError:

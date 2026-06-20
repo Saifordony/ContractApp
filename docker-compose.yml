@@ -1,0 +1,63 @@
+# Full stack: MongoDB + FastAPI backend + Next.js frontend.
+# No hardcoded container_name values, so multiple stacks can run side by side.
+services:
+  mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-admin123}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - cap_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - mongodb
+    environment:
+      - MONGODB_URL=mongodb://${MONGO_USER:-admin}:${MONGO_PASSWORD:-admin123}@mongodb:27017/${MONGODB_DB:-contract_analysis}?authSource=admin
+      - MONGODB_DB=${MONGODB_DB:-contract_analysis}
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-me}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-14}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      # Ollama runs on the host; reach it from inside the container.
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.1}
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX:-8192}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-120}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    networks:
+      - cap_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    networks:
+      - cap_net
+
+volumes:
+  mongodb_data:
+
+networks:
+  cap_net:
+    driver: bridge

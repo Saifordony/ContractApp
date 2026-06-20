@@ -1,0 +1,14 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+**/node_modules
+frontend/.next
+frontend/out
+tests
+*.md
+!README.md
+.env
+.env.local
