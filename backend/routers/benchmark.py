@@ -8,12 +8,9 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from backend import main as _main
 from backend.llm_config import llm_health_check
-from backend.services.benchmark_comparison_service import build_benchmark_comparison
-from backend.services.benchmark_service import (
-    ingest_seed_dataset,
-    load_seed_from_repo,
-    run_benchmark_analysis,
-)
+from backend.services.benchmark_orchestrator import analyze_uploaded_benchmark, compare_saved_contract
+from backend.services.contract_analysis_service import normalize_analysis_results
+from backend.services.benchmark_service import ingest_seed_dataset, load_seed_from_repo
 
 router = APIRouter()
 
@@ -27,7 +24,7 @@ async def compare_contract_benchmark(contract_id: str, current_user: dict = Depe
         raise HTTPException(status_code=404, detail="Contract not found")
 
     analysis = await _main.db.contract_analyses.find_one({"contract_id": contract_id}, sort=[("created_at", -1)])
-    results = (analysis or {}).get("results", {})
+    results = normalize_analysis_results((analysis or {}).get("results", {}))
     structured = results.get("structured_clauses", {}) if isinstance(results, dict) else {}
     validated_clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
     if not validated_clauses:
@@ -37,7 +34,7 @@ async def compare_contract_benchmark(contract_id: str, current_user: dict = Depe
     readiness_review = results.get("health_evaluation", {}) if isinstance(results, dict) else {}
     ai_commentary_fn = _main.generate_benchmark_ai_commentary if llm_health_check().get("reachable") else None
     try:
-        benchmark = build_benchmark_comparison(
+        benchmark = compare_saved_contract(
             contract_id=contract_id,
             validated_clauses=validated_clauses,
             raw_contract_text=contract.get("content", ""),
@@ -47,7 +44,7 @@ async def compare_contract_benchmark(contract_id: str, current_user: dict = Depe
             ai_commentary_fn=ai_commentary_fn,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Benchmark comparison failed. Please try again.") from exc
 
     await _main.db.contracts.update_one(
         {"_id": object_id},
@@ -120,7 +117,7 @@ async def benchmark_analyze_endpoint(
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
-        result = run_benchmark_analysis(
+        result = analyze_uploaded_benchmark(
             filename=file_name,
             file_bytes=data,
             contract_type=contract_type,
@@ -156,4 +153,4 @@ async def benchmark_analyze_endpoint(
                 "error": str(exc),
             }
         )
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Benchmark comparison failed. Please try again.")

@@ -6,12 +6,9 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend import main as _main
-from backend.gen1 import evaluate_contract
-from backend.llm_config import is_genai_configured, llm_health_check
 from backend.models import Contract, ContractChatRequest, ContractCompareRequest
+from backend.services.contract_analysis_service import analyze_contract_text, normalize_analysis_results
 from backend.services.contract_chat_service import build_contract_chat_response, classify_chat_intent
-from backend.services.contract_health import evaluate_contract_health_from_clauses
-from backend.services.contract_intelligence import extract_key_clauses
 
 router = APIRouter()
 
@@ -137,6 +134,7 @@ async def init_genai_analysis(
     response_language: str = Query("english"),
     current_user: dict = Depends(_main.get_current_user),
 ):
+    """Compatibility wrapper: save canonical analysis for a stored contract."""
     object_id = _main.parse_object_id(contract_id, "contract ID")
 
     contract = await _main.db.contracts.find_one({"_id": object_id})
@@ -147,67 +145,30 @@ async def init_genai_analysis(
         raise HTTPException(status_code=403, detail="Access denied")
 
     if not contract.get("content"):
-        raise HTTPException(
-            status_code=400, detail="Contract has no content to analyze"
-        )
-
-    if not is_genai_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
-        )
+        raise HTTPException(status_code=400, detail="Contract has no content to analyze")
 
     try:
-        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
-        structured_clauses = extract_key_clauses(contract["content"])
-        validated_for_health = {k: v.get("extracted_text") for k, v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")}
-        llm_evaluation = await evaluate_contract(
-            validated_for_health or {"summary": contract["content"][:500]},
-            response_language=response_language,
-        )
-        rule_evaluation = evaluate_contract_health_from_clauses(validated_for_health or {"summary": contract["content"][:500]}, response_language=response_language)
-
-        health_evaluation = {
-            **llm_evaluation,
-            **rule_evaluation,
-            "llm_assessment": llm_evaluation,
-            "module": "contract_health",
-        }
-        results = {
-            "contract_type": rule_evaluation.get("contract_type"),
-            "structured_clauses": structured_clauses,
-            "clauses": validated_for_health,
-            "health_evaluation": health_evaluation,
-            "final_report_summary": {
-                "approved": health_evaluation.get("approved"),
-                "health_score": health_evaluation.get("health_score"),
-                "risk_level": health_evaluation.get("risk_level"),
-                "missing_critical_clauses": health_evaluation.get("missing_critical_clauses", []),
-                "required_changes": health_evaluation.get("required_changes", []),
-            },
-        }
-
+        results = await analyze_contract_text(contract["content"], response_language=response_language)
         analysis_dict = {
             "contract_id": contract_id,
+            "schema_version": results.get("schema_version"),
             "results": results,
             "created_at": datetime.utcnow(),
             "created_by": current_user["username"],
         }
 
         result = await _main.db.contract_analyses.insert_one(analysis_dict)
-
         await _main.db.contracts.update_one(
             {"_id": object_id},
             {"$set": {"status": "analyzed", "analysis_id": str(result.inserted_id)}},
         )
 
-        return {
-            "message": "GenAI analysis completed",
-            "analysis_id": str(result.inserted_id),
-            "results": results
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, llm_health_check()))
+        return {"message": "GenAI analysis completed", "analysis_id": str(result.inserted_id), "results": results}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        print(f"/contracts/{contract_id}/init-genai failed: {exc}")
+        raise HTTPException(status_code=500, detail="Contract analysis failed. Please try again.")
 
 
 @router.post("/contracts/{contract_id}/chat")
@@ -239,7 +200,7 @@ async def chat_with_contract(
             {"contract_id": contract_id},
             sort=[("created_at", -1)],
         )
-        analysis_results = (latest_analysis or {}).get("results", {})
+        analysis_results = normalize_analysis_results((latest_analysis or {}).get("results", {}))
         chat_history = [item.dict() for item in request.chat_history]
         structured_answer = build_contract_chat_response(
             message=message,

@@ -59,6 +59,19 @@ def render_next_step(title: str, body: str) -> None:
 # Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BENCHMARK_ENABLED = os.getenv("BENCHMARK_ENABLED", "true").lower() == "true"
+FRONTEND_BUILD = "Active UI: Streamlit / frontend/streamlit_app.py / Build v2"
+
+
+def get_backend_build_marker() -> str:
+    response, _ = request_api(API_BASE_URL, "/healthz", method="GET", timeout=5)
+    if response and response.status_code == 200:
+        payload = response.json()
+        return str(payload.get("backend") or payload.get("build") or "Backend build unknown")
+    return "Backend build unavailable"
+
+def render_active_build_markers() -> None:
+    st.sidebar.caption(FRONTEND_BUILD)
+    st.sidebar.caption(get_backend_build_marker())
 
 
 DEMO_CLIENT_NAME = "Atlas Engineering LLC"
@@ -277,9 +290,6 @@ DEMO_REPORT_PAYLOAD: Dict[str, Any] = {
         "Complete termination, handover, and final settlement terms.",
     ],
 }
-
-# Initialize session state
-init_session_state()
 
 
 UI_TEXT = {
@@ -2326,6 +2336,7 @@ def main():
     st.set_page_config(
         page_title="Contract Intelligence", page_icon="⚖️", layout="wide"
     )
+    init_session_state()
 
     if "sidebar_compact" not in st.session_state:
         st.session_state.sidebar_compact = False
@@ -2340,6 +2351,8 @@ def main():
         theme_mode=st.session_state.theme_mode,
         direction="rtl" if st.session_state.ui_language == "ar" else "ltr",
     )
+
+    render_active_build_markers()
 
     # Check if user is logged in
     if not st.session_state.token:

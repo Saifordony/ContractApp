@@ -1,45 +1,31 @@
-# Contract Intelligence Rebuild Report
+# Contract Intelligence Runtime Consolidation Report
 
-## Architectural Review
-- The repo contains a FastAPI backend with useful grounded-analysis and chat services, plus two frontends: a legacy Streamlit product and a newer Next.js shell.
-- The rebuild keeps the valuable backend AI endpoints (`/genai/analyze`, `/genai/contract-chat`) and pivots the primary product surface to `frontend-next`.
-- The old Streamlit flow remains for compatibility with the existing Python tests, but the product direction is now the contract-centric Next workspace.
+## Active Runtime Decision
+- The official active frontend is Streamlit at `frontend/streamlit_app.py` and `http://localhost:8501`.
+- The official active backend is FastAPI at `backend.main:app` and `http://localhost:8000`.
+- The previous Next.js frontend has been archived at `_archive/frontend-next-unused` and is not active in Docker.
 
-## Product Redesign Plan
-- Repositioned the app from dashboard-first to contract-first.
-- Contracts now anchor the product: repository, selected contract, review workspace, intelligence panel, and reporting all sit around the active agreement.
-- The workspace overview shows attention-worthy work only: high-risk contracts, recent AI findings, and outstanding review actions.
+## Frontend Cleanup
+- Fixed the Streamlit startup contract by ensuring `st.set_page_config()` is called once inside `main()` before session-state initialization or any rendering command.
+- Added a visible Streamlit sidebar marker: `Active UI: Streamlit / frontend/streamlit_app.py / Build v2`.
+- The sidebar also calls `/healthz` and displays the active backend build marker.
 
-## UX Redesign Plan
-- Rebuilt onboarding/login with premium legal-AI positioning, value proposition, and capability tiles.
-- Replaced the single paste-and-analyze page with a three-column review workspace:
-  - Left: contract repository, search, risk labels, recent activity.
-  - Center: contract viewer/editor, clause navigation, inline findings.
-  - Right: AI intelligence panel, executive summary, risk assessment, missing protections, contract chat.
-- Added report export affordances for executive, risk, clause, and review-summary outputs.
+## Backend Cleanup
+- Added backend build marker: `Backend: FastAPI / backend/main.py / Build v2`.
+- `/healthz` now reports build, active backend entrypoint, active AI provider, active model, MongoDB status, and LLM reachability.
 
-## Repository Cleanup Report
-- Consolidated the primary runnable product experience into `frontend-next/app/page.tsx` and `frontend-next/app/globals.css` rather than spreading product workflow across disconnected pages.
-- Retained legacy Python/Streamlit files because current automated tests reference those helpers and components.
-- Identified future cleanup targets: duplicate Streamlit pages for chat, benchmark, pipeline, and dashboards once test coverage is migrated to the Next frontend.
+## Official Backend Services
+- Analysis: `backend/services/contract_analysis_service.py`.
+- Chat: `backend/services/contract_chat_service.py`.
+- Health scoring: `backend/services/contract_health.py`.
+- Benchmark: `backend/services/benchmark_orchestrator.py`.
 
-## Removed Features Report
-- Removed the Next prototype's generic narrow paste-analyze dashboard experience.
-- Removed vanity dashboard framing from the active UI.
-- Removed random metric-card style information architecture in favor of active contracts, risks, findings, and actions.
+## Compatibility Wrappers
+- `/genai/analyze-contract`, `/genai/analyze-contract-text`, `/genai/evaluate-contract`, `/genai/analyze`, and `/contracts/{contract_id}/init-genai` call the canonical analysis/health service.
+- `/contracts/{contract_id}/chat` and `/genai/contract-chat` use the shared chat service.
+- `/benchmark/compare/{contract_id}` and `/benchmark/analyze` use the official benchmark orchestrator.
 
-## AI Improvement Report
-- Preserved evidence-grounded backend analysis and contract chat calls.
-- Surfaced model-degraded mode clearly in the UI.
-- Added clause-family detection UX for termination, liability, confidentiality, payment, renewal, IP, governing law, and dispute resolution.
-- Contract chat remains grounded by sending the active contract text and analysis context to the backend.
-
-## Security Review
-- Authentication token handling remains centralized in the typed API client.
-- The UI now explicitly handles expired sessions and signs users out on 401 responses.
-- Uploads in the rebuilt UI currently accept text/markdown only, reducing client-side parsing risk for the Next experience; richer PDF/DOCX processing remains backend-owned.
-
-## Performance Review
-- Reduced product shell complexity to one contract-centric route.
-- Memoized clause detection from active text to avoid repeated clause matching on unrelated renders.
-- Kept chat history in a ref to avoid unnecessary rerenders from backend payload history updates.
+## Cleanup Notes
+- Removed nested ZIP project copy clutter.
+- Expanded `.gitignore` for caches, secrets, Node/Next artifacts, and ZIP files.
+- Added `PROJECT_STRUCTURE.md` so future agents know exactly where visible frontend/backend changes must be made.
