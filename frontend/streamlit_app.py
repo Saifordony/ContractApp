@@ -1,4 +1,6 @@
+import html
 import os
+from datetime import datetime
 from typing import Any
 import requests
 import streamlit as st
@@ -11,7 +13,7 @@ FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
 def init_state():
-    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None}
+    defaults = {"token": None, "user": None, "page": "Home", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
@@ -56,6 +58,286 @@ def user_message(value: Any) -> str:
     if isinstance(value, list):
         return "; ".join(user_message(item) for item in value) or "Something went wrong."
     return str(value) if value is not None else "Something went wrong."
+
+
+def safe_text(value: Any, fallback: str = "Not specified") -> str:
+    if value is None:
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def safe_html(value: Any, fallback: str = "Not specified") -> str:
+    return html.escape(safe_text(value, fallback))
+
+
+def titleize(value: Any) -> str:
+    return safe_text(value).replace("_", " ").title()
+
+
+def clause_summary(clause_type: str, status: str) -> str:
+    if status == "missing":
+        return "This expected protection was not found in the extracted contract text."
+    summaries = {
+        "termination": "This clause explains how the agreement can end and what notice or cause may be required.",
+        "payment": "This clause defines commercial obligations such as fees, invoices, compensation, and payment timing.",
+        "confidentiality": "This clause protects sensitive business, technical, or proprietary information.",
+        "liability": "This clause allocates financial exposure, indemnity, damages, and responsibility if something goes wrong.",
+        "intellectual_property": "This clause explains ownership or permitted use of intellectual property and work product.",
+        "governing_law": "This clause identifies which jurisdiction's law governs interpretation of the agreement.",
+        "dispute_resolution": "This clause explains how disputes are escalated, mediated, arbitrated, or litigated.",
+        "renewal": "This clause explains whether and how the contract renews or expires.",
+    }
+    return summaries.get(clause_type, "This clause was identified from the extracted contract text and should be reviewed in context.")
+
+
+def generic_recommendation(clause_type: str, status: str) -> str:
+    label = titleize(clause_type)
+    if status == "missing":
+        return f"Generic recommendation: add a clear {label} clause tailored to this deal before signature."
+    recommendations = {
+        "termination": "Generic recommendation: confirm notice period, cure period, termination for cause, and survival language are complete.",
+        "payment": "Generic recommendation: confirm amounts, due dates, late fees, taxes, invoice process, and disputed-payment rights.",
+        "confidentiality": "Generic recommendation: confirm exclusions, permitted disclosures, duration, and return/destruction obligations.",
+        "liability": "Generic recommendation: confirm liability caps, excluded damages, indemnities, and exceptions are commercially acceptable.",
+        "intellectual_property": "Generic recommendation: confirm ownership, licenses, deliverables, and pre-existing IP rights are explicit.",
+        "governing_law": "Generic recommendation: confirm governing law and venue are acceptable to the business.",
+        "dispute_resolution": "Generic recommendation: confirm escalation, forum, timing, and interim relief rights are workable.",
+        "renewal": "Generic recommendation: confirm renewal term, notice window, price changes, and opt-out rights are clear.",
+    }
+    return recommendations.get(clause_type, f"Generic recommendation: review the {label} clause for completeness and negotiation risk.")
+
+
+def normalize_evidence(evidence: Any) -> list[dict[str, Any]]:
+    if not evidence:
+        return []
+    items = evidence if isinstance(evidence, list) else [evidence]
+    normalized = []
+    for item in items:
+        if isinstance(item, dict):
+            text = item.get("text") or item.get("snippet") or item.get("source_text") or item.get("quote")
+            normalized.append({
+                "text": safe_text(text, "No direct evidence captured for this clause."),
+                "page": item.get("page") or item.get("page_number"),
+                "source": item.get("source") or item.get("source_type") or "extracted_text",
+                "keyword": item.get("keyword") or item.get("match") or "",
+                "location": item.get("location") or item.get("line") or item.get("paragraph"),
+                "confidence": item.get("confidence"),
+            })
+        else:
+            normalized.append({"text": safe_text(item, "No direct evidence captured for this clause."), "page": None, "source": "extracted_text", "keyword": "", "location": None, "confidence": None})
+    return normalized
+
+
+def normalize_clause(clause: Any, index: int) -> dict[str, Any]:
+    if not isinstance(clause, dict):
+        clause = {"title": f"Clause {index + 1}", "type": "unknown", "evidence": [clause], "found": True}
+    clause_type = safe_text(clause.get("type") or clause.get("category") or clause.get("id"), "unknown").lower()
+    title = safe_text(clause.get("title") or titleize(clause_type), f"Clause {index + 1}")
+    evidence = normalize_evidence(clause.get("evidence") or clause.get("sources") or clause.get("source_text"))
+    found = clause.get("found")
+    status = clause.get("status")
+    if not status:
+        if found is False:
+            status = "missing"
+        elif evidence:
+            status = "found"
+        else:
+            status = "partial"
+    status = safe_text(status, "partial").lower()
+    confidence = clause.get("confidence") or clause.get("confidence_score")
+    if isinstance(confidence, (int, float)):
+        confidence_label = f"{int(float(confidence) * 100) if float(confidence) <= 1 else int(float(confidence))}%"
+    elif confidence:
+        confidence_label = safe_text(confidence)
+    elif status == "found":
+        confidence_label = "High"
+    elif status == "missing":
+        confidence_label = "Not applicable"
+    else:
+        confidence_label = "Not specified"
+    page = clause.get("page") or clause.get("page_number")
+    if not page and evidence:
+        page = evidence[0].get("page")
+    location = clause.get("location") or clause.get("source_location")
+    if not location:
+        if page:
+            location = f"Page {page}"
+        else:
+            location = "Extracted contract text"
+    return {
+        "id": safe_text(clause.get("id"), f"clause-{index}"),
+        "title": title,
+        "type": clause_type,
+        "status": status,
+        "confidence": confidence_label,
+        "page": page,
+        "location": location,
+        "evidence": evidence,
+        "summary": safe_text(clause.get("summary") or clause.get("explanation"), clause_summary(clause_type, status)),
+        "risk": safe_text(clause.get("risk") or clause.get("risk_level"), "Not specified"),
+        "recommendation": safe_text(clause.get("recommendation") or clause.get("suggested_improvement"), generic_recommendation(clause_type, status)),
+    }
+
+
+def normalize_risk(risk: Any, index: int) -> dict[str, str]:
+    if not isinstance(risk, dict):
+        return {"title": f"Risk {index + 1}", "severity": "medium", "explanation": safe_text(risk), "affected_clause": "Not specified", "recommendation": "Review this risk with counsel."}
+    return {
+        "title": safe_text(risk.get("title"), f"Risk {index + 1}"),
+        "severity": safe_text(risk.get("severity"), "medium").lower(),
+        "explanation": safe_text(risk.get("explanation") or risk.get("description"), "No explanation provided."),
+        "affected_clause": safe_text(risk.get("affected_clause") or risk.get("clause"), "Not specified"),
+        "recommendation": safe_text(risk.get("recommendation") or risk.get("suggested_mitigation"), "Review this risk with legal counsel."),
+    }
+
+
+def normalize_analysis_response(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        data = {}
+    clauses = [normalize_clause(clause, idx) for idx, clause in enumerate(data.get("clauses") or [])]
+    missing = data.get("missing_critical_clauses") or []
+    missing_names = [safe_text(item) for item in missing]
+    found_count = sum(1 for clause in clauses if clause["status"] == "found")
+    source = data.get("source") or data.get("analysis_source") or data.get("scoring_source") or "rule_based"
+    return {
+        "raw": data,
+        "health_score": data.get("health_score"),
+        "risk_level": safe_text(data.get("risk_level"), "Not specified"),
+        "source": safe_text(source, "rule_based"),
+        "degraded_mode": bool(data.get("degraded_mode", False)),
+        "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
+        "clauses": clauses,
+        "clauses_found": found_count,
+        "missing_critical_clauses": missing_names,
+        "risks": [normalize_risk(risk, idx) for idx, risk in enumerate(data.get("risks") or [])],
+        "recommended_improvements": [safe_text(item) for item in (data.get("recommended_improvements") or data.get("recommendations") or [])],
+        "created_at": data.get("created_at"),
+    }
+
+
+def badge_class(value: str) -> str:
+    normalized = safe_text(value, "neutral").lower()
+    if normalized in {"found", "low", "strong"}:
+        return "cip-badge cip-badge-green"
+    if normalized in {"partial", "medium", "developing"}:
+        return "cip-badge cip-badge-amber"
+    if normalized in {"missing", "high", "critical", "weak"}:
+        return "cip-badge cip-badge-red"
+    return "cip-badge cip-badge-blue"
+
+
+def render_metric_card(label: str, value: Any, detail: str = "") -> None:
+    st.markdown(f'<div class="cip-kpi"><div class="cip-kpi-label">{safe_html(label)}</div><div class="cip-kpi-value">{safe_html(value)}</div><div class="cip-kpi-detail">{safe_html(detail, "")}</div></div>', unsafe_allow_html=True)
+
+
+def render_score_cards(analysis: dict[str, Any]) -> None:
+    cols = st.columns(5)
+    score = analysis.get("health_score")
+    score_value = f"{score}/100" if score is not None else "Not scored"
+    with cols[0]:
+        render_metric_card("Health Score", score_value, "Contract completeness")
+    with cols[1]:
+        render_metric_card("Risk Level", analysis["risk_level"], "Current assessment")
+    with cols[2]:
+        render_metric_card("Clauses Found", analysis["clauses_found"], "Extracted clauses")
+    with cols[3]:
+        render_metric_card("Missing Critical", len(analysis["missing_critical_clauses"]), "Priority gaps")
+    with cols[4]:
+        source = analysis["source"]
+        if analysis["degraded_mode"]:
+            source = f"{source} / degraded"
+        render_metric_card("Source Mode", source, "Evidence confidence")
+
+
+def render_evidence(evidence: list[dict[str, Any]]) -> None:
+    if not evidence:
+        st.caption("No direct evidence captured for this clause.")
+        return
+    for idx, item in enumerate(evidence, start=1):
+        page = item.get("page")
+        location = item.get("location") or (f"Page {page}" if page else "Extracted contract text")
+        source = item.get("source") or "extracted_text"
+        confidence = item.get("confidence") or "Not specified"
+        keyword = item.get("keyword") or "Not specified"
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">Evidence {idx} · Source: {safe_html(source)} · Location: {safe_html(location)} · Keyword: {safe_html(keyword)} · Confidence: {safe_html(confidence)}</div><blockquote>{safe_html(item.get("text"), "No direct evidence captured for this clause.")}</blockquote></div>', unsafe_allow_html=True)
+
+
+def render_clause_card(clause: dict[str, Any]) -> None:
+    status_class = badge_class(clause["status"])
+    risk_class = badge_class(clause["risk"])
+    st.markdown(f'<div class="cip-review-card"><div class="cip-card-header"><div><div class="cip-eyebrow">Clause</div><h3>{safe_html(clause["title"])}</h3></div><span class="{status_class}">{safe_html(clause["status"].title())}</span></div><div class="cip-card-meta"><span>Type: {safe_html(clause["type"])}</span><span>Confidence: {safe_html(clause["confidence"])}</span><span>Source: {safe_html(clause["location"])}</span><span class="{risk_class}">Risk: {safe_html(clause["risk"].title())}</span></div><p><strong>Why it matters:</strong> {safe_html(clause["summary"])}</p></div>', unsafe_allow_html=True)
+    st.markdown("**Evidence**")
+    render_evidence(clause["evidence"])
+    st.markdown(f'<div class="cip-recommendation"><strong>Recommendation:</strong> {safe_html(clause["recommendation"])}</div>', unsafe_allow_html=True)
+
+
+def render_risk_card(risk: dict[str, str]) -> None:
+    st.markdown(f'<div class="cip-risk-card"><div class="cip-card-header"><h4>{safe_html(risk["title"])}</h4><span class="{badge_class(risk["severity"])}">{safe_html(risk["severity"].title())}</span></div><p>{safe_html(risk["explanation"])}</p><p><strong>Affected clause:</strong> {safe_html(risk["affected_clause"])}</p><p><strong>Recommendation:</strong> {safe_html(risk["recommendation"])}</p></div>', unsafe_allow_html=True)
+
+
+def render_missing_clause_card(name: str) -> None:
+    label = titleize(name)
+    st.markdown(f'<div class="cip-missing-card"><div class="cip-card-header"><h4>{safe_html(label)}</h4><span class="cip-badge cip-badge-red">High Priority</span></div><p><strong>Why it matters:</strong> {safe_html(clause_summary(safe_text(name).lower(), "missing"))}</p><p><strong>Suggested wording direction:</strong> {safe_html(generic_recommendation(safe_text(name).lower(), "missing"))}</p></div>', unsafe_allow_html=True)
+
+
+def render_recommendations(analysis: dict[str, Any]) -> None:
+    recommendations = list(analysis.get("recommended_improvements") or [])
+    for missing in analysis.get("missing_critical_clauses") or []:
+        recommendations.append(generic_recommendation(missing, "missing"))
+    if analysis.get("risks"):
+        recommendations.append("Review high-risk terms with legal counsel before signature.")
+    if not recommendations:
+        recommendations.append("No major remediation actions were identified. Confirm business terms and final legal review before signature.")
+    for item in recommendations:
+        st.markdown(f'<div class="cip-check-item">✓ {safe_html(item)}</div>', unsafe_allow_html=True)
+
+
+def render_analysis_results(analysis: dict[str, Any]) -> None:
+    render_score_cards(analysis)
+    st.markdown("### Executive Summary")
+    st.markdown(f'<div class="cip-summary-card">{safe_html(analysis["executive_summary"])}</div>', unsafe_allow_html=True)
+
+    st.markdown("### Risk Summary")
+    if analysis["risks"]:
+        for risk in analysis["risks"]:
+            render_risk_card(risk)
+    else:
+        st.info("No major risks detected based on the extracted clauses.")
+
+    st.markdown("### Clauses")
+    if analysis["clauses"]:
+        for clause in analysis["clauses"]:
+            render_clause_card(clause)
+    else:
+        st.warning("No clauses were extracted from this contract yet.")
+
+    st.markdown("### Missing Critical Clauses")
+    if analysis["missing_critical_clauses"]:
+        for missing in analysis["missing_critical_clauses"]:
+            render_missing_clause_card(missing)
+    else:
+        st.success("No missing critical clauses were detected by the rule-based review.")
+
+    st.markdown("### Recommended Actions")
+    render_recommendations(analysis)
+
+    st.markdown("### Evidence Trace")
+    evidence_rows = []
+    for clause in analysis["clauses"]:
+        if clause["evidence"]:
+            for item in clause["evidence"]:
+                evidence_rows.append({"Clause": clause["title"], "Evidence snippet": item.get("text"), "Page": item.get("page") or "Not specified", "Source type": item.get("source") or "extracted_text", "Confidence": item.get("confidence") or clause["confidence"]})
+        else:
+            evidence_rows.append({"Clause": clause["title"], "Evidence snippet": "No direct evidence captured for this clause.", "Page": "Not specified", "Source type": "extracted_text", "Confidence": clause["confidence"]})
+    if evidence_rows:
+        st.dataframe(evidence_rows, use_container_width=True)
+    else:
+        st.caption("No evidence trace is available yet.")
+
+    with st.expander("Advanced / Debug Output", expanded=False):
+        st.caption("Raw backend response for debugging only")
+        st.json(analysis["raw"])
 
 
 def render_sidebar():
@@ -215,19 +497,27 @@ def select_contract():
 
 def analysis_page():
     st.title("Contract Analysis")
+    st.caption("Review extracted clauses, risks, evidence, and recommended actions.")
     cid = select_contract()
-    if cid and st.button("Run analysis", use_container_width=True):
-        with st.spinner("Analyzing contract..."):
+    if not cid:
+        return
+    if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis_at"):
+        st.caption(f"Last analyzed: {st.session_state.last_analysis_at}")
+    if st.button("Run Analysis", use_container_width=True):
+        with st.spinner("Analyzing contract and extracting evidence..."):
             ok, data = api_request("POST", f"/contracts/{cid}/analyze")
         if ok:
-            st.metric("Health score", data["health_score"])
-            st.write(data["executive_summary"])
-            st.subheader("Risks")
-            st.write(data["risks"])
-            st.subheader("Clauses")
-            st.write(data["clauses"])
+            st.session_state.last_analysis = normalize_analysis_response(data)
+            st.session_state.last_analysis_contract_id = cid
+            st.session_state.last_analysis_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            st.success("Analysis complete.")
         else:
-            st.error(user_message(data))
+            st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
+            return
+    if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis"):
+        render_analysis_results(st.session_state.last_analysis)
+    else:
+        st.info("Run analysis to see health score, risks, clauses, recommendations, and evidence trace.")
 
 
 def chat_page():

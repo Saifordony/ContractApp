@@ -82,3 +82,16 @@ def test_streamlit_ui_feedback_not_used_in_ternaries_or_one_line_blocks():
     ]
     for pattern in forbidden:
         assert pattern not in src
+
+
+def test_analysis_page_uses_polished_renderers_not_raw_json_main_ui():
+    src = read("frontend/streamlit_app.py")
+    assert "def normalize_analysis_response" in src
+    assert "def render_clause_card" in src
+    assert "def render_evidence" in src
+    assert "def render_risk_card" in src
+    assert "def render_score_cards" in src
+    assert "Advanced / Debug Output" in src
+    assert "Raw backend response for debugging only" in src
+    assert 'st.write(data["clauses"])' not in src
+    assert 'st.write(data["risks"])' not in src
