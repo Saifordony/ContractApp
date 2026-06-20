@@ -59,7 +59,7 @@ db_client = None
 db = None
 
 # Security
-pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
 
 

@@ -4,7 +4,7 @@
 // screen gets the same behaviour: a failed call throws an ApiError with a
 // human-readable message (never a raw {"detail": ...} blob leaked to the UI).
 
-import type { ChatResponse, ChatTurn, GroundedAnalysis, LoginResponse } from "./types";
+import type { ChatResponse, ChatTurn, GroundedAnalysis, LoginResponse, RegisterResponse } from "./types";
 
 const BASE_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "http://localhost:8000";
@@ -84,6 +84,18 @@ export async function login(
   });
   setToken(data.access_token, options.remember ?? true);
   return data;
+}
+
+export async function registerUser(args: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<RegisterResponse> {
+  const email = args.email.trim().toLowerCase();
+  return request<RegisterResponse>("/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username: args.name.trim(), email, password: args.password }),
+  });
 }
 
 export async function analyzeContractText(

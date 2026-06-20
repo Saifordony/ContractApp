@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent } from "react";
-import { ApiError, analyzeContractText, getToken, login, setToken } from "@/lib/api";
+import { ApiError, analyzeContractText, getToken, setToken } from "@/lib/api";
 import type { GroundedAnalysis } from "@/lib/types";
 import { ContractChat } from "@/components/ContractChat";
+import { LoginScreen } from "@/components/auth/AuthScreens";
 
 type ContractRecord = {
   id: string;
@@ -46,100 +46,6 @@ const DEFAULT_CONTRACTS: ContractRecord[] = [
   { id: "sow-q3", name: "Q3 Implementation SOW", counterparty: "Brightline Systems", status: "Ready", risk: "Low", updated: "Jun 12", tags: ["SOW", "Services"], text: "Statement of work covering deliverables, milestones, fees, acceptance criteria, and payment terms." },
 ];
 
-function LoginPage({ onSuccess }: { onSuccess: () => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const normalizedEmail = email.trim();
-    if (!normalizedEmail || !password || busy) return;
-
-    setBusy(true);
-    setError(null);
-    try {
-      await login(normalizedEmail, password, { remember: rememberMe });
-      onSuccess();
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setError("The email or password you entered is incorrect.");
-      } else {
-        setError("We couldn’t sign you in. Please try again.");
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="auth-page" aria-labelledby="login-title">
-      <section className="auth-card" aria-describedby="login-subtitle">
-        <div className="auth-brand" aria-label="Contract Intelligence">
-          <span className="auth-logo">CI</span>
-          <span>Contract Intelligence</span>
-        </div>
-
-        <div className="auth-heading">
-          <p className="auth-kicker">Secure workspace</p>
-          <h1 id="login-title">Sign in to review contracts.</h1>
-          <p id="login-subtitle">Access your AI-powered contract review workspace.</p>
-        </div>
-
-        <form className="auth-form" onSubmit={submit} noValidate>
-          {error && <div className="auth-error" role="alert">{error}</div>}
-
-          <label className="auth-field" htmlFor="login-email">
-            <span>Email</span>
-            <input
-              id="login-email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder="you@company.com"
-              autoComplete="email"
-              required
-            />
-          </label>
-
-          <label className="auth-field" htmlFor="login-password">
-            <span>Password</span>
-            <input
-              id="login-password"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your password"
-              autoComplete="current-password"
-              required
-            />
-          </label>
-
-          <div className="auth-options">
-            <label className="remember-control">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(event) => setRememberMe(event.target.checked)}
-              />
-              <span>Remember me</span>
-            </label>
-            <a href="#forgot-password" aria-label="Forgot password">
-              Forgot password?
-            </a>
-          </div>
-
-          <button className="auth-submit" type="submit" disabled={busy || !email.trim() || !password}>
-            {busy ? "Signing in…" : "Sign in"}
-          </button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 function getHits(text: string) {
   return CLAUSE_MAP.map((c) => ({ ...c, found: c.pattern.test(text), excerpt: text.split(/\n+/).find((p) => c.pattern.test(p))?.trim() ?? "Not found in current text." }));
 }
@@ -178,7 +84,7 @@ export default function Home() {
     setContracts((all) => [contract, ...all]); selectContract(contract); await analyze(uploadedText);
   }
 
-  if (!authed) return <LoginPage onSuccess={() => setAuthed(true)} />;
+  if (!authed) return <LoginScreen onSuccess={() => setAuthed(true)} />;
 
   return (
     <main className="app-shell">

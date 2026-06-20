@@ -13,18 +13,29 @@ router = APIRouter()
 
 @router.post("/auth/register")
 async def register(user: User):
-    existing_user = await _main.db.users.find_one(
-        {"$or": [{"username": user.username}, {"email": user.email}]}
-    )
-    if existing_user:
-        raise HTTPException(
-            status_code=400, detail="Username or email already registered"
-        )
+    username = (user.username or "").strip()
+    email = (user.email or "").strip().lower()
+    password = user.password or ""
 
-    hashed_password = _main.get_password_hash(user.password)
+    if len(username) < 2:
+        raise HTTPException(status_code=422, detail="Name must be at least 2 characters")
+    if "@" not in email or "." not in email:
+        raise HTTPException(status_code=422, detail="Enter a valid email address")
+    if len(password) < 8:
+        raise HTTPException(status_code=422, detail="Password needs at least 8 characters")
+
+    existing_email = await _main.db.users.find_one({"email": email})
+    if existing_email:
+        raise HTTPException(status_code=409, detail="This email is already registered")
+
+    existing_username = await _main.db.users.find_one({"username": username})
+    if existing_username:
+        raise HTTPException(status_code=409, detail="This name is already registered")
+
+    hashed_password = _main.get_password_hash(password)
     user_dict = {
-        "username": user.username,
-        "email": user.email,
+        "username": username,
+        "email": email,
         "password": hashed_password,
         "created_at": datetime.utcnow(),
     }
@@ -38,7 +49,11 @@ async def register(user: User):
 
 @router.post("/auth/login")
 async def login(user: UserLogin):
-    db_user = await _main.db.users.find_one({"username": user.username})
+    identifier = (user.username or "").strip()
+    email_identifier = identifier.lower()
+    db_user = await _main.db.users.find_one({"email": email_identifier})
+    if not db_user:
+        db_user = await _main.db.users.find_one({"username": identifier})
     if not db_user or not _main.verify_password(user.password, db_user["password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
