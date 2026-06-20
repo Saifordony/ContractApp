@@ -270,6 +270,9 @@ def api_request(method: str, path: str, **kwargs) -> tuple[bool, Any]:
             return False, {"message": "Invalid contract id or request payload.", **debug}
         if response.status_code >= 500:
             detail = body.get("detail") if isinstance(body, dict) else body
+            if isinstance(detail, dict):
+                message = detail.get("detail") or detail.get("message") or "Backend returned an internal error."
+                return False, {"message": safe_text(message), "error_code": detail.get("error_code"), "explanation_language": detail.get("explanation_language"), "ui_language": detail.get("ui_language"), **debug}
             return False, {"message": safe_text(detail, "Backend returned an internal error."), **debug}
         if response.status_code >= 400:
             detail = body.get("detail") if isinstance(body, dict) else body

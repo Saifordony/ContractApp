@@ -48,9 +48,14 @@ async def analyze(contract_id: str, explanation_language: str = "en", ui_languag
     except HTTPException as exc:
         logger.warning("analysis failed user_id=%s contract_id=%s status=%s detail=%s", user["id"], contract_id, exc.status_code, exc.detail)
         raise
+    except NameError as exc:
+        logger.exception("analysis language helper error user_id=%s contract_id=%s explanation_language=%s ui_language=%s", user["id"], contract_id, explanation_language, ui_language)
+        detail = "Arabic analysis failed due to a backend language helper error. English analysis still works." if explanation_language == "ar" else "Analysis failed due to a backend helper error."
+        raise HTTPException(status_code=500, detail={"error_code": "ANALYSIS_LANGUAGE_HELPER_ERROR", "detail": detail, "explanation_language": explanation_language, "ui_language": ui_language}) from exc
     except Exception as exc:
-        logger.exception("analysis unexpected error user_id=%s contract_id=%s", user["id"], contract_id)
-        raise HTTPException(status_code=500, detail="Analysis failed. Please try again or check system health.") from exc
+        logger.exception("analysis unexpected error user_id=%s contract_id=%s explanation_language=%s ui_language=%s", user["id"], contract_id, explanation_language, ui_language)
+        detail = "Analysis failed while generating Arabic explanation. Please check backend logs." if explanation_language == "ar" else "Analysis failed. Please try again or check system health."
+        raise HTTPException(status_code=500, detail={"error_code": "ANALYSIS_FAILED", "detail": detail, "explanation_language": explanation_language, "ui_language": ui_language}) from exc
 
 
 @router.get("/{contract_id}/analysis/report")
