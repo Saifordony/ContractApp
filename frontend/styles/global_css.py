@@ -41,5 +41,8 @@ APP_CSS = """
 .cip-benchmark-card { background:#fff; border:1px solid #e2e8f0; border-radius:20px; padding:1rem 1.1rem; margin:.7rem 0; box-shadow:0 10px 26px rgba(15,23,42,.05); }
 .cip-mini-bar { height:10px; border-radius:999px; background:#e2e8f0; overflow:hidden; margin:.35rem 0 .8rem; }
 .cip-mini-bar span { display:block; height:100%; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }
+.cip-status-card { background:#fff; border:1px solid #dbeafe; border-radius:22px; padding:1rem 1.1rem; margin:.65rem 0; min-height:150px; box-shadow:0 12px 32px rgba(15,23,42,.06); }
+.cip-endpoint-row { display:grid; grid-template-columns: minmax(160px,1.2fr) auto auto minmax(220px,2fr); gap:.75rem; align-items:center; background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:.8rem 1rem; margin:.5rem 0; }
+@media (max-width: 760px) { .cip-endpoint-row { grid-template-columns: 1fr; } }
 </style>
 """

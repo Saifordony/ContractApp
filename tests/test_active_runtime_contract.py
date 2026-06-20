@@ -4,41 +4,42 @@ from pathlib import Path
 def test_streamlit_page_config_precedes_session_state_initialization():
     source = Path("frontend/streamlit_app.py").read_text()
     assert source.count("st.set_page_config(") == 1
-    main_body = source[source.index("def main():"):]
-    assert main_body.index("st.set_page_config(") < main_body.index("init_session_state()")
-    assert "Active UI: Streamlit / frontend/streamlit_app.py / Build v2" in source
+    assert source.index("st.set_page_config(") < source.index("def init_state():")
+    assert "Frontend Build: {FRONTEND_BUILD}" in source
+    assert "streamlit-clean-rebuild-v1" in source
 
 
 def test_healthz_exposes_active_backend_marker():
-    source = Path("backend/routers/system.py").read_text()
-    assert '"active_backend_entrypoint": "backend.main:app"' in source
-    assert '"active_ai_provider": AI_PROVIDER' in source
-    assert '"active_model": selected_model()' in source
+    source = Path("backend/routers/health.py").read_text()
+    assert '"Active Backend"' in source
+    assert '"Active Backend File"' in source
+    assert '"Backend Build"' in source
     assert "llm_reachable" in source
-    assert 'APP_BUILD = "Backend: FastAPI / backend/main.py / Build v2"' in Path("backend/main.py").read_text()
+    assert "fastapi-clean-rebuild-v1" in Path("backend/config.py").read_text()
 
 
 def test_analysis_endpoints_use_canonical_analysis_service():
-    source = Path("backend/routers/genai.py").read_text()
-    assert "backend.services.contract_analysis_service" in source
-    assert "await analyze_contract_text(" in source
-    assert "await analyze_uploaded_contract(" in source
-    assert "await build_health_evaluation(" in source
+    source = Path("backend/routers/analysis.py").read_text()
+    assert "from backend.services.analysis_service import analyze_text, extract_text" in source
+    assert "return analyze_text(" in source
+    assert "extract_text(" in source
 
 
-def test_contract_init_and_chat_use_official_services():
+def test_contract_analysis_chat_and_init_use_official_services():
     source = Path("backend/routers/contracts.py").read_text()
-    assert "from backend.services.contract_analysis_service import analyze_contract_text, normalize_analysis_results" in source
-    assert "await analyze_contract_text(contract" in source
-    assert "build_contract_chat_response(" in source
-    assert "normalize_analysis_results(" in source
+    assert "from backend.services.analysis_service import analyze_contract_record" in source
+    assert "from backend.services.chat_service import chat_with_contract" in source
+    assert "from backend.services.benchmark_service import benchmark_contract" in source
+    assert "await analyze_contract_record(" in source
+    assert "await chat_with_contract(" in source
+    assert "await benchmark_contract(" in source
 
 
-def test_benchmark_routes_use_official_orchestrator():
+def test_benchmark_routes_use_official_service():
     source = Path("backend/routers/benchmark.py").read_text()
-    assert "from backend.services.benchmark_orchestrator import analyze_uploaded_benchmark, compare_saved_contract" in source
-    assert "compare_saved_contract(" in source
-    assert "analyze_uploaded_benchmark(" in source
+    assert "from backend.services.benchmark_service import benchmark_analysis, benchmark_contract" in source
+    assert "await benchmark_contract(" in source
+    assert "benchmark_analysis(" in source
 
 
 def test_next_frontend_is_archived_not_active():

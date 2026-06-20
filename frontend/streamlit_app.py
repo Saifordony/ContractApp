@@ -448,6 +448,41 @@ def normalize_benchmark_response(data: Any) -> dict[str, Any]:
     }
 
 
+def service_status_label(ok: bool, degraded: bool = False) -> str:
+    if ok and not degraded:
+        return "Healthy"
+    if ok and degraded:
+        return "Degraded"
+    return "Offline"
+
+
+def render_status_card(title: str, status: str, key_value: Any, explanation: str, checked_at: str = "Now") -> None:
+    st.markdown(f'<div class="cip-status-card"><div class="cip-card-header"><h4>{safe_html(title)}</h4><span class="{badge_class(status)}">{safe_html(status)}</span></div><p><strong>{safe_html(key_value)}</strong></p><p>{safe_html(explanation)}</p><div class="cip-muted">Last checked: {safe_html(checked_at)}</div></div>', unsafe_allow_html=True)
+
+
+def endpoint_status_row(name: str, status: str, status_code: Any, explanation: str) -> None:
+    st.markdown(f'<div class="cip-endpoint-row"><strong>{safe_html(name)}</strong><span class="{badge_class(status)}">{safe_html(status)}</span><span>Status: {safe_html(status_code)}</span><span>{safe_html(explanation)}</span></div>', unsafe_allow_html=True)
+
+
+def run_endpoint_checks() -> list[dict[str, Any]]:
+    checks = []
+    for method, path, label in [("GET", "/healthz", "/healthz"), ("GET", "/auth/me", "/auth/me"), ("GET", "/clients", "/clients"), ("GET", "/contracts", "/contracts"), ("GET", "/llm/health", "/llm/health")]:
+        ok, data = api_request(method, path, timeout=10)
+        debug = st.session_state.last_api_debug or {}
+        checks.append({"name": label, "status": "Healthy" if ok else "Failed", "status_code": debug.get("status_code"), "explanation": "Endpoint responded successfully." if ok else user_message(data)})
+    ok, contracts = api_request("GET", "/contracts", timeout=10)
+    contract_id = None
+    if ok and contracts:
+        contract_id = (contracts[0].get("id") or contracts[0].get("_id"))
+    for suffix in ["analyze", "chat", "benchmark"]:
+        path = f"/contracts/{{id}}/{suffix}"
+        if contract_id:
+            checks.append({"name": path, "status": "Skipped", "status_code": "not run", "explanation": "Skipped to avoid side effects; available for the selected contract workflow."})
+        else:
+            checks.append({"name": path, "status": "Skipped", "status_code": "no contract", "explanation": "Skipped — no contract available for this user."})
+    return checks
+
+
 def render_benchmark_results(result: dict[str, Any]) -> None:
     cols = st.columns(5)
     with cols[0]:
@@ -844,21 +879,133 @@ def benchmark_page():
 
 def settings_page():
     st.title("Settings / System Health")
+    st.caption("Diagnostics for frontend, backend, database, authentication, AI model, endpoints, and runtime configuration.")
     health = health_marker()
+    ok_diag, diagnostics = api_request("GET", "/system/diagnostics", timeout=15)
+    if not ok_diag:
+        diagnostics = {}
+    backend_ok = health.get("Backend Build") not in {None, "unreachable"}
+    mongo_ok = health.get("mongodb_status") == "connected"
+    auth_ok = health.get("auth_status") == "enabled"
+    llm_ok = bool(health.get("llm_reachable"))
+    degraded = backend_ok and mongo_ok and auth_ok and not llm_ok
+    overall = service_status_label(backend_ok and mongo_ok and auth_ok, degraded)
+    if overall == "Healthy":
+        explanation = "Frontend, backend, database, authentication, and AI model are reachable."
+    elif overall == "Degraded":
+        explanation = "Core app services are available, but AI/Ollama is unavailable so fallback mode may be used."
+    else:
+        explanation = "One or more core services are unavailable. Review the cards and troubleshooting guidance below."
+    render_status_card("Overall System Status", overall, f"System Status: {overall}", explanation, health.get("timestamp", "Now"))
+
+    st.markdown("### Service Status")
+    cols = st.columns(3)
+    with cols[0]:
+        render_status_card("Frontend", "Healthy", FRONTEND_BUILD, "Streamlit active frontend is rendering this dashboard.")
+    with cols[1]:
+        render_status_card("Backend API", "Healthy" if backend_ok else "Offline", health.get("Backend Build", "unreachable"), "FastAPI health endpoint is reachable." if backend_ok else "FastAPI health endpoint is not reachable.")
+    with cols[2]:
+        render_status_card("MongoDB", "Healthy" if mongo_ok else "Offline", health.get("mongodb_status", "unknown"), "Database connection is available." if mongo_ok else "MongoDB is not connected.")
+    cols = st.columns(3)
+    with cols[0]:
+        render_status_card("Authentication", "Healthy" if auth_ok else "Offline", health.get("auth_status", "unknown"), "JWT authentication is enabled." if auth_ok else "Authentication is not healthy.")
+    with cols[1]:
+        render_status_card("Ollama / LLM", "Healthy" if llm_ok else "Degraded", health.get("llm_ollama_status", "unknown"), "AI analysis and chat should be available." if llm_ok else "LLM unavailable; rule-based fallback will be used.")
+    with cols[2]:
+        render_status_card("Active Model", "Healthy" if health.get("active_model") else "Degraded", health.get("active_model", "unknown"), "Configured model used for AI analysis and chat.")
+
+    st.markdown("### AI Model Diagnostics")
+    llm_debug = diagnostics.get("llm_debug", {}) if isinstance(diagnostics, dict) else {}
     cols = st.columns(4)
     with cols[0]:
-        render_metric_card("Frontend Build", FRONTEND_BUILD, "Streamlit")
-    with cols[1]:
-        render_metric_card("Backend Build", health.get("Backend Build", "unknown"), health.get("Active Backend", "FastAPI"))
-    with cols[2]:
-        render_metric_card("LLM Reachable", health.get("llm_reachable", "unknown"), health.get("llm_ollama_status", "unknown"))
-    with cols[3]:
         render_metric_card("Active Model", health.get("active_model", "unknown"), "Ollama")
-    st.markdown("### LLM / Ollama")
-    st.write({"Ollama URL": health.get("ollama_url"), "Active model": health.get("active_model"), "Reachable": health.get("llm_reachable"), "Last LLM error": health.get("last_llm_error")})
-    with st.expander("Raw health response", expanded=False):
+    with cols[1]:
+        render_metric_card("LLM Reachable", health.get("llm_reachable", False), health.get("llm_ollama_status", "unknown"))
+    with cols[2]:
+        mode = "Hybrid AI + rule-based" if llm_ok else "Rule-based fallback"
+        render_metric_card("Analysis Mode", mode, "Current AI mode")
+    with cols[3]:
+        render_metric_card("Avg Response", llm_debug.get("average_response_time_ms", "Not measured"), "milliseconds")
+    if st.button("Test AI Model", use_container_width=True):
+        with st.spinner("Testing active AI model..."):
+            ok_test, test_result = api_request("POST", "/llm/test", timeout=45)
+        if ok_test and test_result.get("ok"):
+            st.success(f"AI model responded successfully using {test_result.get('model')} in {test_result.get('response_time_ms')} ms.")
+        else:
+            st.warning(user_message(test_result))
+    st.markdown("### AI Prompt / Parser Health")
+    parser_cols = st.columns(4)
+    with parser_cols[0]:
+        render_metric_card("Last LLM Call", llm_debug.get("last_call_successful", "No calls yet"), "yes/no")
+    with parser_cols[1]:
+        render_metric_card("JSON Parse", llm_debug.get("last_json_parse_successful", "No parses yet"), "yes/no")
+    with parser_cols[2]:
+        render_metric_card("Fallback Used", llm_debug.get("fallback_used", "Unknown"), llm_debug.get("last_fallback_reason", "No fallback reason"))
+    with parser_cols[3]:
+        render_metric_card("Prompt Mode", llm_debug.get("last_prompt_mode", "Not recorded"), "analysis / chat / benchmark")
+    if llm_ok and llm_debug.get("fallback_used"):
+        st.warning("The model is connected. Check the LLM prompt, response parser, and fallback logic in the analysis service.")
+
+    st.markdown("### Backend Endpoint Checks")
+    if st.button("Run endpoint checks", use_container_width=True):
+        st.session_state.endpoint_checks = run_endpoint_checks()
+    for check in st.session_state.get("endpoint_checks", []):
+        endpoint_status_row(check["name"], check["status"], check["status_code"], check["explanation"])
+    if not st.session_state.get("endpoint_checks"):
+        st.info("Run endpoint checks to test health, auth, client, contract, and LLM endpoints. Contract action endpoints are skipped if no contract is available.")
+
+    st.markdown("### Database Stats")
+    counts = diagnostics.get("collection_counts", {}) if isinstance(diagnostics, dict) else {}
+    count_cols = st.columns(6)
+    for idx, name in enumerate(["users", "clients", "contracts", "analyses", "chat_sessions", "benchmarks"]):
+        with count_cols[idx]:
+            render_metric_card(titleize(name), counts.get(name, "—"), "safe count")
+
+    st.markdown("### Build and Runtime Details")
+    cols = st.columns(4)
+    with cols[0]:
+        render_metric_card("Frontend Build", FRONTEND_BUILD, f"Streamlit {getattr(st, '__version__', 'unknown')}")
+    with cols[1]:
+        render_metric_card("Backend Build", health.get("Backend Build", "unknown"), f"Python {diagnostics.get('python_version', 'unknown')}")
+    with cols[2]:
+        render_metric_card("FastAPI", diagnostics.get("fastapi_version", "unknown"), "backend runtime")
+    with cols[3]:
+        render_metric_card("Docker Mode", diagnostics.get("docker_mode_detected", "unknown"), "container detected")
+    st.info("Internal API URL: http://backend:8000. Browser backend URL: http://localhost:8000. The Streamlit container uses the internal Docker URL to reach FastAPI. Your browser uses localhost.")
+
+    st.markdown("### Environment / Config Checks")
+    checks = diagnostics.get("config_checks", {}) if isinstance(diagnostics, dict) else {}
+    for label, value in checks.items():
+        endpoint_status_row(titleize(label), "Healthy" if value else "Failed", "configured" if value else "missing", "Secret values are intentionally hidden.")
+
+    st.markdown("### Recent Safe Errors")
+    errors = diagnostics.get("recent_safe_errors", {}) if isinstance(diagnostics, dict) else {}
+    if errors:
+        for name, value in errors.items():
+            render_status_card(titleize(name), "Degraded" if value else "Healthy", value or "No recent safe error", "User-safe error summary only.")
+    else:
+        st.caption("No recent safe errors are available.")
+
+    st.markdown("### Troubleshooting")
+    if not backend_ok:
+        st.error("FastAPI is not reachable. Run docker compose up and confirm backend is on port 8000.")
+    elif not mongo_ok:
+        st.error("MongoDB is unavailable. Check the mongodb container.")
+    elif not llm_ok:
+        st.warning("Ollama is not reachable. Confirm Ollama is running and the model is pulled.")
+    elif llm_debug.get("fallback_used"):
+        st.warning("The model is connected. Check the LLM prompt, response parser, and fallback logic in the analysis service.")
+    else:
+        st.success("No major troubleshooting action is currently required.")
+
+    with st.expander("Advanced / Raw Health Response", expanded=False):
         st.json(health)
-    st.caption(f"API Base URL: {API_BASE_URL}")
+    with st.expander("Advanced / LLM Debug", expanded=False):
+        st.json(llm_debug)
+    with st.expander("Advanced / Endpoint Test Results", expanded=False):
+        st.json(st.session_state.get("endpoint_checks", []))
+    with st.expander("Advanced / Environment Debug", expanded=False):
+        st.json({"diagnostics": diagnostics, "api_base_url": API_BASE_URL})
 
 
 def main():

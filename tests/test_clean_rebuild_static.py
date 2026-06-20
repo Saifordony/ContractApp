@@ -186,3 +186,45 @@ def test_analysis_and_benchmark_avoid_raw_main_outputs():
     assert 'st.write(data)' not in src
     assert 'st.dataframe(evidence_rows' not in src
     assert "Raw benchmark response for debugging only" in src
+
+
+def test_settings_system_health_is_professional_diagnostics_dashboard():
+    src = read("frontend/streamlit_app.py")
+    for token in [
+        "Overall System Status",
+        "Service Status",
+        "AI Model Diagnostics",
+        "Test AI Model",
+        "AI Prompt / Parser Health",
+        "Backend Endpoint Checks",
+        "Database Stats",
+        "Environment / Config Checks",
+        "Recent Safe Errors",
+        "Troubleshooting",
+        "Advanced / Raw Health Response",
+        "Advanced / LLM Debug",
+        "Advanced / Endpoint Test Results",
+        "Advanced / Environment Debug",
+        "run_endpoint_checks",
+        "/system/diagnostics",
+        "/llm/test",
+    ]:
+        assert token in src
+
+
+def test_backend_health_router_exposes_diagnostics_without_secrets():
+    src = read("backend/routers/health.py")
+    llm = read("backend/services/llm_service.py")
+    for token in [
+        "@router.post(\"/llm/test\")",
+        "@router.get(\"/system/diagnostics\")",
+        "config_checks",
+        "collection_counts",
+        "recent_safe_errors",
+        "llm_debug_status",
+        "test_llm_model",
+    ]:
+        assert token in src or token in llm
+    assert "jwt_secret" in src
+    assert "settings.jwt_secret" in src
+    assert "JWT_SECRET" not in src
