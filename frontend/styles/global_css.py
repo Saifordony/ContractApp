@@ -6,8 +6,9 @@ LIGHT_TOKENS = {
     "surface_strong": "#FFFFFF",
     "card": "#ffffff",
     "elevated": "#ffffff",
-    "input_bg": "#F8FAFC",
+    "input_bg": "#FFFFFF",
     "input_text": "#0F172A",
+    "input_placeholder": "#64748B",
     "border": "#e2e8f0",
     "border_strong": "#dbeafe",
     "text": "#0f172a",
@@ -30,8 +31,9 @@ DARK_TOKENS = {
     "surface_strong": "#111827",
     "card": "#1E293B",
     "elevated": "#243044",
-    "input_bg": "#1E293B",
-    "input_text": "#F8FAFC",
+    "input_bg": "#FFFFFF",
+    "input_text": "#0F172A",
+    "input_placeholder": "#64748B",
     "border": "#334155",
     "border_strong": "#1e40af",
     "text": "#F8FAFC",
@@ -63,6 +65,9 @@ def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
   --cip-elevated: {tokens['elevated']};
   --cip-input-bg: {tokens['input_bg']};
   --cip-input-text: {tokens['input_text']};
+  --cip-input-placeholder: {tokens['input_placeholder']};
+  --cip-dropdown-bg: {"#1E293B" if theme == "dark" else "#FFFFFF"};
+  --cip-dropdown-text: {"#F8FAFC" if theme == "dark" else "#0F172A"};
   --cip-border: {tokens['border']};
   --cip-border-strong: {tokens['border_strong']};
   --cip-text: {tokens['text']};
@@ -100,9 +105,14 @@ h1, h2, h3, h4, h5, h6, p, label, span {{ color: inherit; }}
 .stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{ background:var(--cip-button-primary-bg) !important; color:var(--cip-button-primary-text) !important; border-color:var(--cip-button-primary-bg) !important; }}
 div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="textarea"], textarea {{ background:var(--cip-input-bg) !important; color:var(--cip-input-text) !important; border-radius: 14px !important; border-color:var(--cip-border) !important; }}
 div[data-baseweb="input"] input, div[data-baseweb="select"] input, textarea, input {{ color:var(--cip-input-text) !important; -webkit-text-fill-color:var(--cip-input-text) !important; }}
-div[data-baseweb="select"] span, div[data-baseweb="select"] div, div[data-baseweb="popover"] * {{ color:var(--cip-input-text) !important; }}
-div[data-baseweb="popover"] div {{ background:var(--cip-elevated) !important; }}
-input::placeholder, textarea::placeholder {{ color:var(--cip-muted) !important; opacity:1 !important; }}
+div[data-baseweb="select"] > div {{ background-color:var(--cip-input-bg) !important; border-color:var(--cip-border) !important; color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] span, div[data-baseweb="select"] div, div[data-baseweb="select"] input {{ color:var(--cip-input-text) !important; -webkit-text-fill-color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] svg {{ color:var(--cip-input-text) !important; fill:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] [aria-disabled="true"], div[data-baseweb="select"] [data-testid*="placeholder"] {{ color:var(--cip-input-placeholder) !important; -webkit-text-fill-color:var(--cip-input-placeholder) !important; opacity:1 !important; }}
+div[data-baseweb="popover"] div, div[role="listbox"] {{ background:var(--cip-dropdown-bg) !important; color:var(--cip-dropdown-text) !important; border-color:var(--cip-border) !important; }}
+div[role="option"], div[role="option"] * {{ background:var(--cip-dropdown-bg) !important; color:var(--cip-dropdown-text) !important; -webkit-text-fill-color:var(--cip-dropdown-text) !important; }}
+div[role="option"]:hover, div[role="option"][aria-selected="true"] {{ background:var(--cip-nav-hover-bg) !important; color:var(--cip-dropdown-text) !important; }}
+input::placeholder, textarea::placeholder {{ color:var(--cip-input-placeholder) !important; -webkit-text-fill-color:var(--cip-input-placeholder) !important; opacity:1 !important; }}
 [data-testid="stRadio"] label, [data-testid="stFileUploader"] label, [data-testid="stTextInput"] label, [data-testid="stTextArea"] label, [data-testid="stSelectbox"] label {{ color:var(--cip-text) !important; }}
 .streamlit-expanderHeader, [data-testid="stExpander"] details summary, [data-testid="stExpander"] * {{ color:var(--cip-text) !important; }}
 [aria-disabled="true"], button:disabled {{ opacity:.55 !important; color:var(--cip-muted) !important; }}
