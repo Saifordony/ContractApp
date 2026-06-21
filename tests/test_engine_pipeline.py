@@ -9,7 +9,15 @@ def load_analysis_service():
         post=lambda *args, **kwargs: types.SimpleNamespace(ok=False, status_code=503),
     )
     sys.modules["backend.config"] = types.SimpleNamespace(
-        get_settings=lambda: types.SimpleNamespace(ollama_base_url="http://ollama:11434", ollama_model="llama3.1:8b")
+        get_settings=lambda: types.SimpleNamespace(
+            ai_mode="simple",
+            ollama_enabled=False,
+            ollama_base_url="http://ollama:11434",
+            ollama_model="llama3.1:8b",
+            ollama_timeout=1,
+            analysis_fast_mode=True,
+            analysis_job_timeout_seconds=180,
+        )
     )
     return importlib.reload(importlib.import_module("backend.services.analysis_service"))
 
@@ -41,6 +49,31 @@ def test_arabic_clause_detection_returns_meaningful_clauses():
     assert {"parties", "payment", "termination", "confidentiality", "governing_law"}.issubset(found)
     assert result["contract_language"] == "ar"
     assert result["contract_type"] == "employment"
+    assert result["degraded_mode"] is True
+    assert result["ai_status"] == "ollama_disabled"
+    assert result["message"] == "AI wording enhancement was unavailable, so a deterministic checklist analysis was returned."
+
+
+def test_english_clause_detection_without_ollama():
+    svc = load_analysis_service()
+    text = """
+    Service Agreement
+    1. Parties
+    This agreement is between Client and Contractor.
+    2. Services
+    Contractor will provide engineering deliverables.
+    3. Fees
+    Client shall pay monthly fees within 15 days of invoice.
+    4. Termination
+    Either party may terminate with 30 days written notice.
+    5. Confidentiality
+    Contractor must protect confidential information.
+    """
+    result = svc.analyze_text(text, explanation_language="en", ui_language="en")
+    found = {clause["type"] for clause in result["clauses"] if clause["found"]}
+    assert {"parties", "scope", "payment", "termination", "confidentiality"}.issubset(found)
+    assert result["degraded_mode"] is True
+    assert result["llm_used"] is False
 
 
 def test_section_parser_preserves_references_and_offsets():

@@ -1,9 +1,6 @@
 $ErrorActionPreference = "Stop"
 
 $models = @(
-  "qwen3:14b",
-  "bge-m3",
-  "deepseek-r1:14b",
   "llama3.1:8b"
 )
 
@@ -12,6 +9,7 @@ foreach ($model in $models) {
   ollama pull $model
 }
 
-Write-Host "Optional heavier models for powerful machines:"
+Write-Host "Stable MVP uses one optional wording model: llama3.1:8b."
+Write-Host "Future heavier experiments (disabled in active runtime):"
+Write-Host "# ollama pull qwen3:14b"
 Write-Host "# ollama pull qwen3:30b"
-Write-Host "# ollama pull llama3.3:70b"

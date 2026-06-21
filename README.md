@@ -151,53 +151,31 @@ Windows PowerShell:
 scripts\pull_ollama_models.ps1
 ```
 
-The scripts pull:
+The stable MVP needs only one local model:
 
-- `qwen3:14b` for analysis/chat
-- `bge-m3` for local embeddings
-- `deepseek-r1:14b` for optional reviewer/critic mode
-- `llama3.1:8b` as a smaller fallback
+- `llama3.1:8b` for optional wording improvements in analysis and chat
 
-Larger optional models such as `qwen3:30b` or `llama3.3:70b` may improve quality on powerful machines but can be much slower and require substantially more RAM/VRAM.
+The helper scripts also leave commented examples for larger models, but embeddings, reviewer models, and multi-model RAG are future enhancements, not part of the active stable runtime.
 
 ### Ollama model configuration
 
-Light setup:
+Recommended stable setup:
 
 ```env
-OLLAMA_ANALYSIS_MODEL=llama3.1:8b
-OLLAMA_CHAT_MODEL=llama3.1:8b
-OLLAMA_EMBED_MODEL=bge-m3
-OLLAMA_ENABLE_REVIEWER=false
+AI_MODE=simple
+OLLAMA_ENABLED=true
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_TIMEOUT=60
+ANALYSIS_JOB_TIMEOUT_SECONDS=180
 ```
 
-Recommended setup:
+To run without Ollama, set `OLLAMA_ENABLED=false`. The backend will still return deterministic bilingual checklist analysis and evidence-based chat responses.
 
-```env
-OLLAMA_ANALYSIS_MODEL=qwen3:14b
-OLLAMA_CHAT_MODEL=qwen3:14b
-OLLAMA_EMBED_MODEL=bge-m3
-OLLAMA_REVIEW_MODEL=deepseek-r1:14b
-OLLAMA_ENABLE_REVIEWER=true
-```
+### Simple AI mode and degraded mode
 
-Powerful setup:
+Contract analysis now follows a stable evidence-first pipeline: extraction/OCR, normalization, language and contract-type detection, section-aware chunking, bilingual clause extraction, deterministic risk/checklist scoring, and one optional Ollama call to improve wording. Ollama is never the source of truth and never controls whether analysis completes.
 
-```env
-OLLAMA_ANALYSIS_MODEL=qwen3:30b
-OLLAMA_CHAT_MODEL=qwen3:30b
-OLLAMA_EMBED_MODEL=bge-m3
-OLLAMA_REVIEW_MODEL=deepseek-r1:14b
-OLLAMA_ENABLE_REVIEWER=true
-```
-
-If a preferred model is unavailable, the backend falls back to `OLLAMA_FALLBACK_MODEL`. If embeddings are unavailable, retrieval falls back to bilingual lexical/section retrieval. If the reviewer model is unavailable, reviewer mode is skipped safely.
-
-### RAG, embeddings, reviewer mode, and degraded mode
-
-Contract analysis now follows an evidence-first pipeline: extraction/OCR, normalization, language and contract-type detection, section-aware chunking, bilingual clause extraction, hybrid retrieval, deterministic risk skeleton, optional Ollama reasoning, optional reviewer critique, and schema validation. Chat uses the same section-aware retrieval so contract-specific answers cite evidence or clearly state that the contract does not answer.
-
-`GET /llm/health` shows configured model roles, availability, latency, embedding availability, reviewer availability, and degraded status. Safe health endpoints remain public, while contract-processing AI endpoints require authentication.
+`GET /llm/health` shows whether Ollama is enabled/reachable and which single model is configured. Safe health endpoints remain public, while contract-processing AI endpoints require authentication.
 
 Benchmarking is an internal template-alignment/completeness comparison, not live market or legal-market data.
 
@@ -209,8 +187,16 @@ Timeout-related settings:
 
 ```env
 FRONTEND_API_TIMEOUT_SECONDS=300
-OLLAMA_TIMEOUT=300
-ANALYSIS_FAST_MODE=false
+OLLAMA_TIMEOUT=60
+ANALYSIS_JOB_TIMEOUT_SECONDS=180
+ANALYSIS_FAST_MODE=true
 ```
 
-For slow machines, set `ANALYSIS_FAST_MODE=true` and optionally set `OLLAMA_ENABLE_EMBEDDINGS=false` and `OLLAMA_ENABLE_REVIEWER=false`. The backend will still return deterministic checklist analysis if Ollama is unavailable or times out.
+For slow machines, keep `ANALYSIS_FAST_MODE=true` or set `OLLAMA_ENABLED=false`. The backend will still return deterministic checklist analysis if Ollama is unavailable or times out.
+
+Simple Docker setup:
+
+```powershell
+ollama pull llama3.1:8b
+docker compose up --build
+```

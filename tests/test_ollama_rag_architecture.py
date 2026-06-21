@@ -8,16 +8,20 @@ def load_services():
         get_settings=lambda: types.SimpleNamespace(
             ollama_base_url="http://ollama:11434",
             ollama_model="llama3.1:8b",
-            ollama_analysis_model="qwen3:14b",
-            ollama_chat_model="qwen3:14b",
-            ollama_review_model="deepseek-r1:14b",
-            ollama_embed_model="bge-m3",
+            ollama_analysis_model="llama3.1:8b",
+            ollama_chat_model="llama3.1:8b",
+            ollama_review_model="llama3.1:8b",
+            ollama_embed_model="",
             ollama_fallback_model="llama3.1:8b",
             ollama_temperature=0.1,
-            ollama_num_ctx=32768,
-            ollama_timeout=120,
-            ollama_enable_reviewer=True,
-            ollama_enable_embeddings=True,
+            ollama_num_ctx=8192,
+            ollama_timeout=60,
+            ollama_enable_reviewer=False,
+            ollama_enable_embeddings=False,
+            ollama_enabled=False,
+            ai_mode="simple",
+            analysis_fast_mode=True,
+            analysis_job_timeout_seconds=180,
         )
     )
     llm = importlib.reload(importlib.import_module("backend.services.llm_service"))
@@ -33,7 +37,7 @@ def test_model_selection_falls_back_when_preferred_missing():
     assert selected["fallback_used"] is True
 
 
-def test_hybrid_retrieval_returns_metadata_for_english_and_arabic_sections():
+def test_simple_retrieval_returns_metadata_for_english_and_arabic_sections():
     _, analysis, _ = load_services()
     text = """
     Article 1: Payment

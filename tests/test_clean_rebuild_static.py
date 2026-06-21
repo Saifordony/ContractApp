@@ -97,7 +97,7 @@ def test_analysis_page_uses_polished_renderers_not_raw_json_main_ui():
     assert 'st.write(data["risks"])' not in src
 
 
-def test_analysis_service_exposes_hybrid_ai_contract():
+def test_analysis_service_exposes_simple_ai_contract():
     src = read("backend/services/analysis_service.py")
     for token in [
         "llm_used",
@@ -115,7 +115,7 @@ def test_analysis_ui_shows_ai_sections_and_status():
     src = read("frontend/streamlit_app.py")
     for token in [
         "AI Status",
-        "Hybrid AI + rule-based",
+        "Ollama wording + deterministic analysis",
         "Rule-based fallback",
         "AI Executive Review",
         "AI Review by Clause",

@@ -73,8 +73,8 @@ The active pipeline is implemented in-place, not through duplicate services:
 3. Detect contract language and type.
 4. Parse logical sections/chunks with offsets.
 5. Extract bilingual clause candidates.
-6. Retrieve evidence through hybrid lexical/semantic-ready RAG.
-7. Build deterministic risk and clause skeletons.
-8. Ask Ollama for structured JSON when available.
-9. Optionally run reviewer/critic mode.
+6. Retrieve evidence with simple bilingual lexical matching.
+7. Build deterministic risk and clause analysis.
+8. Optionally ask one Ollama model to improve wording only.
+9. If Ollama is unavailable or slow, return the deterministic result.
 10. Validate shape before the frontend renders results.

@@ -4,7 +4,7 @@ import re
 from typing import Any
 
 from backend.services.analysis_service import parse_contract_sections, retrieve_evidence as hybrid_retrieve_evidence
-from backend.services.llm_service import generate_structured_json, llm_health, select_available_model
+from backend.services.llm_service import generate_structured_json, llm_health
 from backend.config import get_settings
 from backend.schemas.ai import ChatAnswer
 
@@ -107,7 +107,7 @@ def retrieve_evidence(contract_text: str, question: str, limit: int = 4, contrac
     for item in evidence:
         item.setdefault("clause", item.get("section_title") or "Relevant contract text")
         item.setdefault("location", item.get("section_title") or "Extracted contract text")
-        item.setdefault("source", "hybrid_retrieval")
+        item.setdefault("source", "simple_lexical_retrieval")
     return evidence
 
 
@@ -243,17 +243,18 @@ def answer_question(contract_text: str, question: str, analysis: dict | None = N
     if answer_type in {"small_talk", "app_help", "unrelated_general"}:
         return _general_answer(question, answer_type, explanation_language)
     evidence = retrieve_evidence(contract_text, question)
+    settings = get_settings()
+    if not getattr(settings, "ollama_enabled", True):
+        return _fallback_contract_answer(question, evidence, answer_type, llm_unavailable=True, explanation_language=explanation_language)
     health = llm_health()
     if not health.get("reachable"):
         return _fallback_contract_answer(question, evidence, answer_type, llm_unavailable=True, explanation_language=explanation_language)
     try:
-        ai = generate_structured_json(_chat_prompt(question, contract_text, evidence, answer_type, explanation_language), retry_prompt=_chat_prompt(question, contract_text, evidence, answer_type, explanation_language) + "\nReturn valid JSON only.")
+        ai = generate_structured_json(_chat_prompt(question, contract_text, evidence, answer_type, explanation_language), prompt_mode="chat", model=getattr(settings, "ollama_model", None))
         confidence = _confidence(evidence, answer_type)
         language = _chat_language(question, explanation_language)
         fallback = _fallback_contract_answer(question, evidence, answer_type, explanation_language=explanation_language)
-        settings = get_settings()
-        selected = select_available_model(settings.ollama_chat_model, settings.ollama_fallback_model, health.get("installed_models") or [])
-        return _validate_chat_answer({"answer": ai.get("answer") or fallback["answer"], "short_answer": ai.get("plain_english_summary") or fallback["plain_english_summary"], "answer_type": answer_type, "intent": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": bool(evidence) or answer_type == "contract_specific", "evidence": evidence, "missing_information": [] if evidence else ["Contract evidence did not clearly answer the question."], "risk_note": "AI-assisted review only; not final legal advice.", "suggested_next_step": ai.get("practical_note") or fallback["practical_note"], "plain_english_summary": ai.get("plain_english_summary") or fallback["plain_english_summary"], "practical_note": ai.get("practical_note") or fallback["practical_note"], "follow_up_suggestions": ai.get("follow_up_suggestions") or _follow_ups_for_question(question, language), "degraded_mode": False, "llm_used": True, "model_used": selected.get("model"), "explanation_language": explanation_language, "response_language": language, "language": language, "is_legal_advice_disclaimer": True})
+        return _validate_chat_answer({"answer": ai.get("answer") or fallback["answer"], "short_answer": ai.get("plain_english_summary") or fallback["plain_english_summary"], "answer_type": answer_type, "intent": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": bool(evidence) or answer_type == "contract_specific", "evidence": evidence, "missing_information": [] if evidence else ["Contract evidence did not clearly answer the question."], "risk_note": "AI-assisted review only; not final legal advice.", "suggested_next_step": ai.get("practical_note") or fallback["practical_note"], "plain_english_summary": ai.get("plain_english_summary") or fallback["plain_english_summary"], "practical_note": ai.get("practical_note") or fallback["practical_note"], "follow_up_suggestions": ai.get("follow_up_suggestions") or _follow_ups_for_question(question, language), "degraded_mode": False, "llm_used": True, "model_used": getattr(settings, "ollama_model", None), "explanation_language": explanation_language, "response_language": language, "language": language, "is_legal_advice_disclaimer": True})
     except Exception:
         return _fallback_contract_answer(question, evidence, answer_type, llm_unavailable=True, explanation_language=explanation_language)
 

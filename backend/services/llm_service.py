@@ -42,15 +42,15 @@ def _setting(name: str, default: Any) -> Any:
 
 
 def _fallback_model() -> str:
-    return str(_setting("ollama_fallback_model", _setting("ollama_model", "llama3.1:8b")))
+    return str(_setting("ollama_model", _setting("ollama_fallback_model", "llama3.1:8b")))
 
 
 def _analysis_model() -> str:
-    return str(_setting("ollama_analysis_model", _fallback_model()))
+    return str(_setting("ollama_model", _setting("ollama_analysis_model", _fallback_model())))
 
 
 def _chat_model() -> str:
-    return str(_setting("ollama_chat_model", _fallback_model()))
+    return str(_setting("ollama_model", _setting("ollama_chat_model", _fallback_model())))
 
 
 def _review_model() -> str:
@@ -58,7 +58,7 @@ def _review_model() -> str:
 
 
 def _embed_model() -> str:
-    return str(_setting("ollama_embed_model", "bge-m3"))
+    return str(_setting("ollama_embed_model", ""))
 
 
 def _extract_model_names(payload: dict[str, Any]) -> list[str]:
@@ -269,6 +269,24 @@ def llm_health() -> dict[str, Any]:
 
 def health_check() -> dict[str, Any]:
     settings = get_settings()
+    if not bool(_setting("ollama_enabled", True)):
+        return {
+            "reachable": False,
+            "status": "disabled",
+            "degraded": True,
+            "base_url": settings.ollama_base_url,
+            "ollama_url": settings.ollama_base_url,
+            "installed_models": [],
+            "analysis_model": {"model": _analysis_model(), "available": False},
+            "chat_model": {"model": _chat_model(), "available": False},
+            "review_model": {"model": _review_model(), "available": False},
+            "embedding_model": {"model": _embed_model(), "available": False},
+            "embedding_available": False,
+            "reviewer_enabled": False,
+            "reviewer_available": False,
+            "model": _fallback_model(),
+            "error": "Ollama is disabled by OLLAMA_ENABLED=false.",
+        }
     started = perf_counter()
     try:
         models = list_ollama_models()
@@ -290,8 +308,8 @@ def health_check() -> dict[str, Any]:
             "review_model": reviewer,
             "embedding_model": embedding,
             "embedding_available": bool(embedding.get("available")) and bool(_setting("ollama_enable_embeddings", True)),
-            "reviewer_enabled": bool(_setting("ollama_enable_reviewer", True)),
-            "reviewer_available": bool(reviewer.get("available")) and bool(_setting("ollama_enable_reviewer", True)),
+            "reviewer_enabled": bool(_setting("ollama_enable_reviewer", False)),
+            "reviewer_available": bool(reviewer.get("available")) and bool(_setting("ollama_enable_reviewer", False)),
             "model": _fallback_model(),
             "error": None,
         }
@@ -309,7 +327,7 @@ def health_check() -> dict[str, Any]:
             "review_model": {"model": _review_model(), "available": False},
             "embedding_model": {"model": _embed_model(), "available": False},
             "embedding_available": False,
-            "reviewer_enabled": bool(_setting("ollama_enable_reviewer", True)),
+            "reviewer_enabled": bool(_setting("ollama_enable_reviewer", False)),
             "reviewer_available": False,
             "model": _fallback_model(),
         }

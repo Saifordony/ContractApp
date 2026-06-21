@@ -197,8 +197,8 @@ def format_decision(value: Any, lang: str | None = None) -> str:
 def format_source(value: Any, lang: str | None = None) -> str:
     lang = lang or current_lang()
     key = safe_text(value, "").lower()
-    ar = {"extracted_text":"نص العقد المستخرج", "extracted_contract_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية", "template alignment and contract completeness comparison":"مقارنة اكتمال ومواءمة مع قالب داخلي", "contract_specific":"إجابة مرتبطة بالعقد", "general_contract_concept":"شرح عام لمفهوم تعاقدي", "small_talk":"محادثة عامة", "app_help":"مساعدة في التطبيق", "unrelated_general":"إجابة عامة"}
-    en = {"extracted_text":"Extracted contract text", "extracted_contract_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison", "template alignment and contract completeness comparison":"Template alignment and contract completeness comparison", "contract_specific":"Contract-specific answer", "general_contract_concept":"General contract concept", "small_talk":"Small talk", "app_help":"App help", "unrelated_general":"General answer"}
+    ar = {"extracted_text":"نص العقد المستخرج", "extracted_contract_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "deterministic_plus_ollama_wording":"صياغة أولاما + تحليل حتمي", "hybrid":"صياغة أولاما + تحليل حتمي", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية", "template alignment and contract completeness comparison":"مقارنة اكتمال ومواءمة مع قالب داخلي", "contract_specific":"إجابة مرتبطة بالعقد", "general_contract_concept":"شرح عام لمفهوم تعاقدي", "small_talk":"محادثة عامة", "app_help":"مساعدة في التطبيق", "unrelated_general":"إجابة عامة"}
+    en = {"extracted_text":"Extracted contract text", "extracted_contract_text":"Extracted contract text", "rule_based":"Rule-based match", "deterministic_plus_ollama_wording":"Ollama wording + deterministic analysis", "hybrid":"Ollama wording + deterministic analysis", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison", "template alignment and contract completeness comparison":"Template alignment and contract completeness comparison", "contract_specific":"Contract-specific answer", "general_contract_concept":"General contract concept", "small_talk":"Small talk", "app_help":"App help", "unrelated_general":"General answer"}
     return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
 
 
@@ -617,10 +617,7 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "contract_type_confidence": data.get("contract_type_confidence"),
         "score_dimensions": data.get("score_dimensions") or {},
         "extraction_metadata": data.get("extraction_metadata") or {},
-        "embedding_status": data.get("embedding_status") or {},
         "retrieval_status": data.get("retrieval_status") or {},
-        "reviewer_used": bool(data.get("reviewer_used", False)),
-        "reviewer_status": safe_text(data.get("reviewer_status"), "Not used"),
         "explanation_language": safe_text(data.get("explanation_language"), effective_explanation_language()),
         "created_at": data.get("created_at"),
     }
@@ -645,7 +642,7 @@ def render_score_cards(analysis: dict[str, Any]) -> None:
     cols = st.columns(5)
     score = analysis.get("health_score")
     score_value = f"{score}/100" if score is not None else "Not scored"
-    mode = "Hybrid AI + rule-based" if analysis.get("llm_used") else "Rule-based fallback"
+    mode = "Ollama wording + deterministic analysis" if analysis.get("llm_used") else "Rule-based fallback"
     with cols[0]:
         render_metric_card("AI Status", analysis["ai_status"], mode)
     with cols[1]:
@@ -660,12 +657,7 @@ def render_score_cards(analysis: dict[str, Any]) -> None:
         confidence = analysis.get("contract_type_confidence")
         st.caption(f"Contract type: {analysis['contract_type_label']} · Confidence: {confidence if confidence is not None else 'Not scored'}")
     retrieval = analysis.get("retrieval_status") or {}
-    embedding = analysis.get("embedding_status") or {}
-    st.caption(" • ".join([
-        f"Reviewer used: {format_bool(analysis.get('reviewer_used'))}",
-        f"Retrieval: {retrieval.get('mode', 'hybrid')}",
-        f"Embeddings: {format_bool(embedding.get('embedding_used') or retrieval.get('embedding_used'))}",
-    ]))
+    st.caption(f"Retrieval: {retrieval.get('mode', 'simple_lexical')} • Stable simple AI mode: deterministic analysis first, optional Ollama wording only.")
     if analysis.get("score_dimensions"):
         st.caption("Score dimensions: " + plain_value(analysis["score_dimensions"]))
 
@@ -1234,13 +1226,13 @@ def poll_analysis_job(contract_id: str, job_id: str) -> tuple[bool, Any]:
         latest = data
         percent = int(data.get("percent") or 0)
         progress.progress(max(0, min(100, percent)))
-        status_box.info(f"{data.get('stage', 'running')} — {data.get('message', 'Analysis in progress...')}")
+        status_box.info(f"{data.get('stage', 'running')} — {data.get('message', 'Analysis in progress...')} Local Ollama models may take a few minutes.")
         if data.get("status") == "completed":
             return True, data.get("result") or data
         if data.get("status") == "failed":
             return False, {"message": data.get("message") or "Analysis failed.", "response_body": data}
         time.sleep(2)
-    return False, {"message": "Analysis is still running. Please try refreshing status shortly.", "response_body": latest}
+    return None, {"message": "Analysis is still running. Local Ollama models may take a few minutes.", "response_body": latest}
 
 
 def analysis_page():
@@ -1254,13 +1246,34 @@ def analysis_page():
     st.session_state.analysis_endpoint = endpoint_path
     if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis_at"):
         st.caption(f"Last analyzed: {st.session_state.last_analysis_at}")
-    if st.button("Run Analysis", use_container_width=True):
+    running_key = f"analysis_job_{cid}"
+    running_job = st.session_state.get(running_key)
+    if running_job:
+        st.info("Analysis is still running. Local Ollama models may take a few minutes.")
+        if st.button("Refresh status", use_container_width=True):
+            ok, data = poll_analysis_job(cid, running_job)
+            if ok is True:
+                st.session_state.pop(running_key, None)
+                normalized = normalize_analysis_response(data)
+                st.session_state.last_analysis = normalized
+                st.session_state.analysis_result = normalized
+                st.session_state.last_analysis_contract_id = cid
+                st.session_state.last_analysis_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.success("Analysis complete.")
+            elif ok is False:
+                st.session_state.pop(running_key, None)
+                st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
+            else:
+                st.info(user_message(data))
+    if st.button("Run Analysis", use_container_width=True, disabled=bool(running_job)):
         with st.spinner("Starting analysis job..."):
             ok, data = api_request("POST", endpoint_path, timeout=30)
         if ok and data.get("job_id"):
+            st.session_state[running_key] = data["job_id"]
             with st.spinner("Analysis is running. This may take a few minutes with local Ollama models..."):
                 ok, data = poll_analysis_job(cid, data["job_id"])
-        if ok:
+        if ok is True:
+            st.session_state.pop(running_key, None)
             normalized = normalize_analysis_response(data)
             st.session_state.last_analysis = normalized
             st.session_state.analysis_result = normalized
@@ -1273,7 +1286,11 @@ def analysis_page():
             else:
                 st.success("Analysis complete.")
         else:
-            st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
+            if ok is None:
+                st.info(user_message(data))
+            else:
+                st.session_state.pop(running_key, None)
+                st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
             return
     with st.expander("Advanced / API Debug", expanded=False):
         latest_debug = st.session_state.last_api_debug or {}

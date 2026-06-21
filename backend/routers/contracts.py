@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from time import perf_counter
 
 from datetime import datetime, timezone
 
@@ -8,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from io import BytesIO
 from backend.core.security import get_current_user
 from backend.database import get_database
+from backend.config import get_settings
 from backend.services.analysis_service import analyze_contract_record
 from backend.services.benchmark_service import benchmark_contract
 from backend.services.chat_service import chat_with_contract
@@ -32,20 +35,48 @@ async def _update_job(db, job_id: str, owner_user_id: str, **fields):
 async def _run_analysis_job(job_id: str, owner_user_id: str, contract_id: str, explanation_language: str, ui_language: str):
     db = get_database()
     started = datetime.now(timezone.utc)
+    job_started = perf_counter()
     try:
+        settings = get_settings()
         await _update_job(db, job_id, owner_user_id, status="running", stage="loading_contract", percent=5, message="Loading contract.", started_at=started)
+        logger.info("analysis job started job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
         contract = await get_contract(db, owner_user_id, contract_id)
-        logger.info("analysis job running job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s", job_id, owner_user_id, contract_id, (contract.get("extraction_metadata") or {}).get("extraction_method"), len(contract.get("extracted_text", "") or ""))
-        await _update_job(db, job_id, owner_user_id, stage="analyzing", percent=25, message="Extracting clauses, retrieving evidence, and running AI if available.")
-        result = await analyze_contract_record(db, contract, explanation_language=explanation_language, ui_language=ui_language)
+        logger.info(
+            "analysis text extraction completed job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s ocr_enabled=%s ollama_enabled=%s model=%s job_timeout=%s",
+            job_id,
+            owner_user_id,
+            contract_id,
+            (contract.get("extraction_metadata") or {}).get("extraction_method"),
+            len(contract.get("extracted_text", "") or ""),
+            bool((contract.get("extraction_metadata") or {}).get("ocr_language")),
+            getattr(settings, "ollama_enabled", True),
+            getattr(settings, "ollama_model", "llama3.1:8b"),
+            getattr(settings, "analysis_job_timeout_seconds", 180),
+        )
+        await _update_job(db, job_id, owner_user_id, stage="analyzing", percent=25, message="Detecting language/type, extracting clauses, scoring risks, and optionally improving wording with Ollama.")
+        result = await asyncio.wait_for(
+            analyze_contract_record(db, contract, explanation_language=explanation_language, ui_language=ui_language),
+            timeout=max(10, int(getattr(settings, "analysis_job_timeout_seconds", 180)) + 15),
+        )
         result["contract_id"] = contract_id
         result["extraction_metadata"] = contract.get("extraction_metadata", {})
         latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": owner_user_id}, sort=[("created_at", -1)])
         await _update_job(db, job_id, owner_user_id, status="completed", stage="completed", percent=100, message="Analysis completed.", completed_at=datetime.now(timezone.utc), result_id=str(latest.get("_id")) if latest else None, result=result)
-        logger.info("analysis job completed job_id=%s user_id=%s contract_id=%s degraded_mode=%s", job_id, owner_user_id, contract_id, result.get("degraded_mode"))
+        logger.info("analysis job completed job_id=%s user_id=%s contract_id=%s degraded_mode=%s duration_ms=%s", job_id, owner_user_id, contract_id, result.get("degraded_mode"), int((perf_counter() - job_started) * 1000))
+    except asyncio.TimeoutError:
+        logger.exception("analysis job timeout job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
+        await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis failed because the job exceeded the configured runtime limit.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis job exceeded the configured runtime limit.", "error_code": "ANALYSIS_JOB_TIMEOUT"})
     except Exception as exc:
         logger.exception("analysis job failed job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
         await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis failed. Please check backend logs.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis failed before completion.", "technical_error": str(exc)[:500]})
+    finally:
+        try:
+            current = await db.analysis_jobs.find_one({"_id": ObjectId(job_id), "owner_user_id": owner_user_id})
+            if current and current.get("status") == "running":
+                logger.error("analysis job guard moved stuck running job to failed job_id=%s contract_id=%s", job_id, contract_id)
+                await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis stopped before completion.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis stopped before completion.", "error_code": "ANALYSIS_JOB_STUCK_GUARD"})
+        except Exception:
+            logger.exception("analysis job final guard failed job_id=%s", job_id)
 
 @router.get("")
 async def contracts(user=Depends(get_current_user)):
@@ -69,7 +100,7 @@ async def analyze(contract_id: str, background_tasks: BackgroundTasks, explanati
     inserted = await db.analysis_jobs.insert_one(doc)
     job_id = str(inserted.inserted_id)
     background_tasks.add_task(_run_analysis_job, job_id, user["id"], contract_id, explanation_language, ui_language)
-    logger.info("analysis job queued job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s", job_id, user["id"], contract_id, (contract.get("extraction_metadata") or {}).get("extraction_method"), len(contract.get("extracted_text", "") or ""))
+    logger.info("analysis job created job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s", job_id, user["id"], contract_id, (contract.get("extraction_metadata") or {}).get("extraction_method"), len(contract.get("extracted_text", "") or ""))
     return {"job_id": job_id, "contract_id": contract_id, "status": "queued", "stage": "queued", "percent": 0, "message": "Analysis queued."}
 
 @router.get("/{contract_id}/analysis-jobs/{job_id}")

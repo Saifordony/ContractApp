@@ -37,8 +37,8 @@ JWT auth protects clients, contracts, analysis, chat, benchmark, diagnostics, an
 
 Active AI changes should be made in the existing services only:
 
-- `backend/services/llm_service.py` for Ollama model selection, JSON generation, health, and embeddings.
-- `backend/services/analysis_service.py` for extraction, OCR, chunking, retrieval, clause analysis, reviewer mode, and schema validation.
+- `backend/services/llm_service.py` for the optional single-model Ollama wording helper and health checks.
+- `backend/services/analysis_service.py` for extraction, OCR, chunking, deterministic bilingual clause analysis, simple evidence retrieval, and schema validation.
 - `backend/services/chat_service.py` for evidence-grounded chat.
 - `backend/services/benchmark_service.py` for internal template alignment.
 

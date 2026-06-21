@@ -1,4 +1,4 @@
-"""Official hybrid contract analysis service: rule extraction + grounded AI review."""
+"""Official simple contract analysis service: deterministic evidence first + optional Ollama wording."""
 import io
 import json
 import re
@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.config import get_settings
-from backend.services.llm_service import embed_texts_sync, generate_structured_json, llm_health, select_available_model
+from backend.services.llm_service import generate_structured_json, llm_health, select_available_model
 from backend.schemas.ai import ContractAnalysisResult, EvidenceQuote, ReviewerCritique
 
 logger = logging.getLogger(__name__)
@@ -564,31 +564,10 @@ def _chunk_hash(text: str) -> str:
 
 
 async def cache_contract_embeddings(db, owner_user_id: str, contract_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
-    settings = get_settings()
-    if getattr(settings, "analysis_fast_mode", False):
-        return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": 0, "reason": "analysis_fast_mode"}
-    if not getattr(settings, "ollama_enable_embeddings", True) or not chunks:
-        return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": 0, "reason": "disabled_or_no_chunks"}
-    texts = [chunk.get("text", "")[:8000] for chunk in chunks]
-    hashes = [_chunk_hash(text) for text in texts]
-    existing = await db.embeddings.find({"owner_user_id": owner_user_id, "contract_id": contract_id, "embedding_model": settings.ollama_embed_model, "text_hash": {"$in": hashes}}).to_list(len(hashes))
-    existing_by_hash = {item.get("text_hash"): item for item in existing}
-    missing_indexes = [idx for idx, h in enumerate(hashes) if h not in existing_by_hash]
-    vectors: list[list[float]] = []
-    if missing_indexes:
-        vectors = await asyncio.to_thread(embed_texts_sync, [texts[idx] for idx in missing_indexes], settings.ollama_embed_model)
-        if not vectors:
-            return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": len(existing), "reason": "embedding_unavailable"}
-        docs = []
-        for source_idx, vector in zip(missing_indexes, vectors):
-            docs.append({"owner_user_id": owner_user_id, "contract_id": contract_id, "chunk_id": chunks[source_idx].get("chunk_id"), "text_hash": hashes[source_idx], "embedding_model": settings.ollama_embed_model, "embedding": vector, "created_at": datetime.now(timezone.utc)})
-            chunks[source_idx]["embedding"] = vector
-        if docs:
-            await db.embeddings.insert_many(docs)
-    for idx, h in enumerate(hashes):
-        if h in existing_by_hash:
-            chunks[idx]["embedding"] = existing_by_hash[h].get("embedding")
-    return {"embedding_used": any(bool(chunk.get("embedding")) for chunk in chunks), "embedding_model": settings.ollama_embed_model, "cached": len(existing), "generated": len(vectors)}
+    # Stable MVP mode intentionally does not use embeddings/vector search.
+    # Keeping this no-op helper preserves compatibility with older tests/callers
+    # without adding a slow or failure-prone runtime dependency to analysis jobs.
+    return {"embedding_used": False, "embedding_model": None, "cached": 0, "generated": 0, "reason": "disabled in stable simple AI mode"}
 
 def _ocr_language(preferred_language: str = "en") -> str:
     return "ara+eng" if preferred_language == "ar" else "eng+ara"
@@ -744,7 +723,7 @@ def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[st
         "evidence_quality": int(found_count / max(1, len(CLAUSE_PATTERNS)) * 100),
         "ambiguity_penalty": weak_penalty,
     }
-    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks, "contract_language": language, **contract_type, "score_dimensions": score_dimensions, "retrieval_status": {"mode": "hybrid_lexical", "embedding_used": any(bool(chunk.get("embedding")) for chunk in chunks), "chunk_count": len(chunks)}, "parsed_sections": chunks[:20]}
+    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks, "contract_language": language, **contract_type, "score_dimensions": score_dimensions, "retrieval_status": {"mode": "simple_lexical", "embedding_used": False, "chunk_count": len(chunks)}, "parsed_sections": chunks[:20]}
 
 
 def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: bool = False, error: str | None = None, explanation_language: str = "en") -> dict[str, Any]:
@@ -768,7 +747,7 @@ def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: 
         "llm_used": False,
         "degraded_mode": True,
         "ai_status": status,
-        "message": "AI analysis timed out, so a deterministic checklist analysis was returned." if str(status).lower() == "timeout" else "Deterministic checklist analysis was returned because AI analysis was unavailable or could not be parsed.",
+        "message": "AI wording enhancement was unavailable, so a deterministic checklist analysis was returned.",
         "llm_parse_failed": parse_failed,
         "llm_error": error,
         "executive_summary": "Rule-based fallback: the contract was reviewed for common clause signals, but the LLM was not available to generate a contract-specific executive review.",
@@ -842,8 +821,8 @@ Draft analysis: {json.dumps(analysis, default=str)[:10000]}
 
 def _run_reviewer(rule_result: dict[str, Any], analysis: dict[str, Any], explanation_language: str = "en") -> dict[str, Any]:
     settings = get_settings()
-    if getattr(settings, "analysis_fast_mode", False):
-        return {"reviewer_used": False, "reviewer_status": "skipped by ANALYSIS_FAST_MODE", "reviewer_critique": {}}
+    if getattr(settings, "ai_mode", "simple") == "simple" or getattr(settings, "analysis_fast_mode", False):
+        return {"reviewer_used": False, "reviewer_status": "skipped in stable simple AI mode", "reviewer_critique": {}}
     if not getattr(settings, "ollama_enable_reviewer", True):
         return {"reviewer_used": False, "reviewer_status": "disabled", "reviewer_critique": {}}
     health = llm_health()
@@ -891,52 +870,67 @@ def validate_analysis_schema(payload: dict[str, Any]) -> dict[str, Any]:
         payload["schema_validation_error"] = str(exc)
     return payload
 
-def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en") -> dict[str, Any]:
+# Backward-compatible public signature: def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en")
+def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en", use_ollama: bool | None = None) -> dict[str, Any]:
     settings = get_settings()
     total_started = perf_counter()
     stage_timings: dict[str, int] = {}
     text = (text or "").strip()
-    logger.info("analysis core start text_length=%s embeddings_enabled=%s reviewer_enabled=%s fast_mode=%s", len(text), getattr(settings, "ollama_enable_embeddings", True), getattr(settings, "ollama_enable_reviewer", True), getattr(settings, "analysis_fast_mode", False))
+    ollama_allowed = getattr(settings, "ollama_enabled", True) if use_ollama is None else bool(use_ollama)
+    logger.info(
+        "analysis core start text_length=%s ai_mode=%s ollama_enabled=%s model=%s",
+        len(text),
+        getattr(settings, "ai_mode", "simple"),
+        ollama_allowed,
+        getattr(settings, "ollama_model", "llama3.1:8b"),
+    )
     stage_started = perf_counter()
     rule_result = _rule_based_analysis(text, explanation_language)
     stage_timings["chunking_scoring_ms"] = int((perf_counter() - stage_started) * 1000)
-    health = llm_health()
-    llm_debug = {"health": health, "model": getattr(settings, "ollama_model", getattr(settings, "ollama_fallback_model", "llama3.1:8b")), "ollama_url": settings.ollama_base_url, "stage_timings_ms": stage_timings}
+    llm_debug = {"health": None, "model": getattr(settings, "ollama_model", "llama3.1:8b"), "ollama_url": settings.ollama_base_url, "stage_timings_ms": stage_timings}
     llm_started = perf_counter()
-    if getattr(settings, "analysis_fast_mode", False) and len(text) > 12000:
+    if len(text) > 12000:
         text = text[:12000]
-    if not health.get("reachable"):
-        ai_fields = _fallback_ai_fields(rule_result, "unavailable", error=health.get("error"), explanation_language=explanation_language)
+    if not ollama_allowed:
+        logger.info("optional Ollama call skipped reason=OLLAMA_ENABLED_FALSE")
+        ai_fields = _fallback_ai_fields(rule_result, "ollama_disabled", error="OLLAMA_ENABLED=false", explanation_language=explanation_language)
     else:
-        try:
-            retry = _ai_prompt(text, rule_result, explanation_language) + "\nReturn valid JSON only. No markdown. No prose outside JSON."
-            raw_ai = generate_structured_json(_ai_prompt(text, rule_result, explanation_language), retry_prompt=retry)
-            merged = _merge_ai(rule_result, raw_ai, explanation_language)
-            ai_fields = {
-                "source": "hybrid",
-                "llm_used": True,
-                "degraded_mode": False,
-                "ai_status": "LLM analysis completed",
-                "llm_parse_failed": False,
-                "llm_error": None,
-                "executive_summary": raw_ai.get("executive_summary") or "AI review completed, but no executive summary was returned.",
-                "ai_overall_assessment": raw_ai.get("ai_overall_assessment") or "AI-assisted decision support is based on extracted evidence, missing details, and clause-level risk signals.",
-                "key_strengths": raw_ai.get("key_strengths") or [],
-                "key_risks": raw_ai.get("key_risks") or [],
-                "missing_clauses": raw_ai.get("missing_clauses") or rule_result["missing_critical_clauses"],
-                "recommended_actions": raw_ai.get("recommended_actions") or [],
-                "key_terms": raw_ai.get("key_terms") or rule_result.get("key_terms", []),
-                "review_decision": raw_ai.get("review_decision"),
-                "priority_action_plan": raw_ai.get("priority_action_plan"),
-                "follow_up_questions": raw_ai.get("follow_up_questions"),
-                "clauses": merged["clauses"],
-                "raw_llm_response": raw_ai,
-            }
-        except Exception as exc:
-            llm_debug["parse_or_generation_error"] = str(exc)
-            err = str(exc)
-            status = "timeout" if "timeout" in err.lower() or "timed out" in err.lower() else "LLM response could not be parsed"
-            ai_fields = _fallback_ai_fields(rule_result, status, parse_failed=True, error=err, explanation_language=explanation_language)
+        health = llm_health()
+        llm_debug["health"] = health
+        if not health.get("reachable"):
+            logger.info("optional Ollama call skipped reason=unreachable error=%s", health.get("error"))
+            ai_fields = _fallback_ai_fields(rule_result, "ollama_unavailable_or_timeout", error=health.get("error"), explanation_language=explanation_language)
+        else:
+            logger.info("optional Ollama call started model=%s", getattr(settings, "ollama_model", "llama3.1:8b"))
+            try:
+                raw_ai = generate_structured_json(_ai_prompt(text, rule_result, explanation_language), prompt_mode="analysis", model=getattr(settings, "ollama_model", None))
+                merged = _merge_ai(rule_result, raw_ai, explanation_language)
+                ai_fields = {
+                    "source": "deterministic_plus_ollama_wording",
+                    "llm_used": True,
+                    "degraded_mode": False,
+                    "ai_status": "ollama_wording_completed",
+                    "llm_parse_failed": False,
+                    "llm_error": None,
+                    "executive_summary": raw_ai.get("executive_summary") or "AI wording enhancement completed using extracted evidence.",
+                    "ai_overall_assessment": raw_ai.get("ai_overall_assessment") or "AI-assisted wording is based on deterministic clause extraction and evidence only.",
+                    "key_strengths": raw_ai.get("key_strengths") or [],
+                    "key_risks": raw_ai.get("key_risks") or [],
+                    "missing_clauses": raw_ai.get("missing_clauses") or rule_result["missing_critical_clauses"],
+                    "recommended_actions": raw_ai.get("recommended_actions") or [],
+                    "key_terms": raw_ai.get("key_terms") or rule_result.get("key_terms", []),
+                    "review_decision": raw_ai.get("review_decision"),
+                    "priority_action_plan": raw_ai.get("priority_action_plan"),
+                    "follow_up_questions": raw_ai.get("follow_up_questions"),
+                    "clauses": merged["clauses"],
+                    "raw_llm_response": {},
+                }
+                logger.info("optional Ollama call completed model=%s", getattr(settings, "ollama_model", "llama3.1:8b"))
+            except Exception as exc:
+                llm_debug["parse_or_generation_error"] = str(exc)
+                err = str(exc)
+                logger.warning("optional Ollama call failed safely error=%s", err[:300])
+                ai_fields = _fallback_ai_fields(rule_result, "ollama_unavailable_or_timeout", parse_failed=True, error=err, explanation_language=explanation_language)
     stage_timings["main_llm_ms"] = int((perf_counter() - llm_started) * 1000)
     scoring_started = perf_counter()
     for clause in ai_fields["clauses"]:
@@ -981,6 +975,7 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
         "llm_used": ai_fields["llm_used"],
         "degraded_mode": ai_fields["degraded_mode"],
         "ai_status": ai_fields["ai_status"],
+        "message": ai_fields.get("message"),
         "model_used": selected.get("model") or settings.ollama_fallback_model,
         "active_model": selected.get("model") or settings.ollama_fallback_model,
         "confidence": "High" if ai_fields["llm_used"] and rule_result["health_score"] >= 70 else "Medium" if ai_fields["llm_used"] else "Low",
@@ -1020,20 +1015,39 @@ async def analyze_contract_record(db, contract: dict, explanation_language: str 
     contract_id = str(contract.get("_id"))
     user_id = contract.get("owner_user_id")
     extraction = contract.get("extraction_metadata", {}) or {}
-    logger.info("analysis job start user_id=%s contract_id=%s model=%s extraction_method=%s text_length=%s ocr_language=%s embeddings_enabled=%s reviewer_enabled=%s fast_mode=%s", user_id, contract_id, getattr(settings, "ollama_analysis_model", getattr(settings, "ollama_model", "unknown")), extraction.get("extraction_method"), len(contract.get("extracted_text", "") or ""), extraction.get("ocr_language"), getattr(settings, "ollama_enable_embeddings", True), getattr(settings, "ollama_enable_reviewer", True), getattr(settings, "analysis_fast_mode", False))
+    logger.info(
+        "analysis job start user_id=%s contract_id=%s ai_mode=%s ollama_enabled=%s model=%s extraction_method=%s text_length=%s ocr_language=%s",
+        user_id,
+        contract_id,
+        getattr(settings, "ai_mode", "simple"),
+        getattr(settings, "ollama_enabled", True),
+        getattr(settings, "ollama_model", "llama3.1:8b"),
+        extraction.get("extraction_method"),
+        len(contract.get("extracted_text", "") or ""),
+        extraction.get("ocr_language"),
+    )
     analysis_started = perf_counter()
-    analysis = await asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language)
+    try:
+        analysis = await asyncio.wait_for(
+            asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language),
+            timeout=max(5, int(getattr(settings, "analysis_job_timeout_seconds", 180))),
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "analysis optional AI path timed out; returning deterministic result user_id=%s contract_id=%s timeout_seconds=%s",
+            user_id,
+            contract_id,
+            getattr(settings, "analysis_job_timeout_seconds", 180),
+        )
+        analysis = await asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language, False)
+        analysis["degraded_mode"] = True
+        analysis["ai_status"] = "ollama_unavailable_or_timeout"
+        analysis["message"] = "AI wording enhancement was unavailable, so a deterministic checklist analysis was returned."
     analysis.setdefault("analysis_stage_timings_ms", {})["text_extraction_ms"] = 0
     logger.info("analysis stage core user_id=%s contract_id=%s duration_ms=%s", user_id, contract_id, int((perf_counter() - analysis_started) * 1000))
-    embedding_status = {"embedding_used": False, "reason": "not_attempted"}
-    embedding_started = perf_counter()
-    try:
-        embedding_status = await cache_contract_embeddings(db, contract["owner_user_id"], str(contract["_id"]), analysis.get("parsed_sections", []))
-    except Exception as exc:
-        embedding_status = {"embedding_used": False, "reason": "embedding_cache_failed", "safe_error": str(exc)}
-    analysis["analysis_stage_timings_ms"]["embeddings_ms"] = int((perf_counter() - embedding_started) * 1000)
-    analysis["embedding_status"] = embedding_status
-    analysis.setdefault("retrieval_status", {})["embedding_used"] = bool(embedding_status.get("embedding_used"))
+    analysis["analysis_stage_timings_ms"]["embeddings_ms"] = 0
+    analysis["embedding_status"] = {"embedding_used": False, "reason": "disabled in stable simple AI mode"}
+    analysis.setdefault("retrieval_status", {})["embedding_used"] = False
     saving_started = perf_counter()
     doc = {"owner_user_id": contract["owner_user_id"], "contract_id": str(contract["_id"]), "analysis": analysis, "created_at": datetime.now(timezone.utc)}
     result = await db.analyses.insert_one(doc)
