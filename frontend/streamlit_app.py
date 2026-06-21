@@ -1,5 +1,6 @@
 import html
 import os
+import time
 from datetime import datetime
 from typing import Any
 import requests
@@ -9,6 +10,7 @@ from frontend.styles.global_css import build_app_css
 st.set_page_config(page_title="Contract Intelligence", page_icon="⚖️", layout="wide", initial_sidebar_state="expanded")
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000").rstrip("/")
+FRONTEND_API_TIMEOUT_SECONDS = int(os.getenv("FRONTEND_API_TIMEOUT_SECONDS", "300"))
 FRONTEND_BUILD = "streamlit-clean-rebuild-v1"
 
 
@@ -271,7 +273,7 @@ def parse_response_body(response: requests.Response) -> Any:
 
 def api_request(method: str, path: str, **kwargs) -> tuple[bool, Any]:
     headers = kwargs.pop("headers", {})
-    timeout = kwargs.pop("timeout", 90)
+    timeout = kwargs.pop("timeout", FRONTEND_API_TIMEOUT_SECONDS)
     if st.session_state.get("token"):
         headers["Authorization"] = f"Bearer {st.session_state.token}"
     url = f"{API_BASE_URL}{path}"
@@ -1220,6 +1222,27 @@ def select_contract():
     return selected_label, label_to_contract_id[selected_label]
 
 
+def poll_analysis_job(contract_id: str, job_id: str) -> tuple[bool, Any]:
+    progress = st.progress(0)
+    status_box = st.empty()
+    latest: Any = None
+    max_polls = max(20, FRONTEND_API_TIMEOUT_SECONDS // 2)
+    for _ in range(max_polls):
+        ok, data = api_request("GET", f"/contracts/{contract_id}/analysis-jobs/{job_id}", timeout=30)
+        if not ok:
+            return False, data
+        latest = data
+        percent = int(data.get("percent") or 0)
+        progress.progress(max(0, min(100, percent)))
+        status_box.info(f"{data.get('stage', 'running')} — {data.get('message', 'Analysis in progress...')}")
+        if data.get("status") == "completed":
+            return True, data.get("result") or data
+        if data.get("status") == "failed":
+            return False, {"message": data.get("message") or "Analysis failed.", "response_body": data}
+        time.sleep(2)
+    return False, {"message": "Analysis is still running. Please try refreshing status shortly.", "response_body": latest}
+
+
 def analysis_page():
     render_page_header("Contract Analysis", t("action.run_analysis"))
     selected_label, cid = select_contract()
@@ -1232,8 +1255,11 @@ def analysis_page():
     if st.session_state.get("last_analysis_contract_id") == cid and st.session_state.get("last_analysis_at"):
         st.caption(f"Last analyzed: {st.session_state.last_analysis_at}")
     if st.button("Run Analysis", use_container_width=True):
-        with st.spinner("Analyzing contract and extracting evidence..."):
-            ok, data = api_request("POST", endpoint_path, timeout=120)
+        with st.spinner("Starting analysis job..."):
+            ok, data = api_request("POST", endpoint_path, timeout=30)
+        if ok and data.get("job_id"):
+            with st.spinner("Analysis is running. This may take a few minutes with local Ollama models..."):
+                ok, data = poll_analysis_job(cid, data["job_id"])
         if ok:
             normalized = normalize_analysis_response(data)
             st.session_state.last_analysis = normalized
@@ -1242,7 +1268,10 @@ def analysis_page():
             st.session_state.last_analysis_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             st.session_state.analysis_report_pdf = None
             st.session_state.analysis_report_filename = None
-            st.success("Analysis complete.")
+            if normalized.get("degraded_mode"):
+                st.warning(normalized.get("ai_status") or "AI analysis degraded; deterministic checklist analysis shown.")
+            else:
+                st.success("Analysis complete.")
         else:
             st.markdown(f'<div class="cip-error-card"><strong>Analysis failed.</strong><br>{safe_html(user_message(data))}</div>', unsafe_allow_html=True)
             return

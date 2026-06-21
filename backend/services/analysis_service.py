@@ -6,12 +6,16 @@ import shutil
 import asyncio
 import hashlib
 import math
+import logging
+from time import perf_counter
 from datetime import datetime, timezone
 from typing import Any
 
 from backend.config import get_settings
 from backend.services.llm_service import embed_texts_sync, generate_structured_json, llm_health, select_available_model
 from backend.schemas.ai import ContractAnalysisResult, EvidenceQuote, ReviewerCritique
+
+logger = logging.getLogger(__name__)
 
 CLAUSE_PATTERNS = {
     "parties": ["parties", "party a", "party b", "employer", "employee", "landlord", "tenant", "الأطراف", "الطرف الأول", "الطرف الثاني", "صاحب العمل", "الموظف", "المؤجر", "المستأجر"],
@@ -561,6 +565,8 @@ def _chunk_hash(text: str) -> str:
 
 async def cache_contract_embeddings(db, owner_user_id: str, contract_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
     settings = get_settings()
+    if getattr(settings, "analysis_fast_mode", False):
+        return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": 0, "reason": "analysis_fast_mode"}
     if not getattr(settings, "ollama_enable_embeddings", True) or not chunks:
         return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": 0, "reason": "disabled_or_no_chunks"}
     texts = [chunk.get("text", "")[:8000] for chunk in chunks]
@@ -762,6 +768,7 @@ def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: 
         "llm_used": False,
         "degraded_mode": True,
         "ai_status": status,
+        "message": "AI analysis timed out, so a deterministic checklist analysis was returned." if str(status).lower() == "timeout" else "Deterministic checklist analysis was returned because AI analysis was unavailable or could not be parsed.",
         "llm_parse_failed": parse_failed,
         "llm_error": error,
         "executive_summary": "Rule-based fallback: the contract was reviewed for common clause signals, but the LLM was not available to generate a contract-specific executive review.",
@@ -835,6 +842,8 @@ Draft analysis: {json.dumps(analysis, default=str)[:10000]}
 
 def _run_reviewer(rule_result: dict[str, Any], analysis: dict[str, Any], explanation_language: str = "en") -> dict[str, Any]:
     settings = get_settings()
+    if getattr(settings, "analysis_fast_mode", False):
+        return {"reviewer_used": False, "reviewer_status": "skipped by ANALYSIS_FAST_MODE", "reviewer_critique": {}}
     if not getattr(settings, "ollama_enable_reviewer", True):
         return {"reviewer_used": False, "reviewer_status": "disabled", "reviewer_critique": {}}
     health = llm_health()
@@ -884,12 +893,20 @@ def validate_analysis_schema(payload: dict[str, Any]) -> dict[str, Any]:
 
 def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en") -> dict[str, Any]:
     settings = get_settings()
+    total_started = perf_counter()
+    stage_timings: dict[str, int] = {}
     text = (text or "").strip()
+    logger.info("analysis core start text_length=%s embeddings_enabled=%s reviewer_enabled=%s fast_mode=%s", len(text), getattr(settings, "ollama_enable_embeddings", True), getattr(settings, "ollama_enable_reviewer", True), getattr(settings, "analysis_fast_mode", False))
+    stage_started = perf_counter()
     rule_result = _rule_based_analysis(text, explanation_language)
+    stage_timings["chunking_scoring_ms"] = int((perf_counter() - stage_started) * 1000)
     health = llm_health()
-    llm_debug = {"health": health, "model": settings.ollama_model, "ollama_url": settings.ollama_base_url}
+    llm_debug = {"health": health, "model": getattr(settings, "ollama_model", getattr(settings, "ollama_fallback_model", "llama3.1:8b")), "ollama_url": settings.ollama_base_url, "stage_timings_ms": stage_timings}
+    llm_started = perf_counter()
+    if getattr(settings, "analysis_fast_mode", False) and len(text) > 12000:
+        text = text[:12000]
     if not health.get("reachable"):
-        ai_fields = _fallback_ai_fields(rule_result, "LLM unavailable", error=health.get("error"), explanation_language=explanation_language)
+        ai_fields = _fallback_ai_fields(rule_result, "unavailable", error=health.get("error"), explanation_language=explanation_language)
     else:
         try:
             retry = _ai_prompt(text, rule_result, explanation_language) + "\nReturn valid JSON only. No markdown. No prose outside JSON."
@@ -917,7 +934,11 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
             }
         except Exception as exc:
             llm_debug["parse_or_generation_error"] = str(exc)
-            ai_fields = _fallback_ai_fields(rule_result, "LLM response could not be parsed", parse_failed=True, error=str(exc), explanation_language=explanation_language)
+            err = str(exc)
+            status = "timeout" if "timeout" in err.lower() or "timed out" in err.lower() else "LLM response could not be parsed"
+            ai_fields = _fallback_ai_fields(rule_result, status, parse_failed=True, error=err, explanation_language=explanation_language)
+    stage_timings["main_llm_ms"] = int((perf_counter() - llm_started) * 1000)
+    scoring_started = perf_counter()
     for clause in ai_fields["clauses"]:
         decision_fields = _clause_decision(clause, explanation_language)
         clause.update(decision_fields)
@@ -984,21 +1005,40 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
         "llm_error": ai_fields["llm_error"],
         "created_at": datetime.now(timezone.utc),
     }
+    stage_timings["scoring_ms"] = int((perf_counter() - scoring_started) * 1000)
+    reviewer_started = perf_counter()
     result.update(_run_reviewer(rule_result, result, explanation_language))
+    stage_timings["reviewer_ms"] = int((perf_counter() - reviewer_started) * 1000)
+    result["analysis_stage_timings_ms"] = stage_timings
+    result["analysis_total_ms"] = int((perf_counter() - total_started) * 1000)
+    logger.info("analysis core completed degraded_mode=%s llm_used=%s total_ms=%s timings=%s", result.get("degraded_mode"), result.get("llm_used"), result["analysis_total_ms"], stage_timings)
     return validate_analysis_schema(result)
 
 
 async def analyze_contract_record(db, contract: dict, explanation_language: str = "en", ui_language: str = "en"):
+    settings = get_settings()
+    contract_id = str(contract.get("_id"))
+    user_id = contract.get("owner_user_id")
+    extraction = contract.get("extraction_metadata", {}) or {}
+    logger.info("analysis job start user_id=%s contract_id=%s model=%s extraction_method=%s text_length=%s ocr_language=%s embeddings_enabled=%s reviewer_enabled=%s fast_mode=%s", user_id, contract_id, getattr(settings, "ollama_analysis_model", getattr(settings, "ollama_model", "unknown")), extraction.get("extraction_method"), len(contract.get("extracted_text", "") or ""), extraction.get("ocr_language"), getattr(settings, "ollama_enable_embeddings", True), getattr(settings, "ollama_enable_reviewer", True), getattr(settings, "analysis_fast_mode", False))
+    analysis_started = perf_counter()
     analysis = await asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language)
+    analysis.setdefault("analysis_stage_timings_ms", {})["text_extraction_ms"] = 0
+    logger.info("analysis stage core user_id=%s contract_id=%s duration_ms=%s", user_id, contract_id, int((perf_counter() - analysis_started) * 1000))
     embedding_status = {"embedding_used": False, "reason": "not_attempted"}
+    embedding_started = perf_counter()
     try:
         embedding_status = await cache_contract_embeddings(db, contract["owner_user_id"], str(contract["_id"]), analysis.get("parsed_sections", []))
     except Exception as exc:
         embedding_status = {"embedding_used": False, "reason": "embedding_cache_failed", "safe_error": str(exc)}
+    analysis["analysis_stage_timings_ms"]["embeddings_ms"] = int((perf_counter() - embedding_started) * 1000)
     analysis["embedding_status"] = embedding_status
     analysis.setdefault("retrieval_status", {})["embedding_used"] = bool(embedding_status.get("embedding_used"))
+    saving_started = perf_counter()
     doc = {"owner_user_id": contract["owner_user_id"], "contract_id": str(contract["_id"]), "analysis": analysis, "created_at": datetime.now(timezone.utc)}
     result = await db.analyses.insert_one(doc)
     doc["_id"] = result.inserted_id
     await db.contracts.update_one({"_id": contract["_id"]}, {"$set": {"latest_analysis_id": str(result.inserted_id), "analysis_summary": analysis, "updated_at": datetime.now(timezone.utc)}})
+    analysis["analysis_stage_timings_ms"]["saving_result_ms"] = int((perf_counter() - saving_started) * 1000)
+    logger.info("analysis job completed user_id=%s contract_id=%s degraded_mode=%s llm_used=%s timings=%s", user_id, contract_id, analysis.get("degraded_mode"), analysis.get("llm_used"), analysis.get("analysis_stage_timings_ms"))
     return analysis

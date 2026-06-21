@@ -34,7 +34,7 @@ def _ollama_base() -> str:
 
 
 def _settings_timeout() -> float:
-    return float(getattr(get_settings(), "ollama_timeout", 120))
+    return float(getattr(get_settings(), "ollama_timeout", 300))
 
 
 def _setting(name: str, default: Any) -> Any:
@@ -241,7 +241,7 @@ async def embed_texts(texts: list[str], model: str | None = None) -> list[list[f
     embeddings: list[list[float]] = []
     for text in texts:
         try:
-            body = await _async_json_request("/api/embeddings", {"model": model, "prompt": text[:8000]}, timeout=_setting("ollama_timeout", 120))
+            body = await _async_json_request("/api/embeddings", {"model": model, "prompt": text[:8000]}, timeout=_setting("ollama_timeout", 300))
             vector = body.get("embedding") or []
             embeddings.append([float(x) for x in vector] if isinstance(vector, list) else [])
         except Exception:

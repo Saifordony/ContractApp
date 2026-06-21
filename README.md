@@ -200,3 +200,17 @@ Contract analysis now follows an evidence-first pipeline: extraction/OCR, normal
 `GET /llm/health` shows configured model roles, availability, latency, embedding availability, reviewer availability, and degraded status. Safe health endpoints remain public, while contract-processing AI endpoints require authentication.
 
 Benchmarking is an internal template-alignment/completeness comparison, not live market or legal-market data.
+
+### Analysis jobs and timeout behavior
+
+`POST /contracts/{contract_id}/analyze` now starts a background analysis job and returns a `job_id` instead of holding the browser request open for the full Ollama run. Streamlit polls `GET /contracts/{contract_id}/analysis-jobs/{job_id}` until the job is completed or failed. This prevents local-model analysis from surfacing as a frontend request timeout.
+
+Timeout-related settings:
+
+```env
+FRONTEND_API_TIMEOUT_SECONDS=300
+OLLAMA_TIMEOUT=300
+ANALYSIS_FAST_MODE=false
+```
+
+For slow machines, set `ANALYSIS_FAST_MODE=true` and optionally set `OLLAMA_ENABLE_EMBEDDINGS=false` and `OLLAMA_ENABLE_REVIEWER=false`. The backend will still return deterministic checklist analysis if Ollama is unavailable or times out.

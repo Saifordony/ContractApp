@@ -31,9 +31,11 @@ class Settings(BaseModel):
     ollama_model: str = os.getenv("OLLAMA_MODEL", os.getenv("OLLAMA_FALLBACK_MODEL", "llama3.1:8b"))
     ollama_temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
     ollama_num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "32768"))
-    ollama_timeout: int = int(os.getenv("OLLAMA_TIMEOUT", "120"))
+    ollama_timeout: int = int(os.getenv("OLLAMA_TIMEOUT", "300"))
     ollama_enable_reviewer: bool = os.getenv("OLLAMA_ENABLE_REVIEWER", "true").lower() in {"1", "true", "yes", "on"}
     ollama_enable_embeddings: bool = os.getenv("OLLAMA_ENABLE_EMBEDDINGS", "true").lower() in {"1", "true", "yes", "on"}
+    analysis_fast_mode: bool = os.getenv("ANALYSIS_FAST_MODE", "false").lower() in {"1", "true", "yes", "on"}
+    frontend_api_timeout_seconds: int = int(os.getenv("FRONTEND_API_TIMEOUT_SECONDS", "300"))
 
 
 @lru_cache
