@@ -4,11 +4,14 @@ import json
 import re
 import shutil
 import asyncio
+import hashlib
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 from backend.config import get_settings
-from backend.services.llm_service import generate_structured_json, llm_health
+from backend.services.llm_service import embed_texts_sync, generate_structured_json, llm_health, select_available_model
+from backend.schemas.ai import ContractAnalysisResult, EvidenceQuote, ReviewerCritique
 
 CLAUSE_PATTERNS = {
     "parties": ["parties", "party a", "party b", "employer", "employee", "landlord", "tenant", "الأطراف", "الطرف الأول", "الطرف الثاني", "صاحب العمل", "الموظف", "المؤجر", "المستأجر"],
@@ -140,23 +143,75 @@ def detect_contract_type(text: str) -> dict[str, Any]:
     return {"contract_type": best, "contract_type_label": profile["label"], "contract_type_confidence": round(confidence, 2), "contract_type_reason": f"Detected using bilingual headings and repeated terms for {profile['label']}."}
 
 
+def _clause_candidates_for_text(text: str) -> list[str]:
+    normalized = _normalized_for_matching(text)
+    return [ctype for ctype, terms in CLAUSE_PATTERNS.items() if any(_normalized_for_matching(term) in normalized for term in terms)]
+
+
+def _token_estimate(text: str) -> int:
+    return max(1, int(len((text or '').split()) * 1.25))
+
+
 def parse_contract_sections(text: str) -> list[dict[str, Any]]:
     text = normalize_contract_text(text)
-    heading_re = re.compile(r"(?m)^\s*((?:\d+[\).\-\s]+|Article\s+\d+[:\-\s]+|Clause\s+\d+[:\-\s]+|المادة\s+\S+[:\-\s]+|البند\s+\S+[:\-\s]+|[اأإآ]ولاً[:\-\s]+|ثانياً[:\-\s]+|ثالثاً[:\-\s]+)?[^\n]{3,90})\s*$")
-    matches = [m for m in heading_re.finditer(text) if len(m.group(1).split()) <= 12]
+    heading_re = re.compile(r"(?m)^\s*((?:\d+(?:\.\d+)?[\).\-\s]+|Article\s+\d+[:\-\s]+|Clause\s+\d+[:\-\s]+|Section\s+\d+(?:\.\d+)?[:\-\s]+|المادة\s+\S+[:\-\s]+|البند\s+\S+[:\-\s]+|[اأإآ]ولاً[:\-\s]*|ثانياً[:\-\s]*|ثالثاً[:\-\s]*|رابعاً[:\-\s]*|خامساً[:\-\s]*)?[^\n]{3,100})\s*$")
+    def is_heading(match) -> bool:
+        value = match.group(1)
+        if len(value.split()) > 14:
+            return False
+        has_prefix = re.match(r"\s*(?:\d+(?:\.\d+)?[\).\-\s]+|Article\s+\d+|Clause\s+\d+|Section\s+\d+|المادة\s+|البند\s+|[اأإآ]ولاً|ثانياً|ثالثاً|رابعاً|خامساً)", value, flags=re.IGNORECASE)
+        is_upper_heading = bool(re.search(r"[A-Z]", value)) and value.upper() == value
+        return bool(has_prefix or is_upper_heading)
+    matches = [m for m in heading_re.finditer(text) if is_heading(m)]
     sections: list[dict[str, Any]] = []
     if not matches:
         for idx, para in enumerate([p for p in text.split("\n\n") if p.strip()]):
             start = text.find(para)
-            sections.append({"section_title": f"Section {idx + 1}", "normalized_title": f"section {idx + 1}", "text": para.strip(), "start_char": start, "end_char": start + len(para), "language": detect_contract_language(para), "clause_candidates": []})
+            chunk = para.strip()
+            sections.append({"chunk_id": f"chunk-{idx+1}", "section_title": f"Section {idx + 1}", "normalized_title": f"section {idx + 1}", "text": chunk, "start_char": start, "end_char": start + len(para), "page_number": None, "language": detect_contract_language(chunk), "tokens_estimate": _token_estimate(chunk), "clause_candidates": _clause_candidates_for_text(chunk)})
         return sections[:80]
     for idx, match in enumerate(matches):
         start = match.start()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
         chunk = text[start:end].strip()
         title = _clean_snippet(match.group(1), 90)
-        sections.append({"section_title": title, "normalized_title": _normalized_for_matching(title), "text": chunk, "start_char": start, "end_char": end, "language": detect_contract_language(chunk), "clause_candidates": []})
+        sections.append({"chunk_id": f"chunk-{idx+1}", "section_title": title, "normalized_title": _normalized_for_matching(title), "text": chunk, "start_char": start, "end_char": end, "page_number": None, "language": detect_contract_language(chunk), "tokens_estimate": _token_estimate(chunk), "clause_candidates": _clause_candidates_for_text(chunk)})
     return sections[:120]
+
+
+def _query_terms(query: str, clause_type: str | None = None) -> list[str]:
+    terms = re.findall(r"[\w\u0600-\u06FF]{3,}", _normalized_for_matching(query))
+    if clause_type and clause_type in CLAUSE_PATTERNS:
+        for term in CLAUSE_PATTERNS[clause_type]:
+            terms.extend(re.findall(r"[\w\u0600-\u06FF]{3,}", _normalized_for_matching(term)))
+    return list(dict.fromkeys(terms))
+
+
+def _cosine_similarity(a: list[float] | None, b: list[float] | None) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def retrieve_evidence(contract_id: str, query: str, chunks: list[dict[str, Any]], top_k: int = 5, language: str | None = None, clause_type: str | None = None, query_embedding: list[float] | None = None) -> list[dict[str, Any]]:
+    terms = _query_terms(query, clause_type)
+    results: list[dict[str, Any]] = []
+    for chunk in chunks:
+        haystack = _normalized_for_matching(chunk.get("text", "") + " " + chunk.get("section_title", ""))
+        lexical_hits = sum(1 for term in terms if term and term in haystack)
+        lexical_score = lexical_hits / max(1, len(terms))
+        clause_boost = 0.25 if clause_type and clause_type in chunk.get("clause_candidates", []) else 0.0
+        semantic_score = _cosine_similarity(query_embedding, chunk.get("embedding"))
+        score = min(1.0, (lexical_score * 0.65) + (semantic_score * 0.25) + clause_boost)
+        if score <= 0 and not clause_boost:
+            continue
+        excerpt = _clean_snippet(chunk.get("text", ""), 900)
+        results.append({"chunk_id": chunk.get("chunk_id"), "section_title": chunk.get("section_title"), "section_reference": chunk.get("section_title"), "text": excerpt, "source": "hybrid_retrieval", "score": round(score, 4), "lexical_score": round(lexical_score, 4), "semantic_score": round(semantic_score, 4), "start_char": chunk.get("start_char"), "end_char": chunk.get("end_char"), "page_number": chunk.get("page_number"), "language": chunk.get("language", language or "en")})
+    results.sort(key=lambda item: item["score"], reverse=True)
+    return results[:top_k]
 
 
 def _extract_matches(pattern: str, text: str, limit: int = 6) -> list[str]:
@@ -261,10 +316,10 @@ def _term_explanation(name: str, value: str) -> tuple[str, str]:
     return ("This is a key business term extracted from the contract evidence.", "Confirm the extracted value against the original signed document.")
 
 
-def _extract_key_terms(text: str, clauses: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _extract_key_terms(text: str, clauses: list[dict[str, Any]], chunks: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     terms = []
     for name, keywords in TERM_PATTERNS.items():
-        evidence = _evidence_for(text, keywords)
+        evidence = _evidence_for(text, keywords, chunks=chunks)
         if not evidence:
             continue
         snippet = evidence[0]["text"]
@@ -498,6 +553,37 @@ def _action_plan(decision: dict[str, Any], clauses: list[dict[str, Any]]) -> dic
             confirm.append(item)
     return {"must_fix_before_signing": must[:5], "should_clarify": should[:6], "good_to_confirm": confirm[:6], "optional_improvements": []}
 
+
+
+def _chunk_hash(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8", errors="ignore")).hexdigest()
+
+
+async def cache_contract_embeddings(db, owner_user_id: str, contract_id: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    settings = get_settings()
+    if not getattr(settings, "ollama_enable_embeddings", True) or not chunks:
+        return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": 0, "reason": "disabled_or_no_chunks"}
+    texts = [chunk.get("text", "")[:8000] for chunk in chunks]
+    hashes = [_chunk_hash(text) for text in texts]
+    existing = await db.embeddings.find({"owner_user_id": owner_user_id, "contract_id": contract_id, "embedding_model": settings.ollama_embed_model, "text_hash": {"$in": hashes}}).to_list(len(hashes))
+    existing_by_hash = {item.get("text_hash"): item for item in existing}
+    missing_indexes = [idx for idx, h in enumerate(hashes) if h not in existing_by_hash]
+    vectors: list[list[float]] = []
+    if missing_indexes:
+        vectors = await asyncio.to_thread(embed_texts_sync, [texts[idx] for idx in missing_indexes], settings.ollama_embed_model)
+        if not vectors:
+            return {"embedding_used": False, "embedding_model": settings.ollama_embed_model, "cached": len(existing), "reason": "embedding_unavailable"}
+        docs = []
+        for source_idx, vector in zip(missing_indexes, vectors):
+            docs.append({"owner_user_id": owner_user_id, "contract_id": contract_id, "chunk_id": chunks[source_idx].get("chunk_id"), "text_hash": hashes[source_idx], "embedding_model": settings.ollama_embed_model, "embedding": vector, "created_at": datetime.now(timezone.utc)})
+            chunks[source_idx]["embedding"] = vector
+        if docs:
+            await db.embeddings.insert_many(docs)
+    for idx, h in enumerate(hashes):
+        if h in existing_by_hash:
+            chunks[idx]["embedding"] = existing_by_hash[h].get("embedding")
+    return {"embedding_used": any(bool(chunk.get("embedding")) for chunk in chunks), "embedding_model": settings.ollama_embed_model, "cached": len(existing), "generated": len(vectors)}
+
 def _ocr_language(preferred_language: str = "en") -> str:
     return "ara+eng" if preferred_language == "ar" else "eng+ara"
 
@@ -566,7 +652,15 @@ def extract_text(filename: str, content: bytes, preferred_language: str = "en") 
     return extract_contract_text(filename, content, preferred_language=preferred_language)["text"]
 
 
-def _evidence_for(text: str, terms: list[str]) -> list[dict[str, Any]]:
+def _evidence_for(text: str, terms: list[str], chunks: list[dict[str, Any]] | None = None, clause_type: str | None = None) -> list[dict[str, Any]]:
+    chunks = chunks or parse_contract_sections(text)
+    query = " ".join(terms[:8])
+    retrieved = retrieve_evidence("inline", query, chunks, top_k=3, clause_type=clause_type)
+    if retrieved:
+        first_term = next((term for term in terms if _normalized_for_matching(term) in _normalized_for_matching(retrieved[0].get("text", ""))), None)
+        for item in retrieved:
+            item["keyword"] = first_term or clause_type or "retrieval"
+        return retrieved
     lower = _normalized_for_matching(text)
     out = []
     for term in terms:
@@ -574,8 +668,8 @@ def _evidence_for(text: str, terms: list[str]) -> list[dict[str, Any]]:
         idx = lower.find(needle)
         if idx >= 0:
             start, end = max(0, idx - 140), min(len(text), idx + 260)
-            section = next((s for s in parse_contract_sections(text) if s["start_char"] <= idx <= s["end_char"]), None)
-            out.append({"text": text[start:end].strip(), "keyword": term, "source": "rule-based match", "section_reference": section.get("section_title") if section else None, "start_char": start, "end_char": end, "score": 1.0})
+            section = next((s for s in chunks if s["start_char"] <= idx <= s["end_char"]), None)
+            out.append({"text": text[start:end].strip(), "keyword": term, "source": "rule-based match", "section_reference": section.get("section_title") if section else None, "chunk_id": section.get("chunk_id") if section else None, "start_char": start, "end_char": end, "score": 1.0, "lexical_score": 1.0, "semantic_score": 0.0})
             break
     return out
 
@@ -584,10 +678,11 @@ def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[st
     text = normalize_contract_text(text)
     language = detect_contract_language(text)
     contract_type = detect_contract_type(text)
+    chunks = parse_contract_sections(text)
     required = set(CONTRACT_TYPE_PROFILES[contract_type["contract_type"]]["required"])
     clauses = []
     for key, terms in CLAUSE_PATTERNS.items():
-        evidence = _evidence_for(text, terms)
+        evidence = _evidence_for(text, terms, chunks=chunks, clause_type=key)
         evidence_text = evidence[0]["text"] if evidence else ""
         details = _details_from_evidence(key, evidence_text)
         status = "found" if evidence and len(details) >= 2 else "partial" if evidence else "missing" if key in required or key in CRITICAL else "partial"
@@ -636,14 +731,14 @@ def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[st
     risks = []
     for miss in missing:
         risks.append({"severity": "high" if miss in ["liability", "termination"] else "medium", "title": f"Missing {miss.replace('_',' ')} clause", "affected_clause": miss, "explanation": f"The extracted text does not show a clear {miss.replace('_',' ')} clause, so rights, obligations, or remedies may be uncertain.", "suggested_mitigation": f"Add deal-specific {miss.replace('_',' ')} language or confirm why it is not needed."})
-    key_terms = _extract_key_terms(text, clauses)
+    key_terms = _extract_key_terms(text, clauses, chunks=chunks)
     score_dimensions = {
         "required_clause_coverage": int(required_found / max(1, len(required)) * 100),
         "detail_completeness": min(100, detail_bonus * 12),
         "evidence_quality": int(found_count / max(1, len(CLAUSE_PATTERNS)) * 100),
         "ambiguity_penalty": weak_penalty,
     }
-    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks, "contract_language": language, **contract_type, "score_dimensions": score_dimensions, "parsed_sections": parse_contract_sections(text)[:20]}
+    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks, "contract_language": language, **contract_type, "score_dimensions": score_dimensions, "retrieval_status": {"mode": "hybrid_lexical", "embedding_used": any(bool(chunk.get("embedding")) for chunk in chunks), "chunk_count": len(chunks)}, "parsed_sections": chunks[:20]}
 
 
 def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: bool = False, error: str | None = None, explanation_language: str = "en") -> dict[str, Any]:
@@ -727,6 +822,66 @@ def _merge_ai(rule_result: dict[str, Any], ai_output: dict[str, Any], explanatio
     return {"clauses": clauses}
 
 
+
+
+def _review_prompt(rule_result: dict[str, Any], analysis: dict[str, Any], explanation_language: str = "en") -> str:
+    return f"""
+You are a conservative contract analysis reviewer. Do not add facts. Review whether the draft analysis is fully supported by the evidence package. Return JSON only with keys: unsupported_claims, missing_evidence, overstatements, suggested_fixes, confidence_adjustment.
+Language: {explanation_language}
+Evidence package: {json.dumps(rule_result, default=str)[:10000]}
+Draft analysis: {json.dumps(analysis, default=str)[:10000]}
+"""
+
+
+def _run_reviewer(rule_result: dict[str, Any], analysis: dict[str, Any], explanation_language: str = "en") -> dict[str, Any]:
+    settings = get_settings()
+    if not getattr(settings, "ollama_enable_reviewer", True):
+        return {"reviewer_used": False, "reviewer_status": "disabled", "reviewer_critique": {}}
+    health = llm_health()
+    if not health.get("reviewer_available"):
+        return {"reviewer_used": False, "reviewer_status": "reviewer model unavailable", "reviewer_critique": {}}
+    try:
+        raw = generate_structured_json(_review_prompt(rule_result, analysis, explanation_language), prompt_mode="review", model=getattr(settings, "ollama_review_model", None))
+        critique = ReviewerCritique(**raw).model_dump()
+        if critique.get("unsupported_claims") or critique.get("overstatements"):
+            analysis["confidence"] = "Medium" if analysis.get("confidence") == "High" else analysis.get("confidence", "Low")
+            analysis.setdefault("review_notes", []).extend(critique.get("suggested_fixes") or [])
+        return {"reviewer_used": True, "reviewer_status": "completed", "reviewer_model": getattr(settings, "ollama_review_model", None), "reviewer_critique": critique}
+    except Exception as exc:
+        return {"reviewer_used": False, "reviewer_status": "reviewer failed safely", "reviewer_error": str(exc), "reviewer_critique": {}}
+
+
+def validate_analysis_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        normalized = {
+            "schema_version": payload.get("schema_version", "hybrid-analysis-v2"),
+            "contract_type": payload.get("contract_type", "generic_commercial"),
+            "contract_type_confidence": float(payload.get("contract_type_confidence") or 0),
+            "language": payload.get("contract_language") or payload.get("language") or "en",
+            "health_score": int(payload.get("health_score") or 0),
+            "risk_level": payload.get("risk_level", "High"),
+            "score_dimensions": payload.get("score_dimensions") or {},
+            "clauses": payload.get("clauses") or [],
+            "missing_clauses": payload.get("missing_clauses") or payload.get("missing_critical_clauses") or [],
+            "weak_clauses": payload.get("weak_clauses") or [c.get("type") for c in payload.get("clauses", []) if c.get("status") == "partial"],
+            "top_risks": payload.get("top_risks") or payload.get("risks") or [],
+            "recommended_actions": payload.get("recommended_actions") or [],
+            "evidence_trace": payload.get("evidence_trace") or [],
+            "model_used": payload.get("model_used"),
+            "reviewer_used": bool(payload.get("reviewer_used", False)),
+            "degraded_mode": bool(payload.get("degraded_mode", True)),
+            "confidence": payload.get("confidence", "Low"),
+        }
+        ContractAnalysisResult(**normalized)
+        payload["schema_validated"] = True
+        payload["schema_version"] = normalized["schema_version"]
+        payload["weak_clauses"] = normalized["weak_clauses"]
+        payload["top_risks"] = normalized["top_risks"]
+    except Exception as exc:
+        payload["schema_validated"] = False
+        payload["schema_validation_error"] = str(exc)
+    return payload
+
 def analyze_text(text: str, explanation_language: str = "en", ui_language: str = "en") -> dict[str, Any]:
     settings = get_settings()
     text = (text or "").strip()
@@ -782,16 +937,19 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
                 evidence_trace.append({"clause": clause["title"], "text": item.get("text"), "source": item.get("source", "extracted_text"), "keyword": item.get("keyword"), "confidence": clause.get("confidence")})
         else:
             evidence_trace.append({"clause": clause["title"], "text": "No direct evidence captured for this clause.", "source": "rule-based absence", "keyword": None, "confidence": clause.get("confidence")})
-    return {
-        "schema_version": "hybrid-analysis-v1",
+    selected = select_available_model(getattr(settings, "ollama_analysis_model", getattr(settings, "ollama_model", "llama3.1:8b")), getattr(settings, "ollama_fallback_model", getattr(settings, "ollama_model", "llama3.1:8b")), (llm_debug.get("health") or {}).get("installed_models") or [])
+    result = {
+        "schema_version": "hybrid-analysis-v2",
         "explanation_language": explanation_language,
         "ui_language": ui_language,
+        "language": rule_result.get("contract_language"),
         "contract_language": rule_result.get("contract_language"),
         "contract_type": rule_result.get("contract_type"),
         "contract_type_label": rule_result.get("contract_type_label"),
         "contract_type_confidence": rule_result.get("contract_type_confidence"),
         "contract_type_reason": rule_result.get("contract_type_reason"),
         "score_dimensions": rule_result.get("score_dimensions", {}),
+        "retrieval_status": rule_result.get("retrieval_status", {}),
         "parsed_sections": rule_result.get("parsed_sections", []),
         "review_decision": review_decision,
         "priority_action_plan": action_plan,
@@ -802,18 +960,21 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
         "llm_used": ai_fields["llm_used"],
         "degraded_mode": ai_fields["degraded_mode"],
         "ai_status": ai_fields["ai_status"],
-        "active_model": settings.ollama_model,
+        "model_used": selected.get("model") or settings.ollama_fallback_model,
+        "active_model": selected.get("model") or settings.ollama_fallback_model,
         "confidence": "High" if ai_fields["llm_used"] and rule_result["health_score"] >= 70 else "Medium" if ai_fields["llm_used"] else "Low",
         "executive_summary": ai_fields["executive_summary"],
         "ai_overall_assessment": ai_fields["ai_overall_assessment"],
         "key_strengths": ai_fields["key_strengths"],
         "key_risks": ai_fields["key_risks"],
         "missing_clauses": ai_fields["missing_clauses"],
+        "weak_clauses": [c.get("type") for c in ai_fields["clauses"] if c.get("status") == "partial"],
         "missing_critical_clauses": rule_result["missing_critical_clauses"],
         "recommended_actions": ai_fields["recommended_actions"],
         "recommended_improvements": ai_fields["recommended_actions"],
         "key_terms": ai_fields.get("key_terms") or rule_result.get("key_terms", []),
         "risks": rule_result["risks"],
+        "top_risks": rule_result["risks"][:5],
         "clauses": ai_fields["clauses"],
         "evidence_trace": evidence_trace,
         "rule_based_result": rule_result,
@@ -823,10 +984,19 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
         "llm_error": ai_fields["llm_error"],
         "created_at": datetime.now(timezone.utc),
     }
+    result.update(_run_reviewer(rule_result, result, explanation_language))
+    return validate_analysis_schema(result)
 
 
 async def analyze_contract_record(db, contract: dict, explanation_language: str = "en", ui_language: str = "en"):
     analysis = await asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language)
+    embedding_status = {"embedding_used": False, "reason": "not_attempted"}
+    try:
+        embedding_status = await cache_contract_embeddings(db, contract["owner_user_id"], str(contract["_id"]), analysis.get("parsed_sections", []))
+    except Exception as exc:
+        embedding_status = {"embedding_used": False, "reason": "embedding_cache_failed", "safe_error": str(exc)}
+    analysis["embedding_status"] = embedding_status
+    analysis.setdefault("retrieval_status", {})["embedding_used"] = bool(embedding_status.get("embedding_used"))
     doc = {"owner_user_id": contract["owner_user_id"], "contract_id": str(contract["_id"]), "analysis": analysis, "created_at": datetime.now(timezone.utc)}
     result = await db.analyses.insert_one(doc)
     doc["_id"] = result.inserted_id

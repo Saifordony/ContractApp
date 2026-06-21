@@ -132,3 +132,71 @@ The active engine normalizes extracted text, detects language, detects contract 
 ## Benchmark limitation
 
 Benchmark results are **template alignment and contract completeness comparisons** using internal checklist profiles. They are **not live market data** and are not legal market benchmarks.
+
+## Smarter local Ollama engine
+
+The active AI engine is still fully local-Ollama friendly. It now separates model roles so you can run a light setup on smaller machines or a stronger setup on workstations with more memory.
+
+### Recommended model pull
+
+Linux/macOS:
+
+```bash
+scripts/pull_ollama_models.sh
+```
+
+Windows PowerShell:
+
+```powershell
+scripts\pull_ollama_models.ps1
+```
+
+The scripts pull:
+
+- `qwen3:14b` for analysis/chat
+- `bge-m3` for local embeddings
+- `deepseek-r1:14b` for optional reviewer/critic mode
+- `llama3.1:8b` as a smaller fallback
+
+Larger optional models such as `qwen3:30b` or `llama3.3:70b` may improve quality on powerful machines but can be much slower and require substantially more RAM/VRAM.
+
+### Ollama model configuration
+
+Light setup:
+
+```env
+OLLAMA_ANALYSIS_MODEL=llama3.1:8b
+OLLAMA_CHAT_MODEL=llama3.1:8b
+OLLAMA_EMBED_MODEL=bge-m3
+OLLAMA_ENABLE_REVIEWER=false
+```
+
+Recommended setup:
+
+```env
+OLLAMA_ANALYSIS_MODEL=qwen3:14b
+OLLAMA_CHAT_MODEL=qwen3:14b
+OLLAMA_EMBED_MODEL=bge-m3
+OLLAMA_REVIEW_MODEL=deepseek-r1:14b
+OLLAMA_ENABLE_REVIEWER=true
+```
+
+Powerful setup:
+
+```env
+OLLAMA_ANALYSIS_MODEL=qwen3:30b
+OLLAMA_CHAT_MODEL=qwen3:30b
+OLLAMA_EMBED_MODEL=bge-m3
+OLLAMA_REVIEW_MODEL=deepseek-r1:14b
+OLLAMA_ENABLE_REVIEWER=true
+```
+
+If a preferred model is unavailable, the backend falls back to `OLLAMA_FALLBACK_MODEL`. If embeddings are unavailable, retrieval falls back to bilingual lexical/section retrieval. If the reviewer model is unavailable, reviewer mode is skipped safely.
+
+### RAG, embeddings, reviewer mode, and degraded mode
+
+Contract analysis now follows an evidence-first pipeline: extraction/OCR, normalization, language and contract-type detection, section-aware chunking, bilingual clause extraction, hybrid retrieval, deterministic risk skeleton, optional Ollama reasoning, optional reviewer critique, and schema validation. Chat uses the same section-aware retrieval so contract-specific answers cite evidence or clearly state that the contract does not answer.
+
+`GET /llm/health` shows configured model roles, availability, latency, embedding availability, reviewer availability, and degraded status. Safe health endpoints remain public, while contract-processing AI endpoints require authentication.
+
+Benchmarking is an internal template-alignment/completeness comparison, not live market or legal-market data.

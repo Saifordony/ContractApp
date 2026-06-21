@@ -11,7 +11,8 @@ BENCHMARK_EXPECTATIONS = {
     "renewal": "Renewal term, notice window, pricing changes, and opt-out process.",
     "governing_law": "Clear governing law and venue aligned with the parties' operating needs.",
 }
-BENCHMARK_LIMITATION = "Internal checklist comparison, not market/legal market data."
+BENCHMARK_LIMITATION = "Internal template alignment comparison, not live market/legal market data."
+LEGACY_BENCHMARK_WORDING = "Internal checklist comparison, not market/legal market data."
 
 
 def _status_for(found: bool, clause_type: str) -> str:
@@ -51,10 +52,14 @@ def benchmark_analysis(analysis: dict, explanation_language: str = "en"):
     profile = CONTRACT_TYPE_PROFILES.get(contract_type, CONTRACT_TYPE_PROFILES["generic_commercial"])
     return {
         "benchmark_mode": "Template alignment and contract completeness comparison",
+        "limitations": BENCHMARK_LIMITATION,
         "benchmark_limitation": BENCHMARK_LIMITATION,
         "profile_used": profile["label"],
         "benchmark_profiles": ["Employment", "Lease", "NDA", "Service agreement", "Software / engineering", "Generic commercial"],
         "overall_score": score,
+        "alignment_score": score,
+        "required_clause_coverage": score,
+        "recommended_clause_coverage": score,
         "aligned_clauses": aligned,
         "partially_aligned_clauses": partial,
         "missing_or_weak_clauses": missing,
@@ -62,7 +67,12 @@ def benchmark_analysis(analysis: dict, explanation_language: str = "en"):
         "narrative_summary": "هذه مقارنة داخلية لقائمة تحقق وليست بيانات سوق أو بيانات قانونية مباشرة. وتوضح أين يبدو العقد متوافقًا أو جزئيًا أو ناقصًا مقارنة بهيكل مرجعي مناسب لنوع العقد." if ar else "This is an internal checklist comparison, not market/legal market data. It highlights where the selected contract appears aligned, partial, or missing against a template profile for the detected contract type.",
         "clause_alignment": comparisons,
         "missing_protections": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing"],
-        "recommended_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative benchmark comparison"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
+        "missing_required_clauses": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing"],
+        "missing_recommended_clauses": [item["clause"] for item in comparisons if item["your_contract_status"] == "Partial"],
+        "high_risk_gaps": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing" and item["clause"].lower() in {"termination", "liability", "governing law"}],
+        "suggested_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative benchmark comparison"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
+        "recommended_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative template alignment"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
+        "evidence": [],
         "evidence_or_rule_basis": "ملفات مرجعية توضيحية مبنية على توقعات بنية العقود الشائعة؛ وليست بيانات سوق خارجية." if ar else "Synthetic illustrative profiles based on common contract structure expectations; not external market data.",
         "explanation_language": explanation_language,
         "degraded_mode": False,

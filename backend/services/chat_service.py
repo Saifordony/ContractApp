@@ -3,7 +3,10 @@ import asyncio
 import re
 from typing import Any
 
-from backend.services.llm_service import generate_structured_json, llm_health
+from backend.services.analysis_service import parse_contract_sections, retrieve_evidence as hybrid_retrieve_evidence
+from backend.services.llm_service import generate_structured_json, llm_health, select_available_model
+from backend.config import get_settings
+from backend.schemas.ai import ChatAnswer
 
 CONTRACT_KEYWORDS = {"clause", "payment", "leave", "termination", "risk", "rights", "obligations", "liability", "confidential", "salary", "fee", "renewal", "governing", "negotiate", "contract", "agreement", "can i", "what does this mean", "summarize", "rewrite"}
 SMALL_TALK = {"hi", "hello", "hey", "thanks", "thank you", "who are you"}
@@ -93,20 +96,19 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in text.replace("\n", " ").split(".") if s.strip()]
 
 
-def retrieve_evidence(contract_text: str, question: str, limit: int = 4) -> list[dict[str, Any]]:
-    q_words = [w.lower().strip("?.,:;()") for w in question.split() if len(w) > 3]
-    for concept in concepts_for_question(question):
-        for term in CONCEPT_SEARCH_TERMS.get(concept, []):
-            q_words.extend(part for part in term.lower().split() if len(part) > 3)
-    q_words = list(dict.fromkeys(q_words))
-    evidence = []
-    for sentence in _sentences(contract_text):
-        lower = sentence.lower()
-        score = sum(1 for word in q_words if word in lower)
-        if score:
-            evidence.append({"clause": "Relevant contract text", "text": sentence, "source": "extracted_contract_text", "location": "Extracted contract text", "score": score})
-    evidence.sort(key=lambda item: item["score"], reverse=True)
-    return evidence[:limit]
+def retrieve_evidence(contract_text: str, question: str, limit: int = 4, contract_id: str = "chat") -> list[dict[str, Any]]:
+    chunks = parse_contract_sections(contract_text)
+    concepts = concepts_for_question(question)
+    clause_type = concepts[0] if concepts else None
+    query = question
+    for concept in concepts:
+        query += " " + " ".join(CONCEPT_SEARCH_TERMS.get(concept, []))
+    evidence = hybrid_retrieve_evidence(contract_id, query, chunks, top_k=limit, clause_type=clause_type)
+    for item in evidence:
+        item.setdefault("clause", item.get("section_title") or "Relevant contract text")
+        item.setdefault("location", item.get("section_title") or "Extracted contract text")
+        item.setdefault("source", "hybrid_retrieval")
+    return evidence
 
 
 def _confidence(evidence: list[dict[str, Any]], answer_type: str) -> float:
@@ -194,7 +196,7 @@ def _fallback_contract_answer(question: str, evidence: list[dict[str, Any]], ans
         summary = answer
     if llm_unavailable:
         answer = ("نموذج الذكاء الاصطناعي غير متاح — تم عرض إجابة مبنية على القواعد. " if language == "ar" else "AI model unavailable — rule-based contract answer shown. ") + answer
-    return {"answer": answer, "answer_type": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": True, "evidence": evidence, "plain_english_summary": summary, "practical_note": practical, "follow_up_suggestions": _follow_ups_for_question(question, language), "degraded_mode": llm_unavailable, "llm_used": False, "explanation_language": explanation_language, "response_language": language}
+    return _validate_chat_answer({"answer": answer, "short_answer": summary, "answer_type": answer_type, "intent": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": True, "evidence": evidence, "missing_information": [] if evidence else ["Contract evidence did not clearly answer the question."], "risk_note": "AI-assisted review only; not final legal advice.", "suggested_next_step": practical, "plain_english_summary": summary, "practical_note": practical, "follow_up_suggestions": _follow_ups_for_question(question, language), "degraded_mode": llm_unavailable, "llm_used": False, "model_used": None, "explanation_language": explanation_language, "response_language": language, "language": language, "is_legal_advice_disclaimer": True})
 
 
 def _chat_prompt(question: str, contract_text: str, evidence: list[dict[str, Any]], answer_type: str, explanation_language: str = "en") -> str:
@@ -212,6 +214,30 @@ Selected contract excerpt: {contract_text[:10000]}
 """
 
 
+
+
+def _validate_chat_answer(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        ChatAnswer(**{
+            "answer": payload.get("answer", ""),
+            "short_answer": payload.get("short_answer") or payload.get("plain_english_summary", ""),
+            "confidence": float(payload.get("confidence") or 0),
+            "intent": payload.get("intent") or payload.get("answer_type", "contract_specific"),
+            "evidence": payload.get("evidence") or [],
+            "missing_information": payload.get("missing_information") or [],
+            "risk_note": payload.get("risk_note", "AI-assisted review only; not final legal advice."),
+            "suggested_next_step": payload.get("suggested_next_step") or payload.get("practical_note", ""),
+            "language": payload.get("language") or payload.get("response_language", "en"),
+            "model_used": payload.get("model_used"),
+            "degraded_mode": bool(payload.get("degraded_mode", True)),
+            "is_legal_advice_disclaimer": bool(payload.get("is_legal_advice_disclaimer", True)),
+        })
+        payload["schema_validated"] = True
+    except Exception as exc:
+        payload["schema_validated"] = False
+        payload["schema_validation_error"] = str(exc)
+    return payload
+
 def answer_question(contract_text: str, question: str, analysis: dict | None = None, explanation_language: str = "en"):
     answer_type = classify_question(question)
     if answer_type in {"small_talk", "app_help", "unrelated_general"}:
@@ -225,7 +251,9 @@ def answer_question(contract_text: str, question: str, analysis: dict | None = N
         confidence = _confidence(evidence, answer_type)
         language = _chat_language(question, explanation_language)
         fallback = _fallback_contract_answer(question, evidence, answer_type, explanation_language=explanation_language)
-        return {"answer": ai.get("answer") or fallback["answer"], "answer_type": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": bool(evidence) or answer_type == "contract_specific", "evidence": evidence, "plain_english_summary": ai.get("plain_english_summary") or fallback["plain_english_summary"], "practical_note": ai.get("practical_note") or fallback["practical_note"], "follow_up_suggestions": ai.get("follow_up_suggestions") or _follow_ups_for_question(question, language), "degraded_mode": False, "llm_used": True, "explanation_language": explanation_language, "response_language": language}
+        settings = get_settings()
+        selected = select_available_model(settings.ollama_chat_model, settings.ollama_fallback_model, health.get("installed_models") or [])
+        return _validate_chat_answer({"answer": ai.get("answer") or fallback["answer"], "short_answer": ai.get("plain_english_summary") or fallback["plain_english_summary"], "answer_type": answer_type, "intent": answer_type, "confidence": confidence, "confidence_label": _confidence_note_ar(confidence) if language == "ar" else _confidence_note(confidence), "used_contract": bool(evidence) or answer_type == "contract_specific", "evidence": evidence, "missing_information": [] if evidence else ["Contract evidence did not clearly answer the question."], "risk_note": "AI-assisted review only; not final legal advice.", "suggested_next_step": ai.get("practical_note") or fallback["practical_note"], "plain_english_summary": ai.get("plain_english_summary") or fallback["plain_english_summary"], "practical_note": ai.get("practical_note") or fallback["practical_note"], "follow_up_suggestions": ai.get("follow_up_suggestions") or _follow_ups_for_question(question, language), "degraded_mode": False, "llm_used": True, "model_used": selected.get("model"), "explanation_language": explanation_language, "response_language": language, "language": language, "is_legal_advice_disclaimer": True})
     except Exception:
         return _fallback_contract_answer(question, evidence, answer_type, llm_unavailable=True, explanation_language=explanation_language)
 

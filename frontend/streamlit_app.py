@@ -592,7 +592,7 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "llm_used": bool(data.get("llm_used", False)),
         "degraded_mode": bool(data.get("degraded_mode", False)),
         "ai_status": safe_text(data.get("ai_status"), "LLM unavailable" if data.get("degraded_mode") else "Not specified"),
-        "active_model": safe_text(data.get("active_model") or data.get("model"), "Not specified"),
+        "active_model": safe_text(data.get("model_used") or data.get("active_model") or data.get("model"), "Not specified"),
         "confidence": safe_text(data.get("confidence"), "Low" if data.get("degraded_mode") else "Medium"),
         "executive_summary": safe_text(data.get("executive_summary") or data.get("summary"), "No executive summary returned."),
         "ai_overall_assessment": plain_value(data.get("ai_overall_assessment"), "Decision support is based on extracted evidence, missing details, and clause-level risk signals."),
@@ -615,6 +615,10 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "contract_type_confidence": data.get("contract_type_confidence"),
         "score_dimensions": data.get("score_dimensions") or {},
         "extraction_metadata": data.get("extraction_metadata") or {},
+        "embedding_status": data.get("embedding_status") or {},
+        "retrieval_status": data.get("retrieval_status") or {},
+        "reviewer_used": bool(data.get("reviewer_used", False)),
+        "reviewer_status": safe_text(data.get("reviewer_status"), "Not used"),
         "explanation_language": safe_text(data.get("explanation_language"), effective_explanation_language()),
         "created_at": data.get("created_at"),
     }
@@ -653,6 +657,13 @@ def render_score_cards(analysis: dict[str, Any]) -> None:
     if analysis.get("contract_type_label") != "Not detected":
         confidence = analysis.get("contract_type_confidence")
         st.caption(f"Contract type: {analysis['contract_type_label']} · Confidence: {confidence if confidence is not None else 'Not scored'}")
+    retrieval = analysis.get("retrieval_status") or {}
+    embedding = analysis.get("embedding_status") or {}
+    st.caption(" • ".join([
+        f"Reviewer used: {format_bool(analysis.get('reviewer_used'))}",
+        f"Retrieval: {retrieval.get('mode', 'hybrid')}",
+        f"Embeddings: {format_bool(embedding.get('embedding_used') or retrieval.get('embedding_used'))}",
+    ]))
     if analysis.get("score_dimensions"):
         st.caption("Score dimensions: " + plain_value(analysis["score_dimensions"]))
 
@@ -721,7 +732,7 @@ def render_assistant_message(message: dict[str, Any]) -> None:
     note_label = localized_label_for(lang, "Practical note", "ملاحظة عملية")
     used_contract_label = localized_label_for(lang, "Used contract", "تم استخدام العقد")
     llm_label = localized_label_for(lang, "LLM used", "تم استخدام الذكاء الاصطناعي")
-    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">{safe_html(assistant_label)} · {safe_html(format_source(message.get("answer_type"), lang))}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>{safe_html(summary_label)}:</strong> {safe_html(message.get("plain_english_summary"), "")}</p><p><strong>{safe_html(note_label)}:</strong> {safe_html(message.get("practical_note"), "")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label"), lang))}</span><span>{safe_html(used_contract_label)}: {safe_html(format_bool(message.get("used_contract"), lang))}</span><span>{safe_html(llm_label)}: {safe_html(format_bool(message.get("llm_used"), lang))}</span></div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">{safe_html(assistant_label)} · {safe_html(format_source(message.get("answer_type"), lang))}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>{safe_html(summary_label)}:</strong> {safe_html(message.get("plain_english_summary"), "")}</p><p><strong>{safe_html(note_label)}:</strong> {safe_html(message.get("practical_note"), "")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label"), lang))}</span><span>{safe_html(used_contract_label)}: {safe_html(format_bool(message.get("used_contract"), lang))}</span><span>{safe_html(llm_label)}: {safe_html(format_bool(message.get("llm_used"), lang))}</span><span>{safe_html(localized_label_for(lang, "Model", "النموذج"))}: {safe_html(message.get("model_used") or "fallback")}</span></div></div>', unsafe_allow_html=True)
     with st.expander(localized_label_for(lang, "Evidence used", "الأدلة المستخدمة"), expanded=False):
         render_chat_evidence(message.get("evidence") or [], lang)
     suggestions = message.get("follow_up_suggestions") or []
@@ -1166,7 +1177,7 @@ def contracts_page():
     with st.form("upload_form"):
         name = st.text_input("Contract name")
         client_name = st.selectbox("Client", ["No client"] + list(client_options.keys()))
-        file = st.file_uploader("Upload PDF, DOCX, or TXT", type=["pdf", "docx", "txt"])
+        file = st.file_uploader("Upload PDF, DOCX, TXT, PNG, JPG, or JPEG", type=["pdf", "docx", "txt", "png", "jpg", "jpeg"])
         if st.form_submit_button("Upload contract"):
             if not file:
                 st.error("Choose a contract file.")
@@ -1319,6 +1330,7 @@ def chat_page():
                 follow_up_suggestions=data.get("follow_up_suggestions") or [],
                 degraded_mode=data.get("degraded_mode"),
                 llm_used=data.get("llm_used"),
+                model_used=data.get("model_used"),
                 response_language=data.get("response_language"),
                 explanation_language=data.get("explanation_language"),
                 raw=data,
