@@ -30,7 +30,7 @@ TRANSLATIONS = {
         "page.Contract Chat.title": "Contract Chat",
         "page.Contract Chat.subtitle": "Ask questions about this contract, risks, clauses, obligations, or general follow-up questions.",
         "page.Benchmark.title": "Benchmark",
-        "page.Benchmark.subtitle": "Compare the selected contract against clearly labeled synthetic benchmark profiles.",
+        "page.Benchmark.subtitle": "Compare the selected contract against internal checklist templates, not live market data.",
         "page.Settings / System Health.title": "Settings / System Health",
         "page.Settings / System Health.subtitle": "Diagnostics for frontend, backend, database, authentication, AI model, endpoints, and runtime configuration.",
         "action.logout": "Logout",
@@ -195,8 +195,8 @@ def format_decision(value: Any, lang: str | None = None) -> str:
 def format_source(value: Any, lang: str | None = None) -> str:
     lang = lang or current_lang()
     key = safe_text(value, "").lower()
-    ar = {"extracted_text":"نص العقد المستخرج", "extracted_contract_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية", "contract_specific":"إجابة مرتبطة بالعقد", "general_contract_concept":"شرح عام لمفهوم تعاقدي", "small_talk":"محادثة عامة", "app_help":"مساعدة في التطبيق", "unrelated_general":"إجابة عامة"}
-    en = {"extracted_text":"Extracted contract text", "extracted_contract_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison", "contract_specific":"Contract-specific answer", "general_contract_concept":"General contract concept", "small_talk":"Small talk", "app_help":"App help", "unrelated_general":"General answer"}
+    ar = {"extracted_text":"نص العقد المستخرج", "extracted_contract_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية", "template alignment and contract completeness comparison":"مقارنة اكتمال ومواءمة مع قالب داخلي", "contract_specific":"إجابة مرتبطة بالعقد", "general_contract_concept":"شرح عام لمفهوم تعاقدي", "small_talk":"محادثة عامة", "app_help":"مساعدة في التطبيق", "unrelated_general":"إجابة عامة"}
+    en = {"extracted_text":"Extracted contract text", "extracted_contract_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison", "template alignment and contract completeness comparison":"Template alignment and contract completeness comparison", "contract_specific":"Contract-specific answer", "general_contract_concept":"General contract concept", "small_talk":"Small talk", "app_help":"App help", "unrelated_general":"General answer"}
     return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
 
 
@@ -242,6 +242,24 @@ def init_state():
     defaults = {"token": None, "user": None, "page": "Home", "theme": "light", "language": "en", "auth_mode": "login", "selected_contract_id": None, "last_analysis": None, "last_analysis_contract_id": None, "last_analysis_at": None, "analysis_result": None, "analysis_contract_label": None, "analysis_contract_id": None, "analysis_endpoint": None, "last_api_debug": None, "chat_history": [], "chat_contract_id": None, "chat_contract_label": None, "last_chat_debug": None, "benchmark_result": None, "benchmark_contract_id": None, "ai_explanation_language": "match", "report_language": "match", "analysis_report_pdf": None, "analysis_report_filename": None}
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+
+
+def apply_user_preferences(user: dict[str, Any] | None) -> None:
+    prefs = (user or {}).get("preferences") or {}
+    for key in ["theme", "language", "ai_explanation_language", "report_language"]:
+        if prefs.get(key):
+            st.session_state[key] = prefs[key]
+
+
+def save_user_preferences() -> None:
+    if not st.session_state.get("token"):
+        return
+    api_request("PUT", "/auth/preferences", json={
+        "theme": st.session_state.theme,
+        "language": st.session_state.language,
+        "ai_explanation_language": st.session_state.ai_explanation_language,
+        "report_language": st.session_state.report_language,
+    })
 
 
 def parse_response_body(response: requests.Response) -> Any:
@@ -593,6 +611,10 @@ def normalize_analysis_response(data: Any) -> dict[str, Any]:
         "review_decision": data.get("review_decision") or {},
         "priority_action_plan": data.get("priority_action_plan") or {},
         "follow_up_questions": data.get("follow_up_questions") or [],
+        "contract_type_label": safe_text(data.get("contract_type_label") or data.get("contract_type"), "Not detected"),
+        "contract_type_confidence": data.get("contract_type_confidence"),
+        "score_dimensions": data.get("score_dimensions") or {},
+        "extraction_metadata": data.get("extraction_metadata") or {},
         "explanation_language": safe_text(data.get("explanation_language"), effective_explanation_language()),
         "created_at": data.get("created_at"),
     }
@@ -628,6 +650,11 @@ def render_score_cards(analysis: dict[str, Any]) -> None:
         render_metric_card("Clauses Found", analysis["clauses_found"], "Rule-based extraction")
     with cols[4]:
         render_metric_card("Missing Critical", len(analysis["missing_critical_clauses"]), analysis["source"])
+    if analysis.get("contract_type_label") != "Not detected":
+        confidence = analysis.get("contract_type_confidence")
+        st.caption(f"Contract type: {analysis['contract_type_label']} · Confidence: {confidence if confidence is not None else 'Not scored'}")
+    if analysis.get("score_dimensions"):
+        st.caption("Score dimensions: " + plain_value(analysis["score_dimensions"]))
 
 
 def render_evidence(evidence: list[dict[str, Any]]) -> None:
@@ -768,7 +795,9 @@ def normalize_benchmark_response(data: Any) -> dict[str, Any]:
     actions = [normalize_action(item, "illustrative benchmark comparison") for item in (data.get("recommended_improvements") or [])]
     return {
         "raw": data,
-        "benchmark_mode": safe_text(data.get("benchmark_mode"), "Illustrative benchmark comparison"),
+        "benchmark_mode": safe_text(data.get("benchmark_mode"), "Template alignment and contract completeness comparison"),
+        "benchmark_limitation": safe_text(data.get("benchmark_limitation"), "Internal checklist comparison, not market/legal market data."),
+        "profile_used": safe_text(data.get("profile_used"), "Generic commercial contract"),
         "profiles": data.get("benchmark_profiles") or [],
         "overall_score": data.get("overall_score", 0),
         "aligned": data.get("aligned_clauses", 0),
@@ -831,7 +860,8 @@ def render_benchmark_results(result: dict[str, Any]) -> None:
         render_metric_card("Missing / Weak", result["missing"], "Priority gaps")
     with cols[4]:
         render_metric_card("Benchmark Mode", "Illustrative", "Synthetic profiles")
-    st.info("This comparison uses internal illustrative benchmark profiles to show how the selected contract compares against common contract structures. It is not live market data.")
+    st.info(result.get("benchmark_limitation") or "Internal checklist comparison, not market/legal market data.")
+    st.caption(f"Profile used: {result.get('profile_used', 'Generic commercial contract')}")
     st.markdown(f'<div class="cip-summary-card"><strong>Benchmark narrative</strong><br>{safe_html(result["narrative_summary"])}</div>', unsafe_allow_html=True)
     st.markdown("### Alignment Snapshot")
     total = max(1, result["aligned"] + result["partial"] + result["missing"])
@@ -985,6 +1015,7 @@ def render_sidebar():
     selected_theme_value = theme_label_to_value[selected_theme]
     if selected_theme_value != st.session_state.theme:
         st.session_state.theme = selected_theme_value
+        save_user_preferences()
         st.rerun()
     lang_label_to_value = {t("language.english"): "en", t("language.arabic"): "ar"}
     current_lang_label = t("language.arabic") if st.session_state.language == "ar" else t("language.english")
@@ -992,15 +1023,22 @@ def render_sidebar():
     selected_lang_value = lang_label_to_value[selected_lang]
     if selected_lang_value != st.session_state.language:
         st.session_state.language = selected_lang_value
+        save_user_preferences()
         st.rerun()
     expl_options = {"Match interface language": "match", "English": "en", "العربية": "ar"}
     current_expl = next(label for label, value in expl_options.items() if value == st.session_state.ai_explanation_language)
     selected_expl = st.sidebar.selectbox(t("label.ai_explanation_language"), list(expl_options.keys()), index=list(expl_options.keys()).index(current_expl))
-    st.session_state.ai_explanation_language = expl_options[selected_expl]
+    selected_expl_value = expl_options[selected_expl]
+    if selected_expl_value != st.session_state.ai_explanation_language:
+        st.session_state.ai_explanation_language = selected_expl_value
+        save_user_preferences()
     report_options = {"Match interface language": "match", "English": "en", "العربية": "ar"}
     current_report = next(label for label, value in report_options.items() if value == st.session_state.report_language)
     selected_report = st.sidebar.selectbox(t("label.report_language"), list(report_options.keys()), index=list(report_options.keys()).index(current_report))
-    st.session_state.report_language = report_options[selected_report]
+    selected_report_value = report_options[selected_report]
+    if selected_report_value != st.session_state.report_language:
+        st.session_state.report_language = selected_report_value
+        save_user_preferences()
     st.sidebar.caption(t("label.active_frontend"))
     st.sidebar.caption(t("label.active_file"))
     st.sidebar.caption(f"{t('label.backend_build')}: {health.get('Backend Build', 'unknown')}")
@@ -1073,6 +1111,7 @@ def auth_screen():
                         if ok:
                             st.session_state.token = data["access_token"]
                             st.session_state.user = data["user"]
+                            apply_user_preferences(st.session_state.user)
                             st.rerun()
                         else:
                             st.error(user_message(data))

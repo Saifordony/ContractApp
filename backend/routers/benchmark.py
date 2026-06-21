@@ -13,5 +13,5 @@ async def compare(contract_id: str, user=Depends(get_current_user)):
     return await benchmark_contract(db, user["id"], contract, (latest or {}).get("analysis"))
 
 @router.post("/analyze")
-async def analyze(payload: dict):
+async def analyze(payload: dict, user=Depends(get_current_user)):
     return benchmark_analysis(payload.get("analysis", payload))

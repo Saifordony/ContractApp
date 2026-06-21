@@ -54,3 +54,12 @@ Every protected document stores `owner_user_id` and route/service queries filter
 - `_archive/legacy-backend` — duplicate legacy backend services/routers retained for reference only.
 
 Files in `_archive/` should not be edited for active application behavior.
+
+## Environment examples
+
+- `.env.local.example` — local backend/frontend development with `OLLAMA_BASE_URL=http://localhost:11434`.
+- `.env.docker.example` — Docker Compose development with `OLLAMA_BASE_URL=http://host.docker.internal:11434`.
+
+## Test hygiene
+
+Legacy tests that reference removed modules are archived under `_archive/legacy-tests`. Active tests live under `tests/` and target the current Streamlit + FastAPI service layout.

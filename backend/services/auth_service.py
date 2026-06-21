@@ -11,6 +11,7 @@ def serialize_user(user):
         "email": user.get("email", ""),
         "role": user.get("role", "user"),
         "is_active": user.get("is_active", True),
+        "preferences": user.get("preferences", {}),
         "created_at": user.get("created_at"),
         "updated_at": user.get("updated_at"),
     }
@@ -39,3 +40,12 @@ async def login_user(db, email: str, password: str):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password.")
     safe_user = serialize_user(user)
     return {"access_token": create_access_token(safe_user["id"]), "token_type": "bearer", "user": safe_user}
+
+
+async def update_user_preferences(db, user_id: str, preferences: dict):
+    from bson import ObjectId
+    allowed = {"language", "theme", "ai_explanation_language", "report_language"}
+    clean = {key: value for key, value in (preferences or {}).items() if key in allowed and value in {"en", "ar", "light", "dark", "match"}}
+    await db.users.update_one({"_id": ObjectId(user_id)}, {"$set": {"preferences": clean, "updated_at": datetime.now(timezone.utc)}})
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    return serialize_user(user)

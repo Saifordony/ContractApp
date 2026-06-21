@@ -1,6 +1,9 @@
 """Official hybrid contract analysis service: rule extraction + grounded AI review."""
 import io
 import json
+import re
+import shutil
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,32 +11,79 @@ from backend.config import get_settings
 from backend.services.llm_service import generate_structured_json, llm_health
 
 CLAUSE_PATTERNS = {
-    "termination": ["termination", "terminate", "expiration"],
-    "payment": ["payment", "fees", "invoice", "compensation"],
-    "confidentiality": ["confidential", "non-disclosure", "proprietary"],
-    "liability": ["liability", "indemn", "damages"],
-    "intellectual_property": ["intellectual property", "ip rights", "ownership"],
-    "governing_law": ["governing law", "jurisdiction", "laws of"],
-    "dispute_resolution": ["dispute", "arbitration", "mediation"],
-    "renewal": ["renewal", "auto-renew", "automatic renewal"],
+    "parties": ["parties", "party a", "party b", "employer", "employee", "landlord", "tenant", "الأطراف", "الطرف الأول", "الطرف الثاني", "صاحب العمل", "الموظف", "المؤجر", "المستأجر"],
+    "scope": ["scope of work", "services", "duties", "obligations", "deliverables", "نطاق العمل", "الخدمات", "الالتزامات", "الواجبات", "المخرجات"],
+    "payment": ["payment", "fees", "invoice", "compensation", "salary", "wage", "consideration", "الدفع", "الأتعاب", "الرسوم", "الفاتورة", "المستحقات", "الراتب", "التعويض", "المقابل المالي"],
+    "term": ["term", "duration", "effective date", "expiry date", "مدة العقد", "تاريخ السريان", "تاريخ الانتهاء", "مدة الاتفاقية"],
+    "termination": ["termination", "terminate", "expiration", "cancellation", "breach", "notice", "إنهاء", "انهاء", "فسخ", "انتهاء", "إلغاء", "الغاء", "مخالفة", "إشعار", "إخطار"],
+    "confidentiality": ["confidential", "non-disclosure", "proprietary", "السرية", "معلومات سرية", "عدم الإفصاح", "عدم الافصاح"],
+    "liability": ["liability", "indemn", "damages", "limitation of liability", "المسؤولية", "التعويض", "الأضرار", "الاضرار", "حدود المسؤولية"],
+    "intellectual_property": ["intellectual property", "ip rights", "ownership", "copyright", "source code", "الملكية الفكرية", "حقوق الملكية", "حقوق النشر", "البرمجيات", "الكود المصدري"],
+    "governing_law": ["governing law", "jurisdiction", "laws of", "القانون الحاكم", "الاختصاص", "المحكمة", "النزاع", "التحكيم"],
+    "dispute_resolution": ["dispute", "arbitration", "mediation", "escalation", "النزاع", "التحكيم", "الوساطة", "التصعيد", "تسوية النزاعات"],
+    "renewal": ["renewal", "auto-renew", "automatic renewal", "extension", "التجديد", "تمديد", "مدة العقد", "التجديد التلقائي"],
+    "force_majeure": ["force majeure", "act of god", "beyond control", "القوة القاهرة", "ظروف خارجة عن الإرادة"],
+    "data_protection": ["personal data", "privacy", "data protection", "البيانات الشخصية", "الخصوصية", "حماية البيانات"],
+    "non_compete": ["non-compete", "non compete", "non-solicit", "non solicitation", "restrictive covenant", "عدم المنافسة", "عدم الاستقطاب", "القيود التعاقدية"],
+    "acceptance": ["acceptance", "approval", "testing", "sign-off", "القبول", "الموافقة", "الاختبار", "الاعتماد"],
 }
 CRITICAL = ["termination", "payment", "confidentiality", "liability", "governing_law"]
+OCR_MIN_TEXT_CHARS = 80
+OCR_MAX_PAGES = 8
+
+CONTRACT_TYPE_PROFILES = {
+    "employment": {
+        "label": "Employment contract",
+        "terms": ["employee", "employer", "salary", "leave", "probation", "working hours", "الموظف", "صاحب العمل", "الراتب", "الإجازة", "اجازة", "فترة التجربة", "ساعات العمل"],
+        "required": ["parties", "scope", "payment", "term", "termination", "confidentiality", "governing_law"],
+    },
+    "lease": {
+        "label": "Lease / rental agreement",
+        "terms": ["landlord", "tenant", "rent", "premises", "deposit", "المؤجر", "المستأجر", "الإيجار", "العقار", "مبلغ التأمين"],
+        "required": ["parties", "payment", "term", "termination", "renewal", "governing_law", "dispute_resolution"],
+    },
+    "nda": {
+        "label": "NDA / confidentiality agreement",
+        "terms": ["confidential information", "disclosing party", "receiving party", "non-disclosure", "المعلومات السرية", "الإفصاح", "الطرف المتلقي", "عدم الإفصاح"],
+        "required": ["parties", "confidentiality", "term", "liability", "governing_law"],
+    },
+    "service": {
+        "label": "Service agreement",
+        "terms": ["services", "scope of work", "deliverables", "fees", "client", "contractor", "الخدمات", "نطاق العمل", "المخرجات", "الأتعاب"],
+        "required": ["parties", "scope", "payment", "term", "termination", "liability", "dispute_resolution"],
+    },
+    "software_engineering": {
+        "label": "Software / engineering agreement",
+        "terms": ["source code", "software", "deliverables", "acceptance testing", "support", "intellectual property", "الكود المصدري", "البرمجيات", "المخرجات", "اختبار القبول", "الدعم الفني", "الملكية الفكرية"],
+        "required": ["parties", "scope", "payment", "acceptance", "intellectual_property", "confidentiality", "liability", "termination"],
+    },
+    "sales_procurement": {
+        "label": "Sales / procurement agreement",
+        "terms": ["purchase", "goods", "supplier", "delivery", "invoice", "procurement", "الشراء", "المورد", "التوريد", "التسليم", "الفاتورة"],
+        "required": ["parties", "scope", "payment", "term", "liability", "dispute_resolution"],
+    },
+    "generic_commercial": {
+        "label": "Generic commercial contract",
+        "terms": [],
+        "required": ["parties", "scope", "payment", "termination", "confidentiality", "liability", "governing_law"],
+    },
+}
 
 
 TERM_PATTERNS = {
-    "Contract type": ["employment", "service agreement", "lease", "purchase", "subscription", "consulting"],
-    "Parties": ["between", "employer", "employee", "client", "contractor"],
-    "Role / scope": ["position", "role", "scope", "services", "duties"],
-    "Start date": ["commencement", "start date", "effective date", "begins"],
-    "Salary / payment": ["salary", "compensation", "payment", "fees", "invoice"],
-    "Working hours": ["working hours", "hours of work", "work hours"],
-    "Annual leave": ["annual leave", "vacation", "paid leave"],
-    "Probation": ["probation", "probationary"],
-    "Termination": ["termination", "terminate"],
-    "Confidentiality": ["confidential", "non-disclosure"],
-    "Intellectual property": ["intellectual property", "work product", "ownership"],
-    "Non-compete / non-solicitation": ["non-compete", "non compete", "non-solicitation", "non solicitation"],
-    "Governing law / dispute resolution": ["governing law", "jurisdiction", "dispute", "arbitration", "mediation"],
+    "Contract type": ["employment", "service agreement", "lease", "purchase", "subscription", "consulting", "عقد عمل", "عقد خدمات", "عقد إيجار", "اتفاقية"],
+    "Parties": ["between", "employer", "employee", "client", "contractor", "الأطراف", "الطرف الأول", "الطرف الثاني", "صاحب العمل", "الموظف"],
+    "Role / scope": ["position", "role", "scope", "services", "duties", "نطاق العمل", "الخدمات", "الواجبات", "المخرجات"],
+    "Start date": ["commencement", "start date", "effective date", "begins", "تاريخ السريان", "تاريخ البدء"],
+    "Salary / payment": ["salary", "compensation", "payment", "fees", "invoice", "الراتب", "الدفع", "الأتعاب", "الرسوم", "الفاتورة"],
+    "Working hours": ["working hours", "hours of work", "work hours", "ساعات العمل", "دوام"],
+    "Annual leave": ["annual leave", "vacation", "paid leave", "الإجازة", "اجازة", "إجازة سنوية"],
+    "Probation": ["probation", "probationary", "فترة التجربة"],
+    "Termination": ["termination", "terminate", "إنهاء", "انهاء", "فسخ"],
+    "Confidentiality": ["confidential", "non-disclosure", "السرية", "عدم الإفصاح"],
+    "Intellectual property": ["intellectual property", "work product", "ownership", "الملكية الفكرية", "الكود المصدري"],
+    "Non-compete / non-solicitation": ["non-compete", "non compete", "non-solicitation", "non solicitation", "عدم المنافسة", "عدم الاستقطاب"],
+    "Governing law / dispute resolution": ["governing law", "jurisdiction", "dispute", "arbitration", "mediation", "القانون الحاكم", "التحكيم", "المحكمة"],
 }
 
 DETAIL_REGEX = {
@@ -47,6 +97,66 @@ DETAIL_REGEX = {
 
 def _clean_snippet(value: str, max_len: int = 520) -> str:
     return " ".join((value or "").split())[:max_len]
+
+
+def normalize_contract_text(text: str) -> str:
+    text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def detect_contract_language(text: str) -> str:
+    arabic = len(re.findall(r"[\u0600-\u06FF]", text or ""))
+    latin = len(re.findall(r"[A-Za-z]", text or ""))
+    if arabic and latin and min(arabic, latin) / max(arabic, latin) > 0.15:
+        return "mixed"
+    return "ar" if arabic > latin else "en"
+
+
+def _normalized_for_matching(text: str) -> str:
+    text = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]", "", text or "")
+    text = text.translate(str.maketrans({"أ": "ا", "إ": "ا", "آ": "ا", "ٱ": "ا", "ى": "ي", "ؤ": "و", "ئ": "ي"}))
+    return text.lower()
+
+
+def detect_contract_type(text: str) -> dict[str, Any]:
+    normalized = _normalized_for_matching(text)
+    scores = {}
+    for key, profile in CONTRACT_TYPE_PROFILES.items():
+        if key == "generic_commercial":
+            continue
+        scores[key] = sum(2 if " " in term else 1 for term in profile["terms"] if _normalized_for_matching(term) in normalized)
+    if ("employee" in normalized and "employer" in normalized) or ("صاحب العمل" in normalized and "الموظف" in normalized):
+        scores["employment"] = scores.get("employment", 0) + 6
+    if ("landlord" in normalized and "tenant" in normalized) or ("المؤجر" in normalized and "المستاجر" in normalized):
+        scores["lease"] = scores.get("lease", 0) + 6
+    best = max(scores, key=scores.get, default="generic_commercial")
+    best_score = scores.get(best, 0)
+    if best_score <= 1:
+        best = "generic_commercial"
+    confidence = min(0.95, 0.35 + (best_score * 0.12)) if best != "generic_commercial" else 0.35
+    profile = CONTRACT_TYPE_PROFILES[best]
+    return {"contract_type": best, "contract_type_label": profile["label"], "contract_type_confidence": round(confidence, 2), "contract_type_reason": f"Detected using bilingual headings and repeated terms for {profile['label']}."}
+
+
+def parse_contract_sections(text: str) -> list[dict[str, Any]]:
+    text = normalize_contract_text(text)
+    heading_re = re.compile(r"(?m)^\s*((?:\d+[\).\-\s]+|Article\s+\d+[:\-\s]+|Clause\s+\d+[:\-\s]+|المادة\s+\S+[:\-\s]+|البند\s+\S+[:\-\s]+|[اأإآ]ولاً[:\-\s]+|ثانياً[:\-\s]+|ثالثاً[:\-\s]+)?[^\n]{3,90})\s*$")
+    matches = [m for m in heading_re.finditer(text) if len(m.group(1).split()) <= 12]
+    sections: list[dict[str, Any]] = []
+    if not matches:
+        for idx, para in enumerate([p for p in text.split("\n\n") if p.strip()]):
+            start = text.find(para)
+            sections.append({"section_title": f"Section {idx + 1}", "normalized_title": f"section {idx + 1}", "text": para.strip(), "start_char": start, "end_char": start + len(para), "language": detect_contract_language(para), "clause_candidates": []})
+        return sections[:80]
+    for idx, match in enumerate(matches):
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        chunk = text[start:end].strip()
+        title = _clean_snippet(match.group(1), 90)
+        sections.append({"section_title": title, "normalized_title": _normalized_for_matching(title), "text": chunk, "start_char": start, "end_char": end, "language": detect_contract_language(chunk), "clause_candidates": []})
+    return sections[:120]
 
 
 def _extract_matches(pattern: str, text: str, limit: int = 6) -> list[str]:
@@ -388,52 +498,114 @@ def _action_plan(decision: dict[str, Any], clauses: list[dict[str, Any]]) -> dic
             confirm.append(item)
     return {"must_fix_before_signing": must[:5], "should_clarify": should[:6], "good_to_confirm": confirm[:6], "optional_improvements": []}
 
-def extract_text(filename: str, content: bytes) -> str:
+def _ocr_language(preferred_language: str = "en") -> str:
+    return "ara+eng" if preferred_language == "ar" else "eng+ara"
+
+
+def _ocr_image(image, lang: str) -> str:
+    if not shutil.which("tesseract"):
+        raise RuntimeError("OCR is unavailable because Tesseract is not installed in the runtime.")
+    try:
+        import pytesseract
+        return pytesseract.image_to_string(image, lang=lang, timeout=30)
+    except Exception as exc:
+        raise RuntimeError(f"OCR could not read this page/image. Confirm Tesseract and language data are installed. Details: {exc}") from exc
+
+
+def extract_contract_text(filename: str, content: bytes, preferred_language: str = "en") -> dict[str, Any]:
     name = filename.lower()
+    warnings: list[str] = []
     if name.endswith(".txt"):
-        return content.decode("utf-8", errors="ignore")
+        return {"text": normalize_contract_text(content.decode("utf-8", errors="ignore")), "extraction_method": "text", "page_count": None, "ocr_language": None, "warnings": warnings}
     if name.endswith(".pdf"):
+        text = ""
+        page_count = 0
         try:
             import fitz
             with fitz.open(stream=content, filetype="pdf") as doc:
-                return "\n".join(page.get_text() for page in doc)
-        except Exception:
-            return ""
+                page_count = doc.page_count
+                text = "\n".join(page.get_text() for page in doc)
+                if len(normalize_contract_text(text)) >= OCR_MIN_TEXT_CHARS:
+                    return {"text": normalize_contract_text(text), "extraction_method": "text", "page_count": page_count, "ocr_language": None, "warnings": warnings}
+                lang = _ocr_language(preferred_language)
+                ocr_pages = []
+                for page_index, page in enumerate(doc):
+                    if page_index >= OCR_MAX_PAGES:
+                        warnings.append(f"OCR stopped after {OCR_MAX_PAGES} pages to protect runtime performance.")
+                        break
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+                    from PIL import Image
+                    image = Image.open(io.BytesIO(pix.tobytes("png")))
+                    ocr_pages.append(_ocr_image(image, lang))
+                return {"text": normalize_contract_text("\n".join(ocr_pages)), "extraction_method": "ocr" if ocr_pages else "text", "page_count": page_count, "ocr_language": lang, "warnings": warnings}
+        except RuntimeError as exc:
+            return {"text": normalize_contract_text(text), "extraction_method": "ocr_failed", "page_count": page_count or None, "ocr_language": _ocr_language(preferred_language), "warnings": [str(exc)]}
+        except Exception as exc:
+            return {"text": "", "extraction_method": "failed", "page_count": page_count or None, "ocr_language": None, "warnings": [f"PDF extraction failed: {exc}"]}
     if name.endswith(".docx"):
         try:
             from docx import Document
             document = Document(io.BytesIO(content))
-            return "\n".join(p.text for p in document.paragraphs)
-        except Exception:
-            return ""
-    return content.decode("utf-8", errors="ignore")
+            return {"text": normalize_contract_text("\n".join(p.text for p in document.paragraphs)), "extraction_method": "text", "page_count": None, "ocr_language": None, "warnings": warnings}
+        except Exception as exc:
+            return {"text": "", "extraction_method": "failed", "page_count": None, "ocr_language": None, "warnings": [f"DOCX extraction failed: {exc}"]}
+    if name.endswith((".png", ".jpg", ".jpeg")):
+        try:
+            from PIL import Image
+            lang = _ocr_language(preferred_language)
+            image = Image.open(io.BytesIO(content))
+            return {"text": normalize_contract_text(_ocr_image(image, lang)), "extraction_method": "ocr", "page_count": 1, "ocr_language": lang, "warnings": warnings}
+        except RuntimeError as exc:
+            return {"text": "", "extraction_method": "ocr_failed", "page_count": 1, "ocr_language": _ocr_language(preferred_language), "warnings": [str(exc)]}
+        except Exception as exc:
+            return {"text": "", "extraction_method": "failed", "page_count": 1, "ocr_language": None, "warnings": [f"Image OCR failed: {exc}"]}
+    return {"text": normalize_contract_text(content.decode("utf-8", errors="ignore")), "extraction_method": "text", "page_count": None, "ocr_language": None, "warnings": warnings}
+
+
+def extract_text(filename: str, content: bytes, preferred_language: str = "en") -> str:
+    return extract_contract_text(filename, content, preferred_language=preferred_language)["text"]
 
 
 def _evidence_for(text: str, terms: list[str]) -> list[dict[str, Any]]:
-    lower = text.lower()
+    lower = _normalized_for_matching(text)
     out = []
     for term in terms:
-        idx = lower.find(term)
+        needle = _normalized_for_matching(term)
+        idx = lower.find(needle)
         if idx >= 0:
             start, end = max(0, idx - 140), min(len(text), idx + 260)
-            out.append({"text": text[start:end].strip(), "keyword": term, "source": "rule-based match"})
+            section = next((s for s in parse_contract_sections(text) if s["start_char"] <= idx <= s["end_char"]), None)
+            out.append({"text": text[start:end].strip(), "keyword": term, "source": "rule-based match", "section_reference": section.get("section_title") if section else None, "start_char": start, "end_char": end, "score": 1.0})
             break
     return out
 
 
 def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[str, Any]:
+    text = normalize_contract_text(text)
+    language = detect_contract_language(text)
+    contract_type = detect_contract_type(text)
+    required = set(CONTRACT_TYPE_PROFILES[contract_type["contract_type"]]["required"])
     clauses = []
     for key, terms in CLAUSE_PATTERNS.items():
         evidence = _evidence_for(text, terms)
         evidence_text = evidence[0]["text"] if evidence else ""
         details = _details_from_evidence(key, evidence_text)
-        status = "found" if evidence and len(details) >= 2 else "partial" if evidence else "missing" if key in CRITICAL else "partial"
+        status = "found" if evidence and len(details) >= 2 else "partial" if evidence else "missing" if key in required or key in CRITICAL else "partial"
         human = _human_clause_fields(key, status, details, evidence, explanation_language)
         confidence = _confidence_label(status, details, evidence)
         clauses.append({
             "type": key,
+            "clause_type": key,
             "title": key.replace("_", " ").title(),
             "status": status,
+            "risk_level": "high" if status == "missing" and key in required else "medium" if status in {"missing", "partial"} else "low",
+            "summary": human["simple_explanation"],
+            "business_impact": human["why_it_matters"],
+            "evidence_quotes": [item.get("text") for item in evidence],
+            "section_reference": evidence[0].get("section_reference") if evidence else None,
+            "start_char": evidence[0].get("start_char") if evidence else None,
+            "end_char": evidence[0].get("end_char") if evidence else None,
+            "language": detect_contract_language(evidence_text) if evidence_text else language,
             "found": bool(evidence),
             "confidence": confidence,
             "evidence": evidence,
@@ -455,15 +627,23 @@ def _rule_based_analysis(text: str, explanation_language: str = "en") -> dict[st
             "rule_based_summary": "Precise evidence and key details were extracted from the contract text." if evidence else "No direct evidence was found in the extracted contract text.",
             **human,
         })
-    missing = [c for c in CRITICAL if not next(item for item in clauses if item["type"] == c)["found"]]
+    missing = [c for c in sorted(required | set(CRITICAL)) if not next(item for item in clauses if item["type"] == c)["found"]]
     found_count = sum(1 for c in clauses if c["found"])
     detail_bonus = sum(1 for c in clauses if c.get("extracted_details"))
-    score = max(15, min(100, int((found_count / len(CLAUSE_PATTERNS) * 82) + min(18, detail_bonus * 2)))) if text else 0
+    required_found = sum(1 for c in clauses if c["type"] in required and c["found"])
+    weak_penalty = sum(4 for c in clauses if c["type"] in required and c["status"] == "partial")
+    score = max(15, min(100, int((required_found / max(1, len(required)) * 70) + (found_count / len(CLAUSE_PATTERNS) * 20) + min(10, detail_bonus) - weak_penalty))) if text else 0
     risks = []
     for miss in missing:
         risks.append({"severity": "high" if miss in ["liability", "termination"] else "medium", "title": f"Missing {miss.replace('_',' ')} clause", "affected_clause": miss, "explanation": f"The extracted text does not show a clear {miss.replace('_',' ')} clause, so rights, obligations, or remedies may be uncertain.", "suggested_mitigation": f"Add deal-specific {miss.replace('_',' ')} language or confirm why it is not needed."})
     key_terms = _extract_key_terms(text, clauses)
-    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks}
+    score_dimensions = {
+        "required_clause_coverage": int(required_found / max(1, len(required)) * 100),
+        "detail_completeness": min(100, detail_bonus * 12),
+        "evidence_quality": int(found_count / max(1, len(CLAUSE_PATTERNS)) * 100),
+        "ambiguity_penalty": weak_penalty,
+    }
+    return {"clauses": clauses, "key_terms": key_terms, "missing_critical_clauses": missing, "health_score": score, "risk_level": "High" if score < 55 else "Medium" if score < 80 else "Low", "risks": risks, "contract_language": language, **contract_type, "score_dimensions": score_dimensions, "parsed_sections": parse_contract_sections(text)[:20]}
 
 
 def _fallback_ai_fields(rule_result: dict[str, Any], status: str, parse_failed: bool = False, error: str | None = None, explanation_language: str = "en") -> dict[str, Any]:
@@ -606,6 +786,13 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
         "schema_version": "hybrid-analysis-v1",
         "explanation_language": explanation_language,
         "ui_language": ui_language,
+        "contract_language": rule_result.get("contract_language"),
+        "contract_type": rule_result.get("contract_type"),
+        "contract_type_label": rule_result.get("contract_type_label"),
+        "contract_type_confidence": rule_result.get("contract_type_confidence"),
+        "contract_type_reason": rule_result.get("contract_type_reason"),
+        "score_dimensions": rule_result.get("score_dimensions", {}),
+        "parsed_sections": rule_result.get("parsed_sections", []),
         "review_decision": review_decision,
         "priority_action_plan": action_plan,
         "follow_up_questions": follow_up_questions,
@@ -639,7 +826,7 @@ def analyze_text(text: str, explanation_language: str = "en", ui_language: str =
 
 
 async def analyze_contract_record(db, contract: dict, explanation_language: str = "en", ui_language: str = "en"):
-    analysis = analyze_text(contract.get("extracted_text", ""), explanation_language=explanation_language, ui_language=ui_language)
+    analysis = await asyncio.to_thread(analyze_text, contract.get("extracted_text", ""), explanation_language, ui_language)
     doc = {"owner_user_id": contract["owner_user_id"], "contract_id": str(contract["_id"]), "analysis": analysis, "created_at": datetime.now(timezone.utc)}
     result = await db.analyses.insert_one(doc)
     doc["_id"] = result.inserted_id

@@ -28,12 +28,3 @@ python-dotenv==1.0.0
 pydantic
 email-validator==2.2.0
 typing-extensions
-
-## LangChain Dependencies (Ollama)
-langchain==0.3.24
-langchain-community==0.3.23
-langchain-core==0.3.60
-langchain-ollama==0.3.3
-langchain-openai==0.3.17
-langchain-text-splitters==0.3.8
-langsmith==0.3.30

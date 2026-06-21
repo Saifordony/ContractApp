@@ -102,3 +102,33 @@ These endpoints remain only for older callers and delegate to official services:
 - Confirm `http://localhost:8000/healthz` shows `Backend Build: fastapi-clean-rebuild-v1`.
 - If build markers do not update after edits, rebuild with `docker compose build --no-cache` and restart.
 - Do not edit `_archive/frontend-next-unused` for active UI work.
+
+## Local vs Docker Ollama setup
+
+Use `.env.local.example` when running the backend directly on your machine:
+
+```bash
+cp .env.local.example .env
+# OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Use `.env.docker.example` with Docker Compose when Ollama runs on the host:
+
+```bash
+cp .env.docker.example .env
+# OLLAMA_BASE_URL=http://host.docker.internal:11434
+```
+
+`docker-compose.yml` already uses the Docker-safe `host.docker.internal` default and declares the host gateway mapping.
+
+## Upload, OCR, and Arabic support
+
+Supported uploads are PDF, DOCX, TXT, PNG, JPG, and JPEG up to 20 MB. PDFs are text-extracted first; if little or no text is found, the backend attempts OCR for scanned pages with Tesseract using English + Arabic language packs. Missing OCR dependencies produce warnings/errors instead of silent failures.
+
+## AI engine pipeline
+
+The active engine normalizes extracted text, detects language, detects contract type, parses sections, extracts bilingual clauses, retrieves evidence, scores contract health by contract type, and optionally asks local Ollama to enrich the analysis. If Ollama is unavailable or returns malformed JSON, deterministic degraded-mode output is returned.
+
+## Benchmark limitation
+
+Benchmark results are **template alignment and contract completeness comparisons** using internal checklist profiles. They are **not live market data** and are not legal market benchmarks.

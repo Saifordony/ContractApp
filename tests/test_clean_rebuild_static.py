@@ -187,7 +187,7 @@ def test_analysis_and_benchmark_avoid_raw_main_outputs():
     assert "render_action_card" in src
     assert "normalize_benchmark_response" in src
     assert "render_benchmark_results" in src
-    assert "Illustrative benchmark comparison" in read("backend/services/benchmark_service.py")
+    assert "Internal checklist comparison, not market/legal market data." in read("backend/services/benchmark_service.py")
     assert 'st.write(data)' not in src
     assert 'st.dataframe(evidence_rows' not in src
     assert "Raw benchmark response for debugging only" in src

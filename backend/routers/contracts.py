@@ -43,6 +43,7 @@ async def analyze(contract_id: str, explanation_language: str = "en", ui_languag
         logger.info("analysis started user_id=%s contract_id=%s", user["id"], contract_id)
         result = await analyze_contract_record(db, contract, explanation_language=explanation_language, ui_language=ui_language)
         result["contract_id"] = contract_id
+        result["extraction_metadata"] = contract.get("extraction_metadata", {})
         logger.info("analysis completed user_id=%s contract_id=%s degraded_mode=%s llm_used=%s", user["id"], contract_id, result.get("degraded_mode"), result.get("llm_used"))
         return result
     except HTTPException as exc:

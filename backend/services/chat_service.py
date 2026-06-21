@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import asyncio
 import re
 from typing import Any
 
@@ -182,12 +183,8 @@ def _fallback_contract_answer(question: str, evidence: list[dict[str, Any]], ans
         practical = "Ask for clarification or have the missing point added to the contract if it matters to the deal."
     if language == "ar":
         if evidence:
-            if "leave" in concepts:
-                answer = "نعم، غالبًا يمكنك طلب إجازة 10 أيام من رصيد الإجازة السنوية إذا كان لديك رصيد كافٍ، لأن العقد يذكر استحقاق إجازة سنوية مدفوعة. لكن الموافقة ليست تلقائية؛ يجب تأكيد الرصيد والحصول على موافقة صاحب العمل حسب جدول الإجازات."
-                practical = "قدّم الطلب مبكرًا، وتأكد من رصيد الإجازات وسياسة الشركة قبل تثبيت خطط السفر."
-            else:
-                answer = f"يبدو أن العقد يتناول هذا السؤال. ببساطة، النص المرتبط يقول: {evidence[0]['text']}"
-                practical = "راجع النص المقتبس، وتأكد من أي شروط أو موافقات مطلوبة، واسأل صاحب العلاقة أو المستشار القانوني إذا كانت الصياغة غير واضحة."
+            answer = f"ينص العقد على النص التالي المتعلق بسؤالك: {evidence[0]['text']} لا أستطيع تأكيد حق أو موافقة غير مذكورة صراحة في هذا النص، لذلك اعتبر الإجابة مقيدة بما ورد في الدليل فقط."
+            practical = "راجع النص المقتبس، وتأكد من الشروط أو الموافقات أو الرصيد أو المواعيد غير الظاهرة في الدليل مع صاحب العلاقة أو المستشار القانوني."
             summary = "هذه إجابة مرتبطة بالعقد ومبنية على النص المستخرج."
         else:
             answer = "لم أجد دليلًا واضحًا في العقد يجيب عن هذا السؤال. النص المتاح لا يكفي لتأكيد هذه النقطة."
@@ -235,6 +232,6 @@ def answer_question(contract_text: str, question: str, analysis: dict | None = N
 
 async def chat_with_contract(db, owner_user_id: str, contract: dict, question: str, explanation_language: str = "en"):
     latest = await db.analyses.find_one({"contract_id": str(contract["_id"]), "owner_user_id": owner_user_id}, sort=[("created_at", -1)])
-    response = answer_question(contract.get("extracted_text", ""), question, (latest or {}).get("analysis"), explanation_language=explanation_language)
+    response = await asyncio.to_thread(answer_question, contract.get("extracted_text", ""), question, (latest or {}).get("analysis"), explanation_language)
     await db.chat_sessions.insert_one({"owner_user_id": owner_user_id, "contract_id": str(contract["_id"]), "question": question, "response": response, "created_at": datetime.now(timezone.utc)})
     return response

@@ -53,7 +53,7 @@ def llm_status():
 
 
 @router.post("/llm/test")
-def llm_test():
+def llm_test(user=Depends(get_current_user)):
     return test_llm_model()
 
 
