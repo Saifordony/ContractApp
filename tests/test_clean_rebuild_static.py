@@ -156,6 +156,11 @@ def test_chat_service_supports_conversational_contract_aware_schema():
         "practical_note",
         "follow_up_suggestions",
         "used_contract",
+        "normalize_arabic_query",
+        "ARABIC_CONTRACT_CONCEPTS",
+        "CONCEPT_SEARCH_TERMS",
+        "response_language",
+        "Do not classify Arabic contract questions as unrelated general",
         "You are a helpful contract intelligence assistant",
     ]:
         assert token in src

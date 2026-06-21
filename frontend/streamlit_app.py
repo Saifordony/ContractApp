@@ -145,6 +145,10 @@ def localized_label(en: str, ar: str) -> str:
     return ar if effective_explanation_language() == "ar" else en
 
 
+def localized_label_for(lang: str | None, en: str, ar: str) -> str:
+    return ar if lang == "ar" else en
+
+
 def localized_status(value: str) -> str:
     mapping = {"Healthy": "status.healthy", "Degraded": "status.degraded", "Offline": "status.offline"}
     return t(mapping.get(value, value), value)
@@ -191,8 +195,8 @@ def format_decision(value: Any, lang: str | None = None) -> str:
 def format_source(value: Any, lang: str | None = None) -> str:
     lang = lang or current_lang()
     key = safe_text(value, "").lower()
-    ar = {"extracted_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية"}
-    en = {"extracted_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison"}
+    ar = {"extracted_text":"نص العقد المستخرج", "extracted_contract_text":"نص العقد المستخرج", "rule_based":"مطابقة قائمة على القواعد", "hybrid":"ذكاء اصطناعي + قواعد", "degraded":"وضع احتياطي", "illustrative benchmark comparison":"مقارنة مرجعية توضيحية", "contract_specific":"إجابة مرتبطة بالعقد", "general_contract_concept":"شرح عام لمفهوم تعاقدي", "small_talk":"محادثة عامة", "app_help":"مساعدة في التطبيق", "unrelated_general":"إجابة عامة"}
+    en = {"extracted_text":"Extracted contract text", "extracted_contract_text":"Extracted contract text", "rule_based":"Rule-based match", "hybrid":"Hybrid AI + rule-based", "degraded":"Rule-based fallback", "illustrative benchmark comparison":"Illustrative benchmark comparison", "contract_specific":"Contract-specific answer", "general_contract_concept":"General contract concept", "small_talk":"Small talk", "app_help":"App help", "unrelated_general":"General answer"}
     return (ar if lang == "ar" else en).get(key, safe_text(value, "غير محدد" if lang == "ar" else "Not specified"))
 
 
@@ -644,30 +648,38 @@ def render_evidence(evidence: list[dict[str, Any]]) -> None:
         st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">{safe_html(evidence_label)} {idx} · {safe_html(source_label)}: {safe_html(format_source(source))} · {safe_html(location_label)}: <span class="technical-value">{safe_html(location)}</span> · {safe_html(keyword_label)}: <span class="technical-value">{safe_html(keyword)}</span> · {safe_html(confidence_label)}: {safe_html(confidence)}</div><blockquote>{safe_html(item.get("text"), "No direct evidence captured for this clause.")}</blockquote></div>', unsafe_allow_html=True)
 
 
-def render_chat_evidence(evidence: list[dict[str, Any]]) -> None:
+def render_chat_evidence(evidence: list[dict[str, Any]], lang: str | None = None) -> None:
+    lang = lang or effective_explanation_language()
     if not evidence:
-        st.caption("No contract evidence was used for this answer.")
+        st.caption(localized_label_for(lang, "No contract evidence was used for this answer.", "لم يتم استخدام دليل من العقد لهذه الإجابة."))
         return
     for idx, item in enumerate(evidence, start=1):
         clause = item.get("clause") or "Relevant contract text"
         source = item.get("source") or "extracted_contract_text"
         location = item.get("location") or "Extracted contract text"
         text = item.get("text") or "No direct evidence captured."
-        card_label = localized_label("Card", "بطاقة")
-        clause_label = localized_label("Clause", "البند")
-        source_label = localized_label("Source", "المصدر")
-        location_label = localized_label("Location", "الموقع")
-        why_text = localized_label("Why it matters: this is the contract text used to support the answer.", "سبب الأهمية: هذا هو نص العقد المستخدم لدعم الإجابة.")
-        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">{safe_html(card_label)} {idx} · {safe_html(clause_label)}: {safe_html(format_clause_type(clause))} · {safe_html(source_label)}: {safe_html(format_source(source))} · {safe_html(location_label)}: <span class="technical-value">{safe_html(location)}</span></div><blockquote>{safe_html(text)}</blockquote><div class="cip-muted">{safe_html(why_text)}</div></div>', unsafe_allow_html=True)
+        card_label = localized_label_for(lang, "Card", "بطاقة")
+        clause_label = localized_label_for(lang, "Clause", "البند")
+        source_label = localized_label_for(lang, "Source", "المصدر")
+        location_label = localized_label_for(lang, "Location", "الموقع")
+        why_text = localized_label_for(lang, "Why it matters: this is the contract text used to support the answer.", "سبب الأهمية: هذا هو نص العقد المستخدم لدعم الإجابة.")
+        st.markdown(f'<div class="cip-evidence"><div class="cip-evidence-meta">{safe_html(card_label)} {idx} · {safe_html(clause_label)}: {safe_html(format_clause_type(clause, lang))} · {safe_html(source_label)}: {safe_html(format_source(source, lang))} · {safe_html(location_label)}: <span class="technical-value">{safe_html(location)}</span></div><blockquote>{safe_html(text)}</blockquote><div class="cip-muted">{safe_html(why_text)}</div></div>', unsafe_allow_html=True)
 
 
-def confidence_human(confidence: Any, label: str | None = None) -> str:
+def confidence_human(confidence: Any, label: str | None = None, lang: str | None = None) -> str:
+    lang = lang or effective_explanation_language()
     if label:
         return label
     try:
         value = float(confidence)
     except (TypeError, ValueError):
-        return "Medium — this answer should be confirmed against the contract."
+        return "الثقة: متوسطة — يجب تأكيد الإجابة بالرجوع إلى العقد." if lang == "ar" else "Medium — this answer should be confirmed against the contract."
+    if lang == "ar":
+        if value >= 0.8:
+            return "الثقة: عالية — العقد يذكر هذه النقطة بوضوح."
+        if value >= 0.5:
+            return "الثقة: متوسطة — العقد يجيب جزئيًا، لكن بعض التفاصيل تحتاج إلى تأكيد."
+        return "الثقة: منخفضة — العقد لا يجيب عن هذه النقطة بوضوح."
     if value >= 0.8:
         return "High — the contract clearly mentions this."
     if value >= 0.5:
@@ -676,17 +688,18 @@ def confidence_human(confidence: Any, label: str | None = None) -> str:
 
 
 def render_assistant_message(message: dict[str, Any]) -> None:
-    assistant_label = localized_label("Contract Assistant", "مساعد العقود")
-    summary_label = localized_label("Simple summary", "ملخص مبسط")
-    note_label = localized_label("Practical note", "ملاحظة عملية")
-    used_contract_label = localized_label("Used contract", "استخدم العقد")
-    llm_label = localized_label("LLM used", "استخدم نموذج الذكاء الاصطناعي")
-    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">{safe_html(assistant_label)} · {safe_html(format_source(message.get("answer_type")))}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>{safe_html(summary_label)}:</strong> {safe_html(message.get("plain_english_summary"), "")}</p><p><strong>{safe_html(note_label)}:</strong> {safe_html(message.get("practical_note"), "")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label")))}</span><span>{safe_html(used_contract_label)}: {safe_html(format_bool(message.get("used_contract")))}</span><span>{safe_html(llm_label)}: {safe_html(format_bool(message.get("llm_used")))}</span></div></div>', unsafe_allow_html=True)
-    with st.expander(localized_label("Evidence used", "الأدلة المستخدمة"), expanded=False):
-        render_chat_evidence(message.get("evidence") or [])
+    lang = message.get("response_language") or message.get("explanation_language") or effective_explanation_language()
+    assistant_label = localized_label_for(lang, "Contract Assistant", "مساعد العقود")
+    summary_label = localized_label_for(lang, "Simple summary", "ملخص مبسط")
+    note_label = localized_label_for(lang, "Practical note", "ملاحظة عملية")
+    used_contract_label = localized_label_for(lang, "Used contract", "تم استخدام العقد")
+    llm_label = localized_label_for(lang, "LLM used", "تم استخدام الذكاء الاصطناعي")
+    st.markdown(f'<div class="cip-assistant-bubble"><div class="cip-eyebrow">{safe_html(assistant_label)} · {safe_html(format_source(message.get("answer_type"), lang))}</div><p>{safe_html(message.get("content"), "")}</p><p><strong>{safe_html(summary_label)}:</strong> {safe_html(message.get("plain_english_summary"), "")}</p><p><strong>{safe_html(note_label)}:</strong> {safe_html(message.get("practical_note"), "")}</p><div class="cip-card-meta"><span>{safe_html(confidence_human(message.get("confidence"), message.get("confidence_label"), lang))}</span><span>{safe_html(used_contract_label)}: {safe_html(format_bool(message.get("used_contract"), lang))}</span><span>{safe_html(llm_label)}: {safe_html(format_bool(message.get("llm_used"), lang))}</span></div></div>', unsafe_allow_html=True)
+    with st.expander(localized_label_for(lang, "Evidence used", "الأدلة المستخدمة"), expanded=False):
+        render_chat_evidence(message.get("evidence") or [], lang)
     suggestions = message.get("follow_up_suggestions") or []
     if suggestions:
-        st.markdown(f"**{localized_label('Suggested follow-ups', 'أسئلة متابعة مقترحة')}**")
+        st.markdown(f"**{localized_label_for(lang, 'Suggested follow-ups', 'أسئلة متابعة مقترحة')}**")
         st.markdown(" ".join(f'<span class="cip-suggestion-chip">{safe_html(item)}</span>' for item in suggestions[:4]), unsafe_allow_html=True)
 
 
@@ -1267,6 +1280,8 @@ def chat_page():
                 follow_up_suggestions=data.get("follow_up_suggestions") or [],
                 degraded_mode=data.get("degraded_mode"),
                 llm_used=data.get("llm_used"),
+                response_language=data.get("response_language"),
+                explanation_language=data.get("explanation_language"),
                 raw=data,
             )
             st.rerun()
