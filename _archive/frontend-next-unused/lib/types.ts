@@ -30,6 +30,10 @@ export interface LoginResponse {
   token_type: string;
 }
 
+export interface RegisterResponse {
+  message: string;
+}
+
 export interface ChatEvidence {
   quote: string;
   clause_name?: string;

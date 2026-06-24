@@ -1,600 +1,85 @@
-from __future__ import annotations
+from datetime import datetime, timezone
+from backend.services.analysis_service import CLAUSE_PATTERNS, CONTRACT_TYPE_PROFILES
 
-import hashlib
-import io
-import json
-import math
-import os
-import re
-import statistics
-import zipfile
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from xml.etree import ElementTree
-
-import fitz
-from pydantic import BaseModel, Field, ValidationError
-
-
-
-CLAUSE_WEIGHTS: Dict[str, float] = {
-    "payment_terms": 1.2,
-    "termination": 1.1,
-    "liability": 1.2,
-    "confidentiality": 1.0,
-    "governing_law": 0.8,
-    "dispute_resolution": 0.8,
-    "renewal": 0.7,
-    "change_control": 0.6,
-    "sla_obligations": 0.9,
-    "misc": 0.4,
+BENCHMARK_EXPECTATIONS = {
+    "termination": "Clear termination rights, notice periods, cure periods, and survival obligations.",
+    "payment": "Specific payment amounts, timing, invoicing process, late-payment handling, and dispute process.",
+    "confidentiality": "Clear confidential information definition, exclusions, permitted disclosure, duration, and return/destruction duties.",
+    "intellectual_property": "Explicit ownership, licenses, pre-existing IP carve-outs, and work product treatment.",
+    "dispute_resolution": "Escalation path, forum, procedure, governing venue, and interim relief rights.",
+    "liability": "Balanced liability cap, excluded damages, indemnity scope, and important exceptions.",
+    "renewal": "Renewal term, notice window, pricing changes, and opt-out process.",
+    "governing_law": "Clear governing law and venue aligned with the parties' operating needs.",
 }
-
-BENCHMARK_STORE_PATH = os.getenv("BENCHMARK_STORE_PATH", "").strip()
-
-
-class BenchmarkCitation(BaseModel):
-    benchmark_clause_id: str
-    snippet_used: str
+BENCHMARK_LIMITATION = "Internal template alignment comparison, not live market/legal market data."
+LEGACY_BENCHMARK_WORDING = "Internal checklist comparison, not market/legal market data."
 
 
-class ClauseBenchmarkResult(BaseModel):
-    clause_id: str
-    clause_type: str
-    clause_score: int = Field(ge=0, le=100)
-    alignment_label: str
-    benchmark_stats: Dict[str, Any]
-    typical_patterns: List[str]
-    explanation: str
-    suggested_revision: Optional[str] = None
-    confidence: float = Field(ge=0.0, le=1.0)
-    citations: List[BenchmarkCitation]
+def _status_for(found: bool, clause_type: str) -> str:
+    if not found:
+        return "Missing"
+    if clause_type in {"termination", "payment", "confidentiality", "liability", "governing_law"}:
+        return "Moderate alignment"
+    return "Strong alignment"
 
 
-class BenchmarkAnalyzeResponse(BaseModel):
-    contract_id: str
-    overall_score: int = Field(ge=0, le=100)
-    clause_results: List[ClauseBenchmarkResult]
-    meta: Dict[str, Any]
-
-
-@dataclass
-class BenchmarkClause:
-    benchmark_clause_id: str
-    contract_type: str
-    jurisdiction: str
-    industry: Optional[str]
-    clause_type: str
-    snippet: str
-    embedding: List[float]
-    numeric_features: Dict[str, float]
-    source: str = "seed"
-
-
-@dataclass
-class UserClause:
-    clause_id: str
-    clause_type: str
-    text: str
-    location: str
-    embedding: List[float]
-    numeric_features: Dict[str, float]
-
-
-class InMemoryVectorStore:
-    def __init__(self, store_path: str = ""):
-        self._clauses: List[BenchmarkClause] = []
-        self._store_path = store_path
-        if self._store_path:
-            self._load()
-
-    def _load(self) -> None:
-        path = Path(self._store_path)
-        if not path.exists():
-            return
-        try:
-            items = json.loads(path.read_text())
-            self._clauses = [BenchmarkClause(**item) for item in items if isinstance(item, dict)]
-        except Exception:
-            self._clauses = []
-
-    def _persist(self) -> None:
-        if not self._store_path:
-            return
-        path = Path(self._store_path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps([asdict(c) for c in self._clauses]))
-
-    def clear(self) -> None:
-        self._clauses.clear()
-        self._persist()
-
-    def add(self, clause: BenchmarkClause) -> None:
-        self._clauses.append(clause)
-        self._persist()
-
-    def all(self) -> List[BenchmarkClause]:
-        return list(self._clauses)
-
-    def search(
-        self,
-        query_embedding: List[float],
-        top_k: int,
-        filters: Dict[str, Any],
-    ) -> List[Tuple[float, BenchmarkClause]]:
-        candidates = self._clauses
-        for key, value in filters.items():
-            if value is None:
-                continue
-            candidates = [c for c in candidates if getattr(c, key) == value]
-
-        scored: List[Tuple[float, BenchmarkClause]] = []
-        for clause in candidates:
-            score = cosine_similarity(query_embedding, clause.embedding)
-            scored.append((score, clause))
-
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return scored[:top_k]
-
-
-GLOBAL_VECTOR_STORE = InMemoryVectorStore(BENCHMARK_STORE_PATH)
-
-
-def cosine_similarity(a: List[float], b: List[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        return 0.0
-    num = sum(x * y for x, y in zip(a, b))
-    den_a = math.sqrt(sum(x * x for x in a))
-    den_b = math.sqrt(sum(y * y for y in b))
-    if den_a == 0 or den_b == 0:
-        return 0.0
-    return num / (den_a * den_b)
-
-
-def embed_text(text: str) -> List[float]:
-    # deterministic local embedding for tests / offline environments
-    dim = 128
-    vec = [0.0] * dim
-    tokens = re.findall(r"[a-zA-Z0-9_\-']+", (text or "").lower())
-    if not tokens:
-        return vec
-
-    for tok in tokens:
-        idx = int(hashlib.sha256(tok.encode()).hexdigest(), 16) % dim
-        vec[idx] += 1.0
-
-    norm = math.sqrt(sum(v * v for v in vec))
-    if norm > 0:
-        vec = [v / norm for v in vec]
-    return vec
-
-
-def parse_contract_file(filename: str, data: bytes) -> str:
-    name = (filename or "").lower()
-    if name.endswith(".pdf"):
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            return "\n".join(page.get_text() for page in doc).strip()
-
-    if name.endswith(".docx"):
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            xml_data = zf.read("word/document.xml")
-        root = ElementTree.fromstring(xml_data)
-        ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-        texts = [node.text for node in root.findall(".//w:t", ns) if node.text]
-        return "\n".join(texts).strip()
-
-    # treat as plain text fallback
-    return data.decode("utf-8", errors="ignore").strip()
-
-
-def split_clauses(contract_text: str) -> List[Tuple[str, str, str]]:
-    lines = [ln.strip() for ln in contract_text.splitlines() if ln.strip()]
-    if not lines:
-        return []
-
-    clauses: List[Tuple[str, str, str]] = []
-    current_title = "preamble"
-    current_body: List[str] = []
-    start_idx = 0
-
-    heading_pattern = re.compile(
-        r"^(\d+(?:\.\d+)*[\)\.]?\s+)?([A-Z][A-Za-z\s/&-]{2,}|[A-Z\s]{4,})$"
-    )
-
-    for idx, line in enumerate(lines):
-        is_heading = bool(heading_pattern.match(line)) and len(line.split()) <= 10
-        if is_heading and current_body:
-            text = " ".join(current_body).strip()
-            if text:
-                clauses.append((current_title, text, f"line:{start_idx}-{idx}"))
-            current_title = line.lower()
-            current_body = []
-            start_idx = idx
-        elif is_heading and not current_body:
-            current_title = line.lower()
-            start_idx = idx
+def benchmark_analysis(analysis: dict, explanation_language: str = "en"):
+    ar = explanation_language == "ar"
+    clauses = analysis.get("clauses", []) if analysis else []
+    found = {c.get("type"): bool(c.get("found") or c.get("status") == "found") for c in clauses}
+    comparisons = []
+    aligned = partial = missing = 0
+    for key in CLAUSE_PATTERNS:
+        status = _status_for(bool(found.get(key)), key)
+        if status == "Strong alignment":
+            aligned += 1
+        elif status == "Moderate alignment":
+            partial += 1
         else:
-            current_body.append(line)
-
-    if current_body:
-        text = " ".join(current_body).strip()
-        if text:
-            clauses.append((current_title, text, f"line:{start_idx}-{len(lines)}"))
-
-    if len(clauses) >= 2:
-        return clauses
-
-    # fallback: paragraph-level splitting for contracts without clear headings
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", contract_text) if p.strip()]
-    para_clauses: List[Tuple[str, str, str]] = []
-    for idx, para in enumerate(paragraphs, start=1):
-        if len(para) < 40:
-            continue
-        heading = para.split(".", 1)[0][:60].strip().lower() or f"clause_{idx}"
-        para_clauses.append((heading, para, f"paragraph:{idx}"))
-
-    if len(para_clauses) >= 3:
-        return para_clauses
-
-    # fallback: sentence windows so the full contract is still compared clause-by-clause
-    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", contract_text) if len(s.strip()) > 25]
-    windowed: List[Tuple[str, str, str]] = []
-    for idx in range(0, len(sentences), 2):
-        chunk = " ".join(sentences[idx : idx + 2]).strip()
-        if chunk:
-            windowed.append((f"segment_{idx // 2 + 1}", chunk, f"sentence:{idx+1}-{min(idx+2, len(sentences))}"))
-
-    return windowed if windowed else clauses
-
-
-def classify_clause_type(title: str, text: str) -> str:
-    combined = f"{title} {text}".lower()
-    mapping = {
-        "payment_terms": ["payment", "invoice", "fee", "compensation"],
-        "termination": ["termination", "terminate", "end this agreement"],
-        "liability": ["liability", "damages", "indemn"],
-        "confidentiality": ["confidential", "non-disclosure"],
-        "governing_law": ["governing law", "jurisdiction", "applicable law"],
-        "dispute_resolution": ["dispute", "arbitration", "mediation"],
-        "renewal": ["renewal", "auto-renew", "automatic renewal"],
-        "change_control": ["change control", "change order", "amendment"],
-        "sla_obligations": ["service level", "sla", "uptime", "obligation", "deliverable"],
-    }
-    for label, patterns in mapping.items():
-        if any(pat in combined for pat in patterns):
-            return label
-    return "misc"
-
-
-def extract_numeric_features(text: str) -> Dict[str, float]:
-    lower = text.lower()
-    out: Dict[str, float] = {}
-
-    day_match = re.search(r"(\d{1,3})\s*day", lower)
-    if day_match:
-        out["notice_days"] = float(day_match.group(1))
-
-    pay_match = re.search(r"(\d{1,3})\s*days?\s*of\s*invoice", lower)
-    if pay_match:
-        out["payment_days"] = float(pay_match.group(1))
-
-    cap_match = re.search(r"(\d+(?:\.\d+)?)\s*%", lower)
-    if cap_match:
-        out["liability_cap_percent"] = float(cap_match.group(1))
-
-    return out
-
-
-def _compute_percentiles(values: List[float]) -> Dict[str, float]:
-    if not values:
-        return {"p25": 0.0, "median": 0.0, "p75": 0.0}
-    vals = sorted(values)
-    median = statistics.median(vals)
-    p25 = vals[max(0, int(0.25 * (len(vals) - 1)))]
-    p75 = vals[min(len(vals) - 1, int(0.75 * (len(vals) - 1)))]
-    return {"p25": float(p25), "median": float(median), "p75": float(p75)}
-
-
-def _score_clause_alignment(
-    clause_type: str,
-    similarity_scores: List[float],
-    numeric_features: Dict[str, float],
-    benchmark_numeric_values: Dict[str, List[float]],
-) -> Tuple[int, str]:
-    sim_component = int(100 * (sum(similarity_scores) / max(len(similarity_scores), 1)))
-
-    numeric_component = 100
-    penalties = 0
-    for key, vals in benchmark_numeric_values.items():
-        if not vals or key not in numeric_features:
-            continue
-        med = statistics.median(vals)
-        user_val = numeric_features[key]
-        if med == 0:
-            continue
-        deviation = abs(user_val - med) / abs(med)
-        if deviation > 0.75:
-            penalties += 35
-        elif deviation > 0.4:
-            penalties += 20
-        elif deviation > 0.2:
-            penalties += 8
-
-    numeric_component = max(0, numeric_component - penalties)
-    weight = CLAUSE_WEIGHTS.get(clause_type, 0.6)
-    final_score = int((sim_component * 0.65 + numeric_component * 0.35) * weight)
-    final_score = max(0, min(100, final_score))
-
-    if final_score >= 70:
-        label = "green"
-    elif final_score >= 45:
-        label = "yellow"
-    else:
-        label = "red"
-
-    return final_score, label
-
-
-def _summarize_typical_patterns(retrieved: List[Tuple[float, BenchmarkClause]]) -> List[str]:
-    snippets = [clause.snippet for _, clause in retrieved[:2]]
-    patterns = []
-    for snip in snippets:
-        sentence = re.split(r"(?<=[\.!?])\s+", snip.strip())[0]
-        if sentence and sentence not in patterns:
-            patterns.append(sentence[:120])
-    return patterns[:2]
-
-
-def _generate_explanation(
-    clause_type: str,
-    score: int,
-    label: str,
-    benchmark_stats: Dict[str, Any],
-    evidence_ids: List[str],
-) -> str:
-    ids = ", ".join(evidence_ids[:2]) if evidence_ids else "none"
-    return f"{clause_type}: {score}/100 ({label}), peers={benchmark_stats.get('N', 0)}, refs={ids}."
-
-
-def _build_user_clauses(contract_text: str) -> List[UserClause]:
-    raw_clauses = split_clauses(contract_text)
-    clauses: List[UserClause] = []
-    for idx, (title, text, location) in enumerate(raw_clauses, start=1):
-        clause_type = classify_clause_type(title, text)
-        clauses.append(
-            UserClause(
-                clause_id=f"user-clause-{idx}",
-                clause_type=clause_type,
-                text=text,
-                location=location,
-                embedding=embed_text(text),
-                numeric_features=extract_numeric_features(text),
-            )
-        )
-    return clauses
-
-
-def _retrieve_with_fallbacks(
-    store: InMemoryVectorStore,
-    user_clause: UserClause,
-    contract_type: str,
-    jurisdiction: str,
-    industry: Optional[str],
-    top_k: int = 6,
-) -> Tuple[List[Tuple[float, BenchmarkClause]], List[str]]:
-    fallbacks: List[str] = []
-    filters = {
-        "contract_type": contract_type,
-        "jurisdiction": jurisdiction,
-        "industry": industry,
-        "clause_type": user_clause.clause_type,
+            missing += 1
+        label = key.replace("_", " ").title()
+        comparisons.append({
+            "clause": label,
+            "your_contract_status": status,
+            "benchmark_expectation": BENCHMARK_EXPECTATIONS.get(key, "Clear, specific, balanced drafting."),
+            "gap_assessment": ("البند موجود، لكن يجب مراجعته للتأكد من اكتماله مقارنة بالملف المرجعي التوضيحي." if found.get(key) else "لم يتم اكتشاف هذا البند، لذلك توجد فجوة واضحة مقارنة بالمرجع التوضيحي.") if ar else ("The clause is present but should be reviewed for completeness against the illustrative profile." if found.get(key) else "The clause was not detected, so this is a clear gap against the illustrative benchmark profile."),
+            "plain_english_explanation": f"تتحقق هذه المقارنة مما إذا كان العقد يحتوي على بنية عملية لبند {label} وتفاصيل كافية ليستند إليها المراجع." if ar else f"This comparison checks whether the contract has a practical {label} structure and enough detail for a reviewer to rely on.",
+            "improvement_suggestion": (f"قوِّ بند {label} بنطاق وإجراءات وتوقيت ومسؤوليات واستثناءات واضحة." if found.get(key) else f"أضف بند {label} إذا كان مناسبًا لهذه الصفقة.") if ar else (f"Strengthen the {label} clause with clear scope, process, timing, responsibilities, and exceptions." if found.get(key) else f"Add a {label} clause if it is relevant to the transaction."),
+        })
+    total = max(1, len(comparisons))
+    score = int(((aligned * 1.0) + (partial * 0.6)) / total * 100)
+    contract_type = (analysis or {}).get("contract_type", "generic_commercial")
+    profile = CONTRACT_TYPE_PROFILES.get(contract_type, CONTRACT_TYPE_PROFILES["generic_commercial"])
+    return {
+        "benchmark_mode": "Template alignment and contract completeness comparison",
+        "limitations": BENCHMARK_LIMITATION,
+        "benchmark_limitation": BENCHMARK_LIMITATION,
+        "profile_used": profile["label"],
+        "benchmark_profiles": ["Employment", "Lease", "NDA", "Service agreement", "Software / engineering", "Generic commercial"],
+        "overall_score": score,
+        "alignment_score": score,
+        "required_clause_coverage": score,
+        "recommended_clause_coverage": score,
+        "aligned_clauses": aligned,
+        "partially_aligned_clauses": partial,
+        "missing_or_weak_clauses": missing,
+        "market_position": "Strong alignment" if score >= 80 else "Moderate alignment" if score >= 55 else "Needs strengthening",
+        "narrative_summary": "هذه مقارنة داخلية لقائمة تحقق وليست بيانات سوق أو بيانات قانونية مباشرة. وتوضح أين يبدو العقد متوافقًا أو جزئيًا أو ناقصًا مقارنة بهيكل مرجعي مناسب لنوع العقد." if ar else "This is an internal checklist comparison, not market/legal market data. It highlights where the selected contract appears aligned, partial, or missing against a template profile for the detected contract type.",
+        "clause_alignment": comparisons,
+        "missing_protections": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing"],
+        "missing_required_clauses": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing"],
+        "missing_recommended_clauses": [item["clause"] for item in comparisons if item["your_contract_status"] == "Partial"],
+        "high_risk_gaps": [item["clause"] for item in comparisons if item["your_contract_status"] == "Missing" and item["clause"].lower() in {"termination", "liability", "governing law"}],
+        "suggested_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative benchmark comparison"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
+        "recommended_improvements": [{"action": item["improvement_suggestion"], "rationale": item["gap_assessment"], "related_clause": item["clause"], "priority": "High" if item["your_contract_status"] == "Missing" else "Medium", "source": "illustrative template alignment"} for item in comparisons if item["your_contract_status"] != "Strong alignment"],
+        "evidence": [],
+        "evidence_or_rule_basis": "ملفات مرجعية توضيحية مبنية على توقعات بنية العقود الشائعة؛ وليست بيانات سوق خارجية." if ar else "Synthetic illustrative profiles based on common contract structure expectations; not external market data.",
+        "explanation_language": explanation_language,
+        "degraded_mode": False,
     }
 
-    retrieved = store.search(user_clause.embedding, top_k, filters)
-    if len(retrieved) >= 3:
-        return retrieved, fallbacks
 
-    # Relax industry
-    if filters.get("industry") is not None:
-        filters["industry"] = None
-        fallbacks.append("relaxed_industry")
-        retrieved = store.search(user_clause.embedding, top_k, filters)
-        if len(retrieved) >= 3:
-            return retrieved, fallbacks
-
-    # Relax jurisdiction
-    filters["jurisdiction"] = None
-    fallbacks.append("relaxed_jurisdiction")
-    retrieved = store.search(user_clause.embedding, top_k, filters)
-    if len(retrieved) >= 3:
-        return retrieved, fallbacks
-
-    # Relax contract_type
-    filters["contract_type"] = None
-    fallbacks.append("relaxed_contract_type")
-    retrieved = store.search(user_clause.embedding, top_k, filters)
-    if len(retrieved) >= 2:
-        return retrieved, fallbacks
-
-    # Last resort: relax clause type
-    filters["clause_type"] = None
-    fallbacks.append("relaxed_clause_type")
-    retrieved = store.search(user_clause.embedding, top_k, filters)
-    return retrieved, fallbacks
-
-
-def ingest_seed_dataset(seed_items: List[Dict[str, Any]], clear_first: bool = False) -> Dict[str, Any]:
-    if clear_first:
-        GLOBAL_VECTOR_STORE.clear()
-
-    ingested = 0
-    for item in seed_items:
-        snippet = item.get("snippet", "").strip()
-        if not snippet:
-            continue
-        clause = BenchmarkClause(
-            benchmark_clause_id=str(item.get("benchmark_clause_id", f"seed-{ingested+1}")),
-            contract_type=str(item.get("contract_type", "general")),
-            jurisdiction=str(item.get("jurisdiction", "global")),
-            industry=item.get("industry"),
-            clause_type=str(item.get("clause_type", "misc")),
-            snippet=snippet,
-            embedding=embed_text(snippet),
-            numeric_features=item.get("numeric_features", {}) or extract_numeric_features(snippet),
-            source=str(item.get("source", "seed")),
-        )
-        GLOBAL_VECTOR_STORE.add(clause)
-        ingested += 1
-
-    return {"ingested": ingested, "total": len(GLOBAL_VECTOR_STORE.all())}
-
-
-def load_seed_from_repo() -> Dict[str, Any]:
-    seed_path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "benchmark_seed.json"
-    if not seed_path.exists():
-        return {"ingested": 0, "total": len(GLOBAL_VECTOR_STORE.all()), "source": "missing_seed_file"}
-    items = json.loads(seed_path.read_text())
-    result = ingest_seed_dataset(items, clear_first=False)
-    result["source"] = str(seed_path)
+async def benchmark_contract(db, owner_user_id: str, contract: dict, analysis: dict | None, explanation_language: str = "en"):
+    result = benchmark_analysis(analysis or contract.get("analysis_summary") or {}, explanation_language=explanation_language)
+    await db.benchmarks.insert_one({"owner_user_id": owner_user_id, "contract_id": str(contract["_id"]), "result": result, "created_at": datetime.now(timezone.utc)})
     return result
-
-
-def run_benchmark_analysis(
-    filename: str,
-    file_bytes: bytes,
-    contract_type: str,
-    jurisdiction: str,
-    industry: Optional[str],
-    opt_in_store_user_data: bool,
-) -> Dict[str, Any]:
-    contract_text = parse_contract_file(filename, file_bytes)
-    if not contract_text.strip():
-        raise ValueError("Could not extract contract text from uploaded file")
-
-    # Auto-seed if store empty.
-    if not GLOBAL_VECTOR_STORE.all():
-        load_seed_from_repo()
-
-    user_clauses = _build_user_clauses(contract_text)
-    clause_results: List[Dict[str, Any]] = []
-    clause_scores: List[Tuple[int, str]] = []
-    peer_sizes: Dict[str, int] = {}
-    all_fallbacks: List[str] = []
-
-    for clause in user_clauses:
-        retrieved, fallbacks = _retrieve_with_fallbacks(
-            GLOBAL_VECTOR_STORE,
-            clause,
-            contract_type=contract_type,
-            jurisdiction=jurisdiction,
-            industry=industry,
-        )
-        all_fallbacks.extend(fallbacks)
-
-        scores = [score for score, _ in retrieved]
-        peer_sizes[clause.clause_type] = max(peer_sizes.get(clause.clause_type, 0), len(retrieved))
-
-        numeric_pool: Dict[str, List[float]] = {}
-        for _, bench in retrieved:
-            for key, val in bench.numeric_features.items():
-                numeric_pool.setdefault(key, []).append(float(val))
-
-        benchmark_stats = {
-            "N": len(retrieved),
-            "p25": {k: _compute_percentiles(v)["p25"] for k, v in numeric_pool.items()},
-            "median": {k: _compute_percentiles(v)["median"] for k, v in numeric_pool.items()},
-            "p75": {k: _compute_percentiles(v)["p75"] for k, v in numeric_pool.items()},
-        }
-
-        score, label = _score_clause_alignment(
-            clause.clause_type,
-            scores,
-            clause.numeric_features,
-            numeric_pool,
-        )
-        clause_scores.append((score, clause.clause_type))
-
-        confidence = 0.15
-        if scores:
-            confidence = min(0.98, max(0.1, (sum(scores) / len(scores)) * min(1.0, len(scores) / 5)))
-
-        snippets = _summarize_typical_patterns(retrieved)
-        cits = [
-            {
-                "benchmark_clause_id": bench.benchmark_clause_id,
-                "snippet_used": bench.snippet[:160],
-            }
-            for _, bench in retrieved[:3]
-        ]
-
-        explanation = _generate_explanation(
-            clause.clause_type,
-            score,
-            label,
-            benchmark_stats,
-            [c["benchmark_clause_id"] for c in cits],
-        )
-
-        suggested_revision = None
-        if label in {"yellow", "red"}:
-            suggested_revision = f"Adjust {clause.clause_type} toward peer median terms."
-
-        avg_similarity = (sum(scores) / len(scores)) if scores else 0.0
-        if len(retrieved) < 2 or avg_similarity < 0.22:
-            explanation = "Low evidence: insufficient peers for a reliable comparison."
-            confidence = min(confidence, 0.25)
-            if label == "green":
-                label = "yellow"
-
-        clause_results.append(
-            {
-                "clause_id": clause.clause_id,
-                "clause_type": clause.clause_type,
-                "clause_score": score,
-                "alignment_label": label,
-                "benchmark_stats": benchmark_stats,
-                "typical_patterns": snippets,
-                "explanation": explanation,
-                "suggested_revision": suggested_revision,
-                "confidence": round(confidence, 2),
-                "citations": cits,
-            }
-        )
-
-        if opt_in_store_user_data:
-            GLOBAL_VECTOR_STORE.add(
-                BenchmarkClause(
-                    benchmark_clause_id=f"user-optin-{hashlib.sha256(clause.text.encode()).hexdigest()[:12]}",
-                    contract_type=contract_type,
-                    jurisdiction=jurisdiction,
-                    industry=industry,
-                    clause_type=clause.clause_type,
-                    snippet="",  # privacy: never store user clause text
-                    embedding=clause.embedding,
-                    numeric_features=clause.numeric_features,
-                    source="user_opt_in",
-                )
-            )
-
-    overall_score = 0
-    if clause_scores:
-        total_weight = sum(CLAUSE_WEIGHTS.get(t, 0.6) for _, t in clause_scores)
-        weighted_sum = sum(score * CLAUSE_WEIGHTS.get(t, 0.6) for score, t in clause_scores)
-        overall_score = int(max(0, min(100, weighted_sum / max(total_weight, 1e-9))))
-
-    response_payload = {
-        "contract_id": hashlib.sha256(contract_text[:2000].encode()).hexdigest()[:16],
-        "overall_score": overall_score,
-        "clause_results": clause_results,
-        "meta": {
-            "peer_group_sizes_by_clause_type": peer_sizes,
-            "fallbacks_used": sorted(set(all_fallbacks)),
-        },
-    }
-
-    try:
-        validated = BenchmarkAnalyzeResponse.model_validate(response_payload)
-        return validated.model_dump()
-    except ValidationError as exc:
-        raise ValueError(f"Benchmark output schema validation failed: {exc}") from exc

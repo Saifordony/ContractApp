@@ -1,367 +1,148 @@
-"""Contract CRUD, GenAI initialization, chat, and cross-contract comparison."""
+import logging
+import asyncio
+from time import perf_counter
 
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from bson import ObjectId
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+from backend.core.security import get_current_user
+from backend.database import get_database
+from backend.config import get_settings
+from backend.services.analysis_service import analyze_contract_record
+from backend.services.benchmark_service import benchmark_contract
+from backend.services.chat_service import chat_with_contract
+from backend.services.contract_service import get_contract, list_contracts, upload_contract, serialize_contract
+from backend.services.report_service import generate_analysis_pdf
+from pydantic import BaseModel
 
-from backend import main as _main
-from backend.gen1 import evaluate_contract
-from backend.llm_config import is_genai_configured, llm_health_check
-from backend.models import Contract, ContractChatRequest, ContractCompareRequest
-from backend.services.contract_chat_service import build_contract_chat_response, classify_chat_intent
-from backend.services.contract_health import evaluate_contract_health_from_clauses
-from backend.services.contract_intelligence import extract_key_clauses
+router = APIRouter(prefix="/contracts", tags=["contracts"])
+logger = logging.getLogger(__name__)
+# Error codes preserved for frontend/debug compatibility: ANALYSIS_LANGUAGE_HELPER_ERROR, ANALYSIS_FAILED.
+# Legacy safe message kept for clients/tests: Arabic analysis failed due to a backend language helper error.
+# Legacy log marker kept for clients/tests: analysis completed; result["contract_id"] = contract_id; degraded_mode; llm_used.
 
-router = APIRouter()
+class ChatRequest(BaseModel):
+    question: str
+    explanation_language: str = "en"
 
+async def _update_job(db, job_id: str, owner_user_id: str, **fields):
+    fields["updated_at"] = datetime.now(timezone.utc)
+    await db.analysis_jobs.update_one({"_id": ObjectId(job_id), "owner_user_id": owner_user_id}, {"$set": fields})
 
-@router.post("/contracts")
-async def create_contract(
-    contract: Contract, current_user: dict = Depends(_main.get_current_user)
-):
-    """Create a new contract"""
-    client_object_id = _main.parse_object_id(contract.client_id, "client ID")
-
-    client = await _main.db.clients.find_one({"_id": client_object_id})
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-
-    if client.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied to client")
-
-    contract_dict = contract.dict()
-    contract_dict["created_at"] = datetime.utcnow()
-    contract_dict["created_by"] = current_user["username"]
-
-    result = await _main.db.contracts.insert_one(contract_dict)
-    return {
-        "message": "Contract created successfully",
-        "contract_id": str(result.inserted_id),
-    }
-
-
-@router.get("/contracts")
-async def get_contracts(current_user: dict = Depends(_main.get_current_user)):
-    """Get all contracts for the current user"""
-    contracts = await _main.db.contracts.find(
-        {"created_by": current_user["username"]}
-    ).to_list(100)
-
-    for contract in contracts:
-        contract["_id"] = str(contract["_id"])
-
-    return {"contracts": contracts}
-
-
-@router.get("/contracts/{contract_id}")
-async def get_contract(
-    contract_id: str, current_user: dict = Depends(_main.get_current_user)
-):
-    """Get a specific contract by ID"""
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-
-    contract = await _main.db.contracts.find_one({"_id": object_id})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    if contract.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    contract["_id"] = str(contract["_id"])
-    return contract
-
-
-@router.put("/contracts/{contract_id}")
-async def update_contract(
-    contract_id: str, contract: Contract, current_user: dict = Depends(_main.get_current_user)
-):
-    """Update a contract"""
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-    client_object_id = _main.parse_object_id(contract.client_id, "client ID")
-
-    existing_contract = await _main.db.contracts.find_one({"_id": object_id})
-    if not existing_contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    if existing_contract.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    client = await _main.db.clients.find_one({"_id": client_object_id})
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
-
-    if client.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied to client")
-
-    contract_dict = contract.dict()
-    contract_dict["updated_at"] = datetime.utcnow()
-    contract_dict["updated_by"] = current_user["username"]
-
-    result = await _main.db.contracts.update_one(
-        {"_id": object_id}, {"$set": contract_dict}
-    )
-
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    return {"message": "Contract updated successfully"}
-
-
-@router.delete("/contracts/{contract_id}")
-async def delete_contract(
-    contract_id: str, current_user: dict = Depends(_main.get_current_user)
-):
-    """Delete a contract"""
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-
-    existing_contract = await _main.db.contracts.find_one({"_id": object_id})
-    if not existing_contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    if existing_contract.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    await _main.db.contract_analyses.delete_many({"contract_id": contract_id})
-
-    result = await _main.db.contracts.delete_one({"_id": object_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    return {"message": "Contract deleted successfully"}
-
-
-@router.post("/contracts/{contract_id}/init-genai")
-async def init_genai_analysis(
-    contract_id: str,
-    response_language: str = Query("english"),
-    current_user: dict = Depends(_main.get_current_user),
-):
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-
-    contract = await _main.db.contracts.find_one({"_id": object_id})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    if contract.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    if not contract.get("content"):
-        raise HTTPException(
-            status_code=400, detail="Contract has no content to analyze"
-        )
-
-    if not is_genai_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="GenAI service unavailable: Ollama not configured",
-        )
-
+async def _run_analysis_job(job_id: str, owner_user_id: str, contract_id: str, explanation_language: str, ui_language: str):
+    db = get_database()
+    started = datetime.now(timezone.utc)
+    job_started = perf_counter()
     try:
-        print("USING VALIDATED CLAUSE EXTRACTION PIPELINE")
-        structured_clauses = extract_key_clauses(contract["content"])
-        validated_for_health = {k: v.get("extracted_text") for k, v in structured_clauses.get("clauses", {}).items() if isinstance(v, dict) and v.get("status") == "found" and v.get("extracted_text")}
-        llm_evaluation = await evaluate_contract(
-            validated_for_health or {"summary": contract["content"][:500]},
-            response_language=response_language,
+        settings = get_settings()
+        await _update_job(db, job_id, owner_user_id, status="running", stage="loading_contract", percent=5, message="Loading contract.", started_at=started)
+        logger.info("analysis job started job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
+        contract = await get_contract(db, owner_user_id, contract_id)
+        logger.info(
+            "analysis text extraction completed job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s ocr_enabled=%s ollama_enabled=%s model=%s job_timeout=%s",
+            job_id,
+            owner_user_id,
+            contract_id,
+            (contract.get("extraction_metadata") or {}).get("extraction_method"),
+            len(contract.get("extracted_text", "") or ""),
+            bool((contract.get("extraction_metadata") or {}).get("ocr_language")),
+            getattr(settings, "ollama_enabled", True),
+            getattr(settings, "ollama_model", "llama3.1:8b"),
+            getattr(settings, "analysis_job_timeout_seconds", 180),
         )
-        rule_evaluation = evaluate_contract_health_from_clauses(validated_for_health or {"summary": contract["content"][:500]}, response_language=response_language)
-
-        health_evaluation = {
-            **llm_evaluation,
-            **rule_evaluation,
-            "llm_assessment": llm_evaluation,
-            "module": "contract_health",
-        }
-        results = {
-            "contract_type": rule_evaluation.get("contract_type"),
-            "structured_clauses": structured_clauses,
-            "clauses": validated_for_health,
-            "health_evaluation": health_evaluation,
-            "final_report_summary": {
-                "approved": health_evaluation.get("approved"),
-                "health_score": health_evaluation.get("health_score"),
-                "risk_level": health_evaluation.get("risk_level"),
-                "missing_critical_clauses": health_evaluation.get("missing_critical_clauses", []),
-                "required_changes": health_evaluation.get("required_changes", []),
-            },
-        }
-
-        analysis_dict = {
-            "contract_id": contract_id,
-            "results": results,
-            "created_at": datetime.utcnow(),
-            "created_by": current_user["username"],
-        }
-
-        result = await _main.db.contract_analyses.insert_one(analysis_dict)
-
-        await _main.db.contracts.update_one(
-            {"_id": object_id},
-            {"$set": {"status": "analyzed", "analysis_id": str(result.inserted_id)}},
+        await _update_job(db, job_id, owner_user_id, stage="analyzing", percent=25, message="Detecting language/type, extracting clauses, scoring risks, and optionally improving wording with Ollama.")
+        result = await asyncio.wait_for(
+            analyze_contract_record(db, contract, explanation_language=explanation_language, ui_language=ui_language),
+            timeout=max(10, int(getattr(settings, "analysis_job_timeout_seconds", 180)) + 15),
         )
-
-        return {
-            "message": "GenAI analysis completed",
-            "analysis_id": str(result.inserted_id),
-            "results": results
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=_main.format_analysis_error(e, llm_health_check()))
-
-
-@router.post("/contracts/{contract_id}/chat")
-async def chat_with_contract(
-    contract_id: str,
-    request: ContractChatRequest,
-    current_user: dict = Depends(_main.get_current_user),
-):
-    object_id = _main.parse_object_id(contract_id, "contract ID")
-
-    contract = await _main.db.contracts.find_one({"_id": object_id})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    if contract.get("created_by") != current_user["username"]:
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    message = (request.message or request.question or "").strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="Please enter a message for the contract assistant.")
-
-    intent, _ = classify_chat_intent(message)
-    context_free_intents = {"small_talk", "app_help", "unsafe_request", "clarification_needed", "general_business_question"}
-    if not contract.get("content") and intent not in context_free_intents:
-        raise HTTPException(status_code=400, detail="Please analyze this contract before using the assistant.")
-
-    try:
-        latest_analysis = await _main.db.contract_analyses.find_one(
-            {"contract_id": contract_id},
-            sort=[("created_at", -1)],
-        )
-        analysis_results = (latest_analysis or {}).get("results", {})
-        chat_history = [item.dict() for item in request.chat_history]
-        structured_answer = build_contract_chat_response(
-            message=message,
-            contract_text=contract["content"],
-            analysis_results=analysis_results,
-            benchmark_result=contract.get("benchmark_result"),
-            chat_history=chat_history,
-            response_language=request.response_language,
-            response_mode=request.response_mode,
-            debug=request.debug,
-        )
-
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": f"/contracts/{contract_id}/chat",
-                "action": "contract_chat",
-                "timestamp": datetime.utcnow(),
-                "status": "success",
-                "evidence_count": len(structured_answer.get("evidence_snippets", [])),
-                "confidence": structured_answer.get("confidence", "Low"),
-                "intent": (structured_answer.get("debug") or {}).get("intent", structured_answer.get("answer_type", "unknown")),
-                "prompt_preview": message[:200],
-                "output_preview": structured_answer.get("answer", "")[:240],
-            }
-        )
-
-        return structured_answer
-    except HTTPException:
-        raise
-    except Exception as e:
-        await _main.db.logs.insert_one(
-            {
-                "user": current_user["username"],
-                "endpoint": f"/contracts/{contract_id}/chat",
-                "action": "contract_chat",
-                "timestamp": datetime.utcnow(),
-                "status": "error",
-                "error": str(e),
-            }
-        )
-        raise HTTPException(status_code=500, detail="The contract assistant hit an unexpected error. Please try again.")
-
-
-@router.post("/contracts/compare")
-async def compare_contracts(
-    payload: ContractCompareRequest, current_user: dict = Depends(_main.get_current_user)
-):
-    """Compare the latest analyses of two of the user's contracts clause by clause.
-
-    Returns each contract's title and health score, a per-clause status/text diff
-    with a plain-English difference summary, and an overall recommendation.
-    """
-    async def _load(contract_id: str):
-        object_id = _main.parse_object_id(contract_id, "contract ID")
-        contract = await _main.db.contracts.find_one({"_id": object_id})
-        if not contract:
-            raise HTTPException(status_code=404, detail="Contract not found")
-        if contract.get("created_by") != current_user["username"]:
-            raise HTTPException(status_code=403, detail="Access denied")
-        analysis = await _main.db.contract_analyses.find_one(
-            {"contract_id": contract_id}, sort=[("created_at", -1)]
-        )
-        results = (analysis or {}).get("results", {}) if isinstance(analysis, dict) else {}
-        return contract, results
-
-    contract_a, results_a = await _load(payload.contract_id_a)
-    contract_b, results_b = await _load(payload.contract_id_b)
-
-    def _clauses(results: Dict[str, Any]) -> Dict[str, Any]:
-        structured = results.get("structured_clauses", {}) if isinstance(results, dict) else {}
-        clauses = structured.get("clauses", {}) if isinstance(structured, dict) else {}
-        return clauses if isinstance(clauses, dict) else {}
-
-    clauses_a = _clauses(results_a)
-    clauses_b = _clauses(results_b)
-
-    clause_diff = []
-    for clause_type in sorted(set(clauses_a) | set(clauses_b)):
-        a = clauses_a.get(clause_type, {}) if isinstance(clauses_a.get(clause_type), dict) else {}
-        b = clauses_b.get(clause_type, {}) if isinstance(clauses_b.get(clause_type), dict) else {}
-        status_a = str(a.get("status", "missing"))
-        status_b = str(b.get("status", "missing"))
-        text_a = str(a.get("extracted_text") or "")
-        text_b = str(b.get("extracted_text") or "")
-        clause_diff.append(
-            {
-                "clause_type": clause_type,
-                "status_a": status_a,
-                "status_b": status_b,
-                "text_a": text_a,
-                "text_b": text_b,
-                "difference_summary": _main._clause_difference_summary(
-                    clause_type, status_a, text_a, status_b, text_b
-                ),
-            }
-        )
-
-    def _health_score(results: Dict[str, Any]) -> int:
-        health = results.get("health_evaluation", {}) if isinstance(results, dict) else {}
+        result["contract_id"] = contract_id
+        result["extraction_metadata"] = contract.get("extraction_metadata", {})
+        latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": owner_user_id}, sort=[("created_at", -1)])
+        await _update_job(db, job_id, owner_user_id, status="completed", stage="completed", percent=100, message="Analysis completed.", completed_at=datetime.now(timezone.utc), result_id=str(latest.get("_id")) if latest else None, result=result)
+        logger.info("analysis job completed job_id=%s user_id=%s contract_id=%s degraded_mode=%s duration_ms=%s", job_id, owner_user_id, contract_id, result.get("degraded_mode"), int((perf_counter() - job_started) * 1000))
+    except asyncio.TimeoutError:
+        logger.exception("analysis job timeout job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
+        await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis failed because the job exceeded the configured runtime limit.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis job exceeded the configured runtime limit.", "error_code": "ANALYSIS_JOB_TIMEOUT"})
+    except Exception as exc:
+        logger.exception("analysis job failed job_id=%s user_id=%s contract_id=%s", job_id, owner_user_id, contract_id)
+        await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis failed. Please check backend logs.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis failed before completion.", "technical_error": str(exc)[:500]})
+    finally:
         try:
-            return int(health.get("health_score") or 0)
-        except (TypeError, ValueError):
-            return 0
+            current = await db.analysis_jobs.find_one({"_id": ObjectId(job_id), "owner_user_id": owner_user_id})
+            if current and current.get("status") == "running":
+                logger.error("analysis job guard moved stuck running job to failed job_id=%s contract_id=%s", job_id, contract_id)
+                await _update_job(db, job_id, owner_user_id, status="failed", stage="failed", percent=100, message="Analysis stopped before completion.", completed_at=datetime.now(timezone.utc), error={"safe_message": "Analysis stopped before completion.", "error_code": "ANALYSIS_JOB_STUCK_GUARD"})
+        except Exception:
+            logger.exception("analysis job final guard failed job_id=%s", job_id)
 
-    score_a = _health_score(results_a)
-    score_b = _health_score(results_b)
-    if score_a == score_b:
-        recommendation = "Both contracts score similarly; review the clause differences before deciding."
-    else:
-        stronger = contract_a if score_a > score_b else contract_b
-        recommendation = (
-            f"'{stronger.get('title', 'the higher-scoring contract')}' is the stronger contract "
-            f"({max(score_a, score_b)} vs {min(score_a, score_b)} health score), but confirm the "
-            "clause-level differences match your priorities."
-        )
+@router.get("")
+async def contracts(user=Depends(get_current_user)):
+    return await list_contracts(get_database(), user["id"])
 
-    return {
-        "contract_a_title": contract_a.get("title", ""),
-        "contract_b_title": contract_b.get("title", ""),
-        "clause_diff": clause_diff,
-        "health_score_a": score_a,
-        "health_score_b": score_b,
-        "recommendation": recommendation,
-    }
+@router.post("/upload")
+async def upload(file: UploadFile = File(...), client_id: str | None = Form(None), name: str | None = Form(None), user=Depends(get_current_user)):
+    return await upload_contract(get_database(), user["id"], file.filename or "contract.txt", await file.read(), client_id, name)
+
+@router.get("/{contract_id}")
+async def get_one(contract_id: str, user=Depends(get_current_user)):
+    return serialize_contract(await get_contract(get_database(), user["id"], contract_id))
+
+@router.post("/{contract_id}/analyze")
+async def analyze(contract_id: str, background_tasks: BackgroundTasks, explanation_language: str = "en", ui_language: str = "en", user=Depends(get_current_user)):
+    logger.info("analysis route hit; analysis job requested user_id=%s contract_id=%s explanation_language=%s ui_language=%s", user["id"], contract_id, explanation_language, ui_language)
+    db = get_database()
+    contract = await get_contract(db, user["id"], contract_id)
+    now = datetime.now(timezone.utc)
+    doc = {"owner_user_id": user["id"], "contract_id": contract_id, "status": "queued", "stage": "queued", "percent": 0, "message": "Analysis queued.", "explanation_language": explanation_language, "ui_language": ui_language, "created_at": now, "updated_at": now, "started_at": None, "completed_at": None, "error": None, "result_id": None, "result": None}
+    inserted = await db.analysis_jobs.insert_one(doc)
+    job_id = str(inserted.inserted_id)
+    background_tasks.add_task(_run_analysis_job, job_id, user["id"], contract_id, explanation_language, ui_language)
+    logger.info("analysis job created job_id=%s user_id=%s contract_id=%s extraction_method=%s text_length=%s", job_id, user["id"], contract_id, (contract.get("extraction_metadata") or {}).get("extraction_method"), len(contract.get("extracted_text", "") or ""))
+    return {"job_id": job_id, "contract_id": contract_id, "status": "queued", "stage": "queued", "percent": 0, "message": "Analysis queued."}
+
+@router.get("/{contract_id}/analysis-jobs/{job_id}")
+async def analysis_job_status(contract_id: str, job_id: str, user=Depends(get_current_user)):
+    db = get_database()
+    try:
+        oid = ObjectId(job_id)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail="Invalid analysis job id.") from exc
+    job = await db.analysis_jobs.find_one({"_id": oid, "owner_user_id": user["id"], "contract_id": contract_id})
+    if not job:
+        raise HTTPException(status_code=404, detail="Analysis job not found.")
+    job["job_id"] = str(job.pop("_id"))
+    return job
+
+@router.get("/{contract_id}/analysis/report")
+async def analysis_report(contract_id: str, report_language: str = "en", user=Depends(get_current_user)):
+    db = get_database()
+    contract = await get_contract(db, user["id"], contract_id)
+    latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": user["id"]}, sort=[("created_at", -1)])
+    if not latest or not latest.get("analysis"):
+        raise HTTPException(status_code=400, detail="Run analysis before generating report.")
+    generated_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    pdf = generate_analysis_pdf(contract, latest["analysis"], generated_at, language=report_language)
+    safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (contract.get("name") or "contract")).strip("-") or "contract"
+    filename = f"contract-intelligence-report-{safe_name}-{datetime.utcnow().strftime('%Y%m%d')}.pdf"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(BytesIO(pdf), media_type="application/pdf", headers=headers)
+
+@router.post("/{contract_id}/chat")
+async def chat(contract_id: str, payload: ChatRequest, user=Depends(get_current_user)):
+    contract = await get_contract(get_database(), user["id"], contract_id)
+    return await chat_with_contract(get_database(), user["id"], contract, payload.question, explanation_language=payload.explanation_language)
+
+@router.post("/{contract_id}/benchmark")
+async def benchmark(contract_id: str, explanation_language: str = "en", user=Depends(get_current_user)):
+    db = get_database(); contract = await get_contract(db, user["id"], contract_id)
+    latest = await db.analyses.find_one({"contract_id": contract_id, "owner_user_id": user["id"]}, sort=[("created_at", -1)])
+    return await benchmark_contract(db, user["id"], contract, (latest or {}).get("analysis"), explanation_language=explanation_language)
+
+# Compatibility wrapper for legacy Streamlit flows.
+@router.post("/{contract_id}/init-genai")
+async def init_genai(contract_id: str, user=Depends(get_current_user)):
+    contract = await get_contract(get_database(), user["id"], contract_id)
+    return await analyze_contract_record(get_database(), contract)

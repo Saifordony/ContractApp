@@ -1,0 +1,1 @@
+This rebuild uses `frontend/streamlit_app.py` for all active screens so Streamlit does not expose stale multipage navigation. Add page modules here only if they are wired into the clean rebuild intentionally.

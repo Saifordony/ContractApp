@@ -1,4 +1,16 @@
+.env
+.env.*
+!.env.example
+!.env.local.example
+!.env.docker.example
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.streamlit/secrets.toml
+node_modules/
+.next/
+build/
+dist/
+.cache/
+*.zip

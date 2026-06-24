@@ -1,164 +1,178 @@
-from __future__ import annotations
+"""Centralized Streamlit CSS for the active Contract Intelligence frontend."""
 
-import streamlit as st
+LIGHT_TOKENS = {
+    "bg": "#F8FAFC",
+    "surface": "#F8FAFC",
+    "surface_strong": "#FFFFFF",
+    "card": "#ffffff",
+    "elevated": "#ffffff",
+    "input_bg": "#FFFFFF",
+    "input_text": "#0F172A",
+    "input_placeholder": "#64748B",
+    "border": "#e2e8f0",
+    "border_strong": "#dbeafe",
+    "text": "#0f172a",
+    "muted": "#64748B",
+    "accent": "#2563eb",
+    "accent_soft": "#EFF6FF",
+    "accent_text": "#1D4ED8",
+    "success_bg": "#dcfce7",
+    "success_text": "#166534",
+    "warning_bg": "#fef3c7",
+    "warning_text": "#92400e",
+    "danger_bg": "#fee2e2",
+    "danger_text": "#991b1b",
+    "shadow": "0 18px 50px rgba(15,23,42,.08)",
+}
 
-
-def apply_global_css(sidebar_compact: bool = False, theme_mode: str = "light", direction: str = "ltr") -> None:
-    sidebar_width = "5.5rem" if sidebar_compact else "18rem"
-    sidebar_text_display = "none" if sidebar_compact else "block"
-    is_dark = (theme_mode or "light").lower() == "dark"
-    is_rtl = (direction or "ltr").lower() == "rtl"
-
-    tokens = {
-        "bg": "#0B1120" if is_dark else "#F7F9FC",
-        "surface": "#111827" if is_dark else "#FFFFFF",
-        "card": "#111827" if is_dark else "#FFFFFF",
-        "primary": "#A5B4FC" if is_dark else "#172554",
-        "accent": "#818CF8" if is_dark else "#4F46E5",
-        "text": "#E5E7EB" if is_dark else "#111827",
-        "muted": "#9CA3AF" if is_dark else "#6B7280",
-        "border": "#273244" if is_dark else "#E5E7EB",
-        "success": "#22C55E",
-        "warning": "#F59E0B",
-        "danger": "#F87171" if is_dark else "#DC2626",
-        "info": "#60A5FA" if is_dark else "#2563EB",
-        "sidebar": "#020617" if is_dark else "#0F172A",
-        "shadow": "0 12px 34px rgba(0,0,0,.28)" if is_dark else "0 10px 30px rgba(15,23,42,.06)",
-    }
-    rtl_css = """
-        .stApp { direction: rtl; }
-        .block-container, .page-header-card, .metric-card, .section-card, .empty-state, .chat-shell { text-align:right; }
-        .topbar { direction: rtl; }
-        .topbar-actions { flex-direction: row-reverse; }
-        section[data-testid="stSidebar"] .stRadio label, section[data-testid="stSidebar"] .stSelectbox label { text-align:right; }
-        .chat-row.user { justify-content:flex-start; }
-        .chat-row.assistant { justify-content:flex-end; }
-    """ if is_rtl else """
-        .stApp { direction: ltr; }
-        .block-container, .page-header-card, .metric-card, .section-card, .empty-state, .chat-shell { text-align:left; }
-    """
-
-    st.markdown(
-        f"""
-        <style>
-        :root {{
-            --bg:{tokens['bg']}; --surface:{tokens['surface']}; --card:{tokens['card']};
-            --primary:{tokens['primary']}; --accent:{tokens['accent']}; --text:{tokens['text']};
-            --muted:{tokens['muted']}; --border:{tokens['border']}; --success:{tokens['success']};
-            --warning:{tokens['warning']}; --danger:{tokens['danger']}; --info:{tokens['info']};
-        }}
-        .stApp {{ background: var(--bg)!important; color: var(--text)!important; font-family: Inter, "Segoe UI", Tahoma, Arial, sans-serif; }}
-        .stApp::before {{ display:none!important; }}
-        .block-container {{ max-width: 1280px; padding-top: 1.25rem; padding-bottom: 3rem; }}
-        section[data-testid="stSidebar"] {{ background: {tokens['sidebar']}!important; min-width:{sidebar_width}!important; max-width:{sidebar_width}!important; border-right:1px solid rgba(255,255,255,.08); }}
-        section[data-testid="stSidebar"] * {{ color:#E5E7EB!important; }}
-        section[data-testid="stSidebar"] p, section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{ display:{sidebar_text_display}; }}
-        .topbar, .page-header-card, .metric-card, .section-card, .chat-shell, .empty-state, .feature-card, .next-step-card {{ background:var(--card)!important; border:1px solid var(--border)!important; border-radius:18px; box-shadow:{tokens['shadow']}; color:var(--text)!important; }}
-        .topbar {{ display:flex; align-items:center; justify-content:space-between; padding:1rem 1.15rem; margin-bottom:1rem; }}
-        .topbar-title {{ font-weight:750; color:var(--primary)!important; letter-spacing:-.02em; }}
-        .topbar-sub, .metric-sub, .metric-label, .section-card-sub, .empty-subtitle, .page-header-card p, .feature-card p {{ color:var(--muted)!important; }}
-        .topbar-actions {{ display:flex; gap:.75rem; align-items:center; }}
-        .page-header-card {{ padding:1.35rem 1.5rem; margin-bottom:1rem; }}
-        .page-header-card h1 {{ margin:0; color:var(--primary)!important; font-size:2rem; letter-spacing:-.04em; }}
-        .eyebrow {{ color:var(--accent)!important; font-size:.78rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; margin-bottom:.4rem; }}
-        .metric-card {{ padding:1rem; min-height:112px; }}
-        .metric-label {{ font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; font-weight:750; }}
-        .metric-value {{ color:var(--text)!important; font-size:1.55rem; font-weight:800; margin:.25rem 0; }}
-        .section-card {{ padding:1rem 1.1rem; margin:.6rem 0; }}
-        .section-card-title {{ color:var(--primary)!important; font-weight:800; font-size:1rem; }}
-        .empty-state {{ padding:1.4rem; margin:1rem 0; }}
-        .empty-title {{ color:var(--text)!important; font-weight:800; font-size:1.15rem; }}
-        .empty-action {{ color:var(--accent)!important; font-weight:700; margin-top:.6rem; }}
-        .badge {{ padding:.35rem .65rem; border-radius:999px; font-size:.78rem; font-weight:750; border:1px solid var(--border); }}
-        .badge-success {{ color:var(--success)!important; background:rgba(34,197,94,.12); }}
-        .badge-warning {{ color:var(--warning)!important; background:rgba(245,158,11,.12); }}
-        .badge-danger {{ color:var(--danger)!important; background:rgba(248,113,113,.13); }}
-        .badge-neutral {{ color:var(--muted)!important; background:rgba(148,163,184,.12); }}
-        .workflow-stepper {{ display:flex; gap:.65rem; flex-wrap:wrap; margin:.75rem 0 1rem; }}
-        .workflow-step {{ background:var(--card); border:1px solid var(--border); border-radius:999px; padding:.55rem .75rem; color:var(--muted); font-weight:650; }}
-        .workflow-step span {{ display:inline-flex; align-items:center; justify-content:center; width:1.4rem; height:1.4rem; border-radius:50%; margin-inline-end:.35rem; background:rgba(79,70,229,.12); color:var(--accent); }}
-        .workflow-step.active, .workflow-step.done {{ color:var(--text); border-color:var(--accent); }}
-        .chat-shell {{ padding:1rem; margin:.8rem 0; }}
-        .chat-scroll {{ display:flex; flex-direction:column; gap:.75rem; }}
-        .chat-row {{ display:flex; }}
-        .chat-row.user {{ justify-content:flex-end; }}
-        .chat-row.assistant {{ justify-content:flex-start; }}
-        .chat-bubble {{ max-width:76%; padding:.78rem .95rem; border-radius:16px; line-height:1.45; }}
-        .chat-bubble.user {{ background:var(--accent); color:white!important; border-bottom-right-radius:5px; }}
-        .chat-bubble.assistant {{ background:{'#1F2937' if is_dark else '#F3F4F6'}; color:var(--text)!important; border-bottom-left-radius:5px; }}
-        .feature-card {{ padding:1rem; margin:.5rem 0; min-height:138px; transition:transform .18s ease, border-color .18s ease; }}
-        .feature-card:hover, .metric-card:hover {{ transform:translateY(-2px); border-color:var(--accent)!important; }}
-        .feature-icon {{ width:2rem; height:2rem; border-radius:10px; display:flex; align-items:center; justify-content:center; background:rgba(79,70,229,.13); color:var(--accent); font-weight:800; margin-bottom:.6rem; }}
-        .next-step-card {{ padding:.95rem 1rem; margin:.8rem 0; }}
-        button, .stButton button {{ transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease; }}
-        .stButton button:hover {{ transform:translateY(-1px); box-shadow:0 10px 24px rgba(79,70,229,.18); }}
-        input:focus, textarea:focus {{ border-color:var(--accent)!important; box-shadow:0 0 0 3px rgba(79,70,229,.16)!important; }}
-        {rtl_css}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    apply_premium_components_css()
+DARK_TOKENS = {
+    "bg": "#0F172A",
+    "surface": "#1E293B",
+    "surface_strong": "#111827",
+    "card": "#1E293B",
+    "elevated": "#243044",
+    "input_bg": "#FFFFFF",
+    "input_text": "#0F172A",
+    "input_placeholder": "#64748B",
+    "border": "#334155",
+    "border_strong": "#1e40af",
+    "text": "#F8FAFC",
+    "muted": "#94A3B8",
+    "accent": "#3B82F6",
+    "accent_soft": "#2563EB",
+    "accent_text": "#FFFFFF",
+    "success_bg": "#052e16",
+    "success_text": "#86efac",
+    "warning_bg": "#422006",
+    "warning_text": "#fcd34d",
+    "danger_bg": "#450a0a",
+    "danger_text": "#fca5a5",
+    "shadow": "0 18px 50px rgba(0,0,0,.28)",
+}
 
 
-def apply_premium_components_css() -> None:
-    """Premium "legal intelligence" component classes (Dimension 2.1).
+def build_app_css(theme: str = "light", direction: str = "ltr") -> str:
+    tokens = DARK_TOKENS if theme == "dark" else LIGHT_TOKENS
+    align = "right" if direction == "rtl" else "left"
+    reverse_align = "left" if direction == "rtl" else "right"
+    return f"""
+<style>
+:root {{
+  --cip-bg: {tokens['bg']};
+  --cip-surface: {tokens['surface']};
+  --cip-surface-strong: {tokens['surface_strong']};
+  --cip-card: {tokens['card']};
+  --cip-elevated: {tokens['elevated']};
+  --cip-input-bg: {tokens['input_bg']};
+  --cip-input-text: {tokens['input_text']};
+  --cip-input-placeholder: {tokens['input_placeholder']};
+  --cip-dropdown-bg: {"#1E293B" if theme == "dark" else "#FFFFFF"};
+  --cip-dropdown-text: {"#F8FAFC" if theme == "dark" else "#0F172A"};
+  --cip-border: {tokens['border']};
+  --cip-border-strong: {tokens['border_strong']};
+  --cip-text: {tokens['text']};
+  --cip-muted: {tokens['muted']};
+  --cip-accent: {tokens['accent']};
+  --cip-accent-soft: {tokens['accent_soft']};
+  --cip-accent-text: {tokens['accent_text']};
+  --cip-success-bg: {tokens['success_bg']};
+  --cip-success-text: {tokens['success_text']};
+  --cip-warning-bg: {tokens['warning_bg']};
+  --cip-warning-text: {tokens['warning_text']};
+  --cip-danger-bg: {tokens['danger_bg']};
+  --cip-danger-text: {tokens['danger_text']};
+  --cip-shadow: {tokens['shadow']};
+  --cip-nav-active-bg: #2563EB;
+  --cip-nav-active-text: #FFFFFF;
+  --cip-nav-hover-bg: {"#334155" if theme == "dark" else "#EFF6FF"};
+  --cip-nav-inactive-bg: {"#1E293B" if theme == "dark" else "transparent"};
+  --cip-nav-inactive-text: {"#CBD5E1" if theme == "dark" else "#334155"};
+  --cip-button-primary-bg: #2563EB;
+  --cip-button-primary-text: #FFFFFF;
+  --cip-button-secondary-bg: {"#1E293B" if theme == "dark" else "#FFFFFF"};
+  --cip-button-secondary-text: {"#F8FAFC" if theme == "dark" else "#0F172A"};
+}}
+[data-testid="stAppViewContainer"] {{ background: var(--cip-bg); color: var(--cip-text); }}
+[data-testid="stSidebar"] {{ background: var(--cip-surface-strong); border-{reverse_align}: 1px solid var(--cip-border); }}
+[data-testid="stSidebar"] * {{ color: var(--cip-text); }}
+[data-testid="stSidebar"] .stButton > button {{ background:var(--cip-nav-inactive-bg) !important; color:var(--cip-nav-inactive-text) !important; border:1px solid var(--cip-border) !important; border-radius:14px !important; min-height:2.75rem; justify-content:flex-start; text-align:{align}; padding:.55rem .75rem; }}
+[data-testid="stSidebar"] .stButton > button:hover {{ background:var(--cip-nav-hover-bg) !important; color:var(--cip-text) !important; border-color:var(--cip-accent) !important; }}
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p, [data-testid="stSidebar"] label {{ color:var(--cip-muted) !important; }}
+.block-container {{ max-width: 1240px; padding-top: 1.25rem; direction: {direction}; text-align: {align}; }}
+h1, h2, h3, h4, h5, h6, p, label, span {{ color: inherit; }}
+.stButton > button, .stDownloadButton > button {{ background:var(--cip-button-secondary-bg) !important; color:var(--cip-button-secondary-text) !important; border-radius: 14px; border: 1px solid var(--cip-border); min-height: 2.6rem; font-weight: 750; opacity:1 !important; }}
+.stButton > button:hover, .stDownloadButton > button:hover {{ background:var(--cip-nav-hover-bg) !important; border-color: var(--cip-accent); color: var(--cip-text) !important; }}
+.stButton > button[kind="primary"], .stDownloadButton > button[kind="primary"] {{ background:var(--cip-button-primary-bg) !important; color:var(--cip-button-primary-text) !important; border-color:var(--cip-button-primary-bg) !important; }}
+div[data-baseweb="input"], div[data-baseweb="select"], div[data-baseweb="textarea"], textarea {{ background:var(--cip-input-bg) !important; color:var(--cip-input-text) !important; border-radius: 14px !important; border-color:var(--cip-border) !important; }}
+div[data-baseweb="input"] input, div[data-baseweb="select"] input, textarea, input {{ color:var(--cip-input-text) !important; -webkit-text-fill-color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] > div {{ background-color:var(--cip-input-bg) !important; border-color:var(--cip-border) !important; color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] span, div[data-baseweb="select"] div, div[data-baseweb="select"] input {{ color:var(--cip-input-text) !important; -webkit-text-fill-color:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] svg {{ color:var(--cip-input-text) !important; fill:var(--cip-input-text) !important; }}
+div[data-baseweb="select"] [aria-disabled="true"], div[data-baseweb="select"] [data-testid*="placeholder"] {{ color:var(--cip-input-placeholder) !important; -webkit-text-fill-color:var(--cip-input-placeholder) !important; opacity:1 !important; }}
+div[data-baseweb="popover"] div, div[role="listbox"] {{ background:var(--cip-dropdown-bg) !important; color:var(--cip-dropdown-text) !important; border-color:var(--cip-border) !important; }}
+div[role="option"], div[role="option"] * {{ background:var(--cip-dropdown-bg) !important; color:var(--cip-dropdown-text) !important; -webkit-text-fill-color:var(--cip-dropdown-text) !important; }}
+div[role="option"]:hover, div[role="option"][aria-selected="true"] {{ background:var(--cip-nav-hover-bg) !important; color:var(--cip-dropdown-text) !important; }}
+input::placeholder, textarea::placeholder {{ color:var(--cip-input-placeholder) !important; -webkit-text-fill-color:var(--cip-input-placeholder) !important; opacity:1 !important; }}
+[data-testid="stRadio"] label, [data-testid="stFileUploader"] label, [data-testid="stTextInput"] label, [data-testid="stTextArea"] label, [data-testid="stSelectbox"] label {{ color:var(--cip-text) !important; }}
+.streamlit-expanderHeader, [data-testid="stExpander"] details summary, [data-testid="stExpander"] * {{ color:var(--cip-text) !important; }}
+[aria-disabled="true"], button:disabled {{ opacity:.55 !important; color:var(--cip-muted) !important; }}
+.cip-shell-topbar {{ display:flex; align-items:center; justify-content:space-between; gap:1rem; background:var(--cip-surface); border:1px solid var(--cip-border); border-radius:24px; padding:1rem 1.15rem; margin:.25rem 0 1.1rem; box-shadow:var(--cip-shadow); }}
+.cip-page-title h1 {{ margin:0; color:var(--cip-text); font-size:2rem; letter-spacing:-.04em; }}
+.cip-page-title p {{ margin:.25rem 0 0; color:var(--cip-muted); line-height:1.55; }}
+.cip-brand-card {{ background:linear-gradient(135deg,var(--cip-surface),var(--cip-accent-soft)); border:1px solid var(--cip-border-strong); border-radius:24px; padding:1rem; margin:.5rem 0 1rem; box-shadow:var(--cip-shadow); }}
+.cip-brand-title {{ font-size:1.05rem; font-weight:900; color:var(--cip-text); }}
+.cip-brand-subtitle, .cip-muted {{ color: var(--cip-muted); }}
+.cip-nav-group {{ color:var(--cip-muted); font-size:.72rem; font-weight:900; letter-spacing:.1em; text-transform:uppercase; margin:1.1rem 0 .35rem; }}
+.cip-nav-active {{ background:var(--cip-nav-active-bg); border:1px solid var(--cip-nav-active-bg); color:var(--cip-nav-active-text) !important; border-radius:16px; padding:.65rem .75rem; font-weight:900; margin:.2rem 0; text-align:{align}; }}
+.rtl {{ direction:rtl; text-align:right; }}
+.ltr-value, .technical-value {{ direction:ltr; unicode-bidi:isolate; display:inline-block; }}
+.cip-auth-card, .cip-card, .cip-kpi, .cip-review-card, .cip-risk-card, .cip-missing-card, .cip-summary-card, .cip-error-card, .cip-action-card, .cip-benchmark-card, .cip-status-card, .cip-empty-state {{ background:var(--cip-card); border:1px solid var(--cip-border); border-radius:22px; box-shadow:var(--cip-shadow); color:var(--cip-text); }}
+.cip-auth-card {{ padding:1rem 1.15rem; }}
+.cip-card {{ padding:1.3rem; }}
+.cip-hero {{ padding:1.4rem 1.6rem; border-radius:26px; color:var(--cip-text); background:linear-gradient(135deg,var(--cip-surface),var(--cip-accent-soft)); border:1px solid var(--cip-border-strong); }}
+.cip-pill {{ display:inline-flex; padding:.25rem .7rem; border-radius:999px; background:var(--cip-text); color:var(--cip-surface-strong); font-size:.78rem; }}
+.cip-kpi {{ min-height:118px; padding:1rem; }}
+.cip-kpi-label {{ color:var(--cip-muted); font-size:.76rem; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }}
+.cip-kpi-value {{ color:var(--cip-text); font-size:1.65rem; line-height:1.15; font-weight:900; margin-top:.35rem; }}
+.cip-kpi-detail {{ color:var(--cip-muted); font-size:.86rem; margin-top:.35rem; }}
+.cip-review-card, .cip-risk-card, .cip-missing-card, .cip-summary-card, .cip-error-card {{ padding:1.1rem 1.2rem; margin:.75rem 0; }}
+.cip-risk-card {{ border-{align}:5px solid #f97316; }}
+.cip-missing-card, .cip-error-card {{ border-{align}:5px solid #ef4444; }}
+.cip-summary-card {{ color:var(--cip-text); font-size:1rem; line-height:1.65; }}
+.cip-card-header {{ display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }}
+.cip-card-header h3, .cip-card-header h4 {{ margin:.1rem 0 .35rem 0; color:var(--cip-text); }}
+.cip-card-meta {{ display:flex; flex-wrap:wrap; gap:.5rem; margin:.65rem 0 .85rem 0; color:var(--cip-muted); }}
+.cip-card-meta span {{ background:var(--cip-surface); border:1px solid var(--cip-border); border-radius:999px; padding:.22rem .55rem; font-size:.82rem; }}
+.cip-eyebrow {{ color:var(--cip-muted); font-size:.72rem; font-weight:900; letter-spacing:.08em; text-transform:uppercase; }}
+.cip-badge {{ display:inline-flex; align-items:center; border-radius:999px; padding:.28rem .62rem; font-weight:900; font-size:.74rem; white-space:nowrap; }}
+.cip-badge-green {{ color:var(--cip-success-text); background:var(--cip-success-bg); border:1px solid rgba(34,197,94,.45); }}
+.cip-badge-amber {{ color:var(--cip-warning-text); background:var(--cip-warning-bg); border:1px solid rgba(245,158,11,.45); }}
+.cip-badge-red {{ color:var(--cip-danger-text); background:var(--cip-danger-bg); border:1px solid rgba(239,68,68,.45); }}
+.cip-badge-blue {{ color:var(--cip-accent-text); background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); }}
+.cip-evidence {{ background:var(--cip-surface); border:1px solid var(--cip-border-strong); border-radius:18px; padding:.85rem 1rem; margin:.45rem 0; }}
+.cip-evidence-meta {{ color:var(--cip-muted); font-size:.78rem; font-weight:800; margin-bottom:.35rem; }}
+.cip-evidence blockquote {{ margin:.25rem 0 0 0; padding-{align}:.85rem; border-{align}:4px solid var(--cip-accent); color:var(--cip-text); line-height:1.55; }}
+.cip-recommendation, .cip-check-item {{ background:var(--cip-success-bg); border:1px solid rgba(34,197,94,.45); color:var(--cip-success-text); border-radius:16px; padding:.8rem 1rem; margin:.55rem 0; }}
+.cip-ai-box {{ background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); color:var(--cip-accent-text); border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; line-height:1.55; }}
+.cip-layman-box {{ background:linear-gradient(135deg,var(--cip-accent-soft),var(--cip-card)); border:1px solid var(--cip-border-strong); border-radius:20px; padding:1.05rem 1.15rem; margin:.7rem 0; font-size:1.04rem; line-height:1.75; color:var(--cip-text); }}
+.cip-negotiation, .cip-risk-chip {{ background:var(--cip-warning-bg); border:1px solid rgba(245,158,11,.45); color:var(--cip-warning-text); border-radius:16px; padding:.85rem 1rem; margin:.55rem 0; }}
+.cip-assistant-bubble {{ background:var(--cip-card); border:1px solid var(--cip-border-strong); border-radius:20px; padding:1rem 1.1rem; box-shadow:var(--cip-shadow); line-height:1.62; }}
+.cip-chat-contract {{ background:var(--cip-accent-soft); border:1px solid var(--cip-border-strong); color:var(--cip-accent-text); border-radius:18px; padding:.85rem 1rem; margin:.4rem 0 1rem 0; }}
+.cip-suggestion-chip {{ display:inline-flex; background:var(--cip-surface); border:1px solid var(--cip-border); color:var(--cip-text); border-radius:999px; padding:.42rem .7rem; margin:.25rem; font-size:.86rem; }}
+.cip-action-card {{ border-left:5px solid #22c55e; padding:1rem 1.1rem; margin:.7rem 0; }}
+.cip-score-meter {{ background:var(--cip-card); border:1px solid var(--cip-border); border-radius:22px; padding:1.25rem; box-shadow:var(--cip-shadow); }}
+.cip-score-value {{ font-size:2.75rem; font-weight:950; color:var(--cip-text); letter-spacing:-.05em; }}
+.cip-score-track {{ height:14px; border-radius:999px; background:var(--cip-border); overflow:hidden; margin:.85rem 0 .55rem; }}
+.cip-score-fill {{ display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }}
+.cip-benchmark-card {{ padding:1rem 1.1rem; margin:.7rem 0; }}
+.cip-mini-bar {{ height:10px; border-radius:999px; background:var(--cip-border); overflow:hidden; margin:.35rem 0 .8rem; }}
+.cip-mini-bar span {{ display:block; height:100%; background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e); }}
+.cip-status-card {{ padding:1rem 1.1rem; margin:.65rem 0; min-height:150px; }}
+.cip-endpoint-row {{ display:grid; grid-template-columns: minmax(160px,1.2fr) auto auto minmax(220px,2fr); gap:.75rem; align-items:center; background:var(--cip-card); border:1px solid var(--cip-border); border-radius:16px; padding:.8rem 1rem; margin:.5rem 0; color:var(--cip-text); }}
+.cip-empty-state {{ padding:1.25rem; text-align:center; color:var(--cip-muted); margin:1rem 0; }}
+@media (max-width: 760px) {{ .cip-endpoint-row, .cip-shell-topbar {{ grid-template-columns: 1fr; display:block; }} .block-container {{ padding-left:.75rem; padding-right:.75rem; }} }}
+</style>
+"""
 
-    Injected in addition to the base theme so the redesigned components
-    (stat cards, severity-coded clause cards, gradient chat bubbles, confidence
-    badges, styled evidence quotes) are available on every page without
-    disturbing the base design tokens.
-    """
-    st.markdown(
-        """
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&family=DM+Mono:wght@400;500&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
-        <style>
-        :root {
-            --card-hover:#172038; --accent-light:#6B97FF; --accent-2:#8B6CF0; --accent-3:#2DD4BF;
-            --subtle:#344263;
-            --glow-blue:rgba(79,127,239,0.20); --glow-purple:rgba(139,108,240,0.20); --glow-teal:rgba(45,212,191,0.15);
-            --shadow-sm:0 2px 8px rgba(0,0,0,0.3); --shadow-md:0 8px 24px rgba(0,0,0,0.4); --shadow-lg:0 16px 48px rgba(0,0,0,0.5);
-            --radius-sm:8px; --radius-md:14px; --radius-lg:20px;
-        }
-        @keyframes fadeInUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes ringDraw { from { stroke-dashoffset:326.7; } }
-        .stat-card, .clause-card, .section-card { animation: fadeInUp 0.3s ease both; }
-        .stat-card:nth-child(1) { animation-delay:0.05s; }
-        .stat-card:nth-child(2) { animation-delay:0.10s; }
-        .stat-card:nth-child(3) { animation-delay:0.15s; }
-        .stat-card {
-            background:var(--card); border:1px solid var(--subtle); border-radius:var(--radius-md);
-            padding:1.25rem 1.5rem; position:relative; overflow:hidden;
-            transition:transform .2s ease, box-shadow .2s ease, border-color .2s ease;
-        }
-        .stat-card::before {
-            content:''; position:absolute; top:0; left:0; right:0; height:3px;
-            background:linear-gradient(90deg, var(--accent), var(--accent-2));
-            border-radius:var(--radius-md) var(--radius-md) 0 0;
-        }
-        .stat-card:hover { transform:translateY(-2px); box-shadow:var(--shadow-md); border-color:var(--accent); }
-        .stat-card .stat-value { font-family:'Playfair Display',serif; font-size:1.9rem; font-weight:700; }
-        .stat-card .stat-label { font-family:'DM Sans',sans-serif; color:var(--muted); font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; }
-        .clause-card { border-left:4px solid var(--subtle); padding:.85rem 1rem; border-radius:var(--radius-sm); background:var(--card); margin:.5rem 0; }
-        .clause-card.found { border-left-color:var(--success); }
-        .clause-card.partial { border-left-color:var(--warning); }
-        .clause-card.missing { border-left-color:var(--danger); }
-        .clause-card.low-confidence { border-left-color:var(--accent-2); }
-        .chat-bubble.user { background:linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow:0 4px 16px var(--glow-blue); }
-        .chat-bubble.assistant { background:var(--card); border:1px solid var(--subtle); }
-        .confidence-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 10px; border-radius:999px; font-size:.72rem; font-weight:600; }
-        .confidence-high { background:rgba(34,214,143,0.15); color:var(--success); }
-        .confidence-medium { background:rgba(245,158,11,0.15); color:var(--warning); }
-        .confidence-low { background:rgba(239,68,68,0.15); color:var(--danger); }
-        .evidence-quote {
-            background:rgba(79,127,239,0.08); border-left:3px solid var(--accent);
-            border-radius:0 var(--radius-sm) var(--radius-sm) 0; padding:.75rem 1rem;
-            font-family:'DM Mono',monospace; font-size:.85rem; color:var(--primary); margin:.5rem 0; line-height:1.6;
-        }
-        .display-heading { font-family:'Playfair Display',serif; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+
+APP_CSS = build_app_css("light", "ltr")

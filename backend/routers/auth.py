@@ -1,105 +1,42 @@
-"""Registration, login, and password-reset endpoints."""
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, EmailStr
+from backend.core.security import get_current_user
+from backend.database import get_database
+from backend.services.auth_service import login_user, register_user, update_user_preferences
 
-import secrets
-from datetime import datetime, timedelta
+router = APIRouter(prefix="/auth", tags=["auth"])
 
-from fastapi import APIRouter, HTTPException, status
+class RegisterRequest(BaseModel):
+    full_name: str
+    email: EmailStr
+    password: str
 
-from backend import main as _main
-from backend.models import PasswordResetConfirm, PasswordResetRequest, User, UserLogin
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
 
-router = APIRouter()
+class PreferencesRequest(BaseModel):
+    language: str = "en"
+    theme: str = "light"
+    ai_explanation_language: str = "match"
+    report_language: str = "match"
 
+@router.post("/register")
+async def register(payload: RegisterRequest):
+    return {"user": await register_user(get_database(), payload.full_name, payload.email, payload.password)}
 
-@router.post("/auth/register")
-async def register(user: User):
-    existing_user = await _main.db.users.find_one(
-        {"$or": [{"username": user.username}, {"email": user.email}]}
-    )
-    if existing_user:
-        raise HTTPException(
-            status_code=400, detail="Username or email already registered"
-        )
+@router.post("/login")
+async def login(payload: LoginRequest):
+    return await login_user(get_database(), payload.email, payload.password)
 
-    hashed_password = _main.get_password_hash(user.password)
-    user_dict = {
-        "username": user.username,
-        "email": user.email,
-        "password": hashed_password,
-        "created_at": datetime.utcnow(),
-    }
+@router.get("/me")
+async def me(user=Depends(get_current_user)):
+    return user
 
-    result = await _main.db.users.insert_one(user_dict)
-    return {
-        "message": "User registered successfully",
-        "user_id": str(result.inserted_id),
-    }
+@router.put("/preferences")
+async def preferences(payload: PreferencesRequest, user=Depends(get_current_user)):
+    return {"user": await update_user_preferences(get_database(), user["id"], payload.model_dump())}
 
-
-@router.post("/auth/login")
-async def login(user: UserLogin):
-    db_user = await _main.db.users.find_one({"username": user.username})
-    if not db_user or not _main.verify_password(user.password, db_user["password"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    access_token_expires = timedelta(minutes=_main.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = _main.create_access_token(
-        data={"sub": db_user["username"]}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-
-@router.post("/auth/reset-password")
-async def request_password_reset(payload: PasswordResetRequest):
-    """Start a password reset.
-
-    Generates a 32-character token, stores it in the ``password_reset_tokens``
-    collection (auto-expiring after 1 hour via a TTL index), and returns it in
-    the response. In production this token would be emailed; it is returned here
-    for the graduation-project demo. Always responds 200 so the endpoint does not
-    reveal whether an email is registered.
-    """
-    user = await _main.db.users.find_one({"email": payload.email})
-    response = {
-        "message": "If the email is registered, a reset token has been generated.",
-        "note": "Demo mode: the token is returned in this response instead of being emailed.",
-    }
-    if not user:
-        return response
-
-    token = secrets.token_urlsafe(24)[:32]
-    await _main.db.password_reset_tokens.insert_one(
-        {
-            "token": token,
-            "username": user["username"],
-            "created_at": datetime.utcnow(),
-        }
-    )
-    response["token"] = token
-    return response
-
-
-@router.post("/auth/reset-password/confirm")
-async def confirm_password_reset(payload: PasswordResetConfirm):
-    """Complete a password reset using a token from /auth/reset-password.
-
-    Verifies the token exists (the TTL index removes expired tokens), hashes the
-    new password, updates the user document, and deletes the used token.
-    """
-    record = await _main.db.password_reset_tokens.find_one({"token": payload.token})
-    if not record:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-
-    if len(payload.new_password or "") < 8:
-        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
-
-    await _main.db.users.update_one(
-        {"username": record["username"]},
-        {"$set": {"password": _main.get_password_hash(payload.new_password)}},
-    )
-    await _main.db.password_reset_tokens.delete_one({"token": payload.token})
-    return {"message": "Password updated successfully"}
+@router.post("/logout")
+async def logout():
+    return {"ok": True}
